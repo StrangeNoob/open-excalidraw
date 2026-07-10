@@ -67,7 +67,7 @@ describe("GuestCanvasPage", () => {
     expect(screen.getByText("Local only")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute(
       "href",
-      "/login?returnTo=%2F",
+      "/login?returnTo=%2Fapp",
     );
   });
 

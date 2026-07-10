@@ -4,12 +4,12 @@ import {
   Navigate,
   Outlet,
   useLocation,
+  useParams,
   type RouteObject,
 } from "react-router-dom";
 import { lazy, Suspense } from "react";
 
 import { AuthProvider, LoginPage, SignUpPage, useAuth } from "../features/auth";
-import { App } from "./App";
 
 const DashboardPage = lazy(() =>
   import("../features/dashboard").then((module) => ({
@@ -19,6 +19,16 @@ const DashboardPage = lazy(() =>
 const GuestCanvasPage = lazy(() =>
   import("../features/guest/pages").then((module) => ({
     default: module.GuestCanvasPage,
+  })),
+);
+const DrawingPage = lazy(() =>
+  import("../features/workspace").then((module) => ({
+    default: module.DrawingPage,
+  })),
+);
+const AuthenticatedGuestMigrationPrompt = lazy(() =>
+  import("../features/guest/components").then((module) => ({
+    default: module.AuthenticatedGuestMigrationPrompt,
   })),
 );
 
@@ -59,7 +69,53 @@ const DashboardRoute = () => {
 
   return (
     <Suspense fallback={<p aria-live="polite">Loading your drawings…</p>}>
+      <AuthenticatedGuestMigrationPrompt userId={auth.user.id} />
       <DashboardPage />
+    </Suspense>
+  );
+};
+
+const DrawingRoute = () => {
+  const auth = useAuth();
+  const location = useLocation();
+  const { drawingId } = useParams();
+
+  if (auth.status === "loading") {
+    return <p aria-live="polite">Loading your account…</p>;
+  }
+
+  if (auth.status === "error") {
+    return (
+      <main>
+        <h1>Could not load your account</h1>
+        <button onClick={() => void auth.refresh()} type="button">
+          Try again
+        </button>
+      </main>
+    );
+  }
+
+  if (!auth.user) {
+    const returnTo = `${location.pathname}${location.search}${location.hash}`;
+    return (
+      <Navigate
+        replace
+        to={`/login?returnTo=${encodeURIComponent(returnTo)}`}
+      />
+    );
+  }
+
+  if (!drawingId) {
+    return <Navigate replace to="/app" />;
+  }
+
+  return (
+    <Suspense fallback={<p aria-live="polite">Opening drawing…</p>}>
+      <DrawingPage
+        drawingId={drawingId}
+        key={`${auth.user.id}:${drawingId}`}
+        userId={auth.user.id}
+      />
     </Suspense>
   );
 };
@@ -94,7 +150,7 @@ export const appRoutes: RouteObject[] = [
       },
       {
         path: "/drawings/:drawingId",
-        element: <App />,
+        element: <DrawingRoute />,
       },
     ],
   },

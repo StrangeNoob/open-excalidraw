@@ -8,18 +8,21 @@ import {
   LocalObjectStorage,
   type ObjectStorage,
 } from "@open-excalidraw/storage";
+import { createDatabase, runMigrations } from "@open-excalidraw/database";
 import express from "express";
 import request from "supertest";
 
 import {
   AssetService,
   createAssetRouter,
+  DrizzleAssetRepository,
   type AssetAccessRole,
   type AssetRecord,
   type AssetRepository,
   type InsertAssetResult,
   type NewAssetRecord,
 } from "../src/modules/assets/index.js";
+import { PostgresSharingRepository } from "../src/modules/sharing/index.js";
 
 const OWNER_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const EDITOR_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -69,7 +72,11 @@ class MemoryAssetRepository implements AssetRepository {
     const key = `${asset.drawingId}:${asset.fileId}`;
     const existing = this.assets.get(key);
     if (existing) {
-      return Promise.resolve({ asset: existing, created: false });
+      return Promise.resolve({
+        status: "committed",
+        asset: existing,
+        created: false,
+      });
     }
 
     const created: AssetRecord = {
@@ -81,7 +88,11 @@ class MemoryAssetRepository implements AssetRepository {
     if (this.commitThenFail) {
       throw new Error("connection lost after commit");
     }
-    return Promise.resolve({ asset: created, created: true });
+    return Promise.resolve({
+      status: "committed",
+      asset: created,
+      created: true,
+    });
   }
 }
 
@@ -104,7 +115,7 @@ class FailingPutStorage implements ObjectStorage {
 }
 
 describe("asset HTTP boundary", () => {
-  let directory: string;
+  let directory!: string;
   let repository: MemoryAssetRepository;
   let storage: LocalObjectStorage;
 
@@ -338,4 +349,146 @@ function upload(
 
 function checksum(bytes: Buffer) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+const databaseUrl = process.env.DATABASE_TEST_URL;
+const describeDatabase = databaseUrl ? describe : describe.skip;
+
+describeDatabase("asset commit authorization fence", () => {
+  const database = createDatabase(databaseUrl ?? "postgresql://unused");
+  const ownerId = randomUUID();
+  const editorId = randomUUID();
+  const drawingId = randomUUID();
+  let directory: string;
+
+  beforeAll(async () => {
+    await runMigrations({ pool: database.pool });
+    directory = await mkdtemp(join(tmpdir(), "open-excalidraw-asset-fence-"));
+    await database.pool.query(
+      `INSERT INTO "user" (id, name, email, email_verified)
+       VALUES ($1, 'Asset Owner', $2, true),
+              ($3, 'Asset Editor', $4, true)`,
+      [
+        ownerId,
+        `${ownerId}@example.test`,
+        editorId,
+        `${editorId}@example.test`,
+      ],
+    );
+    const scene = JSON.stringify({
+      type: "excalidraw",
+      version: 2,
+      source: "test",
+      elements: [],
+      appState: {},
+    });
+    await database.pool.query(
+      `INSERT INTO drawings
+         (id, owner_user_id, title, scene, scene_format_version, scene_bytes)
+       VALUES ($1, $2, 'Asset fence', $3::jsonb, 1, $4)`,
+      [drawingId, ownerId, scene, Buffer.byteLength(scene)],
+    );
+    await database.pool.query(
+      `INSERT INTO drawing_members (drawing_id, user_id, role, created_by_user_id)
+       VALUES ($1, $2, 'editor', $3)`,
+      [drawingId, editorId, ownerId],
+    );
+  });
+
+  afterAll(async () => {
+    await database.pool.query(`DELETE FROM drawings WHERE id = $1`, [
+      drawingId,
+    ]);
+    await database.pool.query(`DELETE FROM "user" WHERE id = ANY($1::uuid[])`, [
+      [ownerId, editorId],
+    ]);
+    await database.close();
+    await rm(directory, { force: true, recursive: true });
+  });
+
+  it("does not commit metadata after editor revocation returns", async () => {
+    const localStorage = new LocalObjectStorage({ rootDirectory: directory });
+    const storage = new PausingPutStorage(localStorage);
+    const service = new AssetService({
+      repository: new DrizzleAssetRepository(database.db),
+      storage,
+    });
+    const fileId = "revoked-upload";
+    const uploadPromise = service.upload({
+      identity: { userId: editorId },
+      drawingId,
+      fileId,
+      declaredMimeType: "image/png",
+      expectedSha256: checksum(PNG),
+      fileVersion: 1,
+      bytes: PNG,
+    });
+
+    await storage.waitUntilStored();
+    await expect(
+      new PostgresSharingRepository(database.pool).removeMember({
+        drawingId,
+        actorUserId: ownerId,
+        memberUserId: editorId,
+      }),
+    ).resolves.toBe("removed");
+    storage.release();
+
+    await expect(uploadPromise).rejects.toMatchObject({
+      code: "DRAWING_NOT_FOUND",
+      status: 404,
+    });
+    const metadata = await database.pool.query<{ count: string }>(
+      `SELECT count(*) FROM drawing_assets
+       WHERE drawing_id = $1 AND file_id = $2`,
+      [drawingId, fileId],
+    );
+    expect(metadata.rows[0]?.count).toBe("0");
+    await expect(
+      localStorage.stat(`drawings/${drawingId}/assets/${fileId}`),
+    ).resolves.toMatchObject({ sha256: checksum(PNG) });
+  });
+});
+
+class PausingPutStorage implements ObjectStorage {
+  readonly #stored: Promise<void>;
+  readonly #released: Promise<void>;
+  #markStored!: () => void;
+  #release!: () => void;
+
+  public constructor(private readonly delegate: ObjectStorage) {
+    this.#stored = new Promise((resolve) => {
+      this.#markStored = resolve;
+    });
+    this.#released = new Promise((resolve) => {
+      this.#release = resolve;
+    });
+  }
+
+  public async put(...args: Parameters<ObjectStorage["put"]>) {
+    const result = await this.delegate.put(...args);
+    this.#markStored();
+    await this.#released;
+    return result;
+  }
+
+  public get(...args: Parameters<ObjectStorage["get"]>) {
+    return this.delegate.get(...args);
+  }
+
+  public stat(...args: Parameters<ObjectStorage["stat"]>) {
+    return this.delegate.stat(...args);
+  }
+
+  public delete(...args: Parameters<ObjectStorage["delete"]>) {
+    return this.delegate.delete(...args);
+  }
+
+  public waitUntilStored() {
+    return this.#stored;
+  }
+
+  public release() {
+    this.#release();
+  }
 }

@@ -1,8 +1,11 @@
 import {
   drawingAssets,
+  drawingMembers,
+  drawings,
   type Database,
   type DrawingAsset,
 } from "@open-excalidraw/database";
+import { and, eq, isNull } from "drizzle-orm";
 
 import { AssetTombstoneConflictError } from "./errors.js";
 import type {
@@ -77,41 +80,77 @@ export class DrizzleAssetRepository implements AssetRepository {
   }
 
   public async insertAsset(asset: NewAssetRecord): Promise<InsertAssetResult> {
-    const [inserted] = await this.database
-      .insert(drawingAssets)
-      .values({
-        drawingId: asset.drawingId,
-        fileId: asset.fileId,
-        storageKey: asset.storageKey,
-        mimeType: asset.mimeType,
-        byteSize: asset.byteSize,
-        sha256: Buffer.from(asset.sha256, "hex"),
-        fileVersion: asset.fileVersion,
-        createdByUserId: asset.createdByUserId,
-      })
-      .onConflictDoNothing({
-        target: [drawingAssets.drawingId, drawingAssets.fileId],
-      })
-      .returning();
+    return this.database.transaction(async (transaction) => {
+      const [drawing] = await transaction
+        .select({ ownerUserId: drawings.ownerUserId })
+        .from(drawings)
+        .where(
+          and(eq(drawings.id, asset.drawingId), isNull(drawings.deletedAt)),
+        )
+        .for("update");
+      if (!drawing) return { status: "not-found" as const };
 
-    if (inserted) {
-      return { asset: mapAsset(inserted), created: true };
-    }
+      if (drawing.ownerUserId !== asset.createdByUserId) {
+        const [member] = await transaction
+          .select({ role: drawingMembers.role })
+          .from(drawingMembers)
+          .where(
+            and(
+              eq(drawingMembers.drawingId, asset.drawingId),
+              eq(drawingMembers.userId, asset.createdByUserId),
+            ),
+          );
+        if (!member) return { status: "not-found" as const };
+        if (member.role !== "editor") return { status: "forbidden" as const };
+      }
 
-    const existing = await this.database.query.drawingAssets.findFirst({
-      where: (table, { and, eq }) =>
-        and(
-          eq(table.drawingId, asset.drawingId),
-          eq(table.fileId, asset.fileId),
-        ),
+      const [inserted] = await transaction
+        .insert(drawingAssets)
+        .values({
+          drawingId: asset.drawingId,
+          fileId: asset.fileId,
+          storageKey: asset.storageKey,
+          mimeType: asset.mimeType,
+          byteSize: asset.byteSize,
+          sha256: Buffer.from(asset.sha256, "hex"),
+          fileVersion: asset.fileVersion,
+          createdByUserId: asset.createdByUserId,
+        })
+        .onConflictDoNothing({
+          target: [drawingAssets.drawingId, drawingAssets.fileId],
+        })
+        .returning();
+
+      if (inserted) {
+        return {
+          status: "committed" as const,
+          asset: mapAsset(inserted),
+          created: true,
+        };
+      }
+
+      const [existing] = await transaction
+        .select()
+        .from(drawingAssets)
+        .where(
+          and(
+            eq(drawingAssets.drawingId, asset.drawingId),
+            eq(drawingAssets.fileId, asset.fileId),
+          ),
+        )
+        .for("update");
+      if (!existing) {
+        throw new Error("Asset insertion conflicted without an active record");
+      }
+      if (existing.deletedAt) {
+        throw new AssetTombstoneConflictError();
+      }
+
+      return {
+        status: "committed" as const,
+        asset: mapAsset(existing),
+        created: false,
+      };
     });
-    if (!existing) {
-      throw new Error("Asset insertion conflicted without an active record");
-    }
-    if (existing.deletedAt) {
-      throw new AssetTombstoneConflictError();
-    }
-
-    return { asset: mapAsset(existing), created: false };
   }
 }

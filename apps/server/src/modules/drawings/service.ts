@@ -25,7 +25,13 @@ export class DrawingService {
     input: CreateDrawingRequest,
   ): Promise<DrawingSummary> {
     return toDrawingSummary(
-      await this.repository.create({ ownerUserId: userId, title: input.title }),
+      await this.repository.create({
+        ownerUserId: userId,
+        title: input.title,
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      }),
     );
   }
 

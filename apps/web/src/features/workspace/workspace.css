@@ -1,0 +1,105 @@
+.drawing-workspace {
+  display: grid;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+
+.drawing-workspace--centered {
+  align-items: center;
+  justify-items: center;
+  padding: 2rem;
+}
+
+.workspace-header {
+  align-items: center;
+  background: #fff;
+  border-bottom: 1px solid #e2e2e8;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  padding: 0.65rem 1rem;
+}
+
+.workspace-header > div {
+  align-items: baseline;
+  display: flex;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.workspace-header h1 {
+  font-size: 1rem;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-role {
+  background: #f0efff;
+  border-radius: 999px;
+  color: #5143a8;
+  font-size: 0.75rem;
+  padding: 0.15rem 0.5rem;
+  text-transform: capitalize;
+}
+
+.workspace-save-status {
+  color: #5f5f68;
+  font-size: 0.82rem;
+  text-align: right;
+}
+
+.drawing-workspace > .viewer-banner,
+.drawing-workspace > [aria-label="Save conflict"],
+.workspace-save-error,
+.workspace-conflict-error,
+.workspace-asset-warning {
+  margin: 0.65rem 1rem 0;
+}
+
+.drawing-workspace > [aria-label="Save conflict"],
+.workspace-save-error {
+  align-items: center;
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  border-radius: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  padding: 0.75rem 1rem;
+}
+
+.drawing-workspace > [aria-label="Save conflict"] p {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.workspace-save-error span {
+  flex: 1;
+}
+
+.workspace-asset-warning {
+  color: #8a4b08;
+  font-size: 0.85rem;
+}
+
+.workspace-conflict-error {
+  color: #a12b1f;
+  font-size: 0.85rem;
+}
+
+.workspace-editor {
+  min-height: 0;
+  padding-top: 0.65rem;
+}
+
+.workspace-message {
+  max-width: 34rem;
+  text-align: center;
+}
+
+.workspace-message h1 {
+  margin-top: 0;
+}

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Pool, PoolClient, QueryResultRow } from "pg";
 
 import type {
@@ -77,15 +78,21 @@ export class PostgresDrawingRepository implements DrawingRepository {
   public async create(input: {
     ownerUserId: string;
     title: string;
+    idempotencyKey?: string;
   }): Promise<AccessibleDrawing> {
     const scene = JSON.stringify(EMPTY_SCENE);
+    const drawingId = input.idempotencyKey
+      ? deterministicDrawingId(input.ownerUserId, input.idempotencyKey)
+      : null;
     const result = await this.pool.query<AccessibleDrawingRow>(
       `
         WITH created AS (
           INSERT INTO drawings (
-            owner_user_id, title, scene, scene_format_version, scene_bytes
-          ) VALUES ($1, $2, $3::jsonb, 1, $4)
-          RETURNING *
+            id, owner_user_id, title, scene, scene_format_version, scene_bytes
+          ) VALUES (COALESCE($5::uuid, gen_random_uuid()), $1, $2, $3::jsonb, 1, $4)
+          ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+          WHERE drawings.owner_user_id = EXCLUDED.owner_user_id
+          RETURNING drawings.*
         )
         SELECT
           d.id, d.title, d.owner_user_id, u.name AS owner_name,
@@ -94,7 +101,13 @@ export class PostgresDrawingRepository implements DrawingRepository {
         FROM created d
         JOIN "user" u ON u.id = d.owner_user_id
       `,
-      [input.ownerUserId, input.title, scene, Buffer.byteLength(scene)],
+      [
+        input.ownerUserId,
+        input.title,
+        scene,
+        Buffer.byteLength(scene),
+        drawingId,
+      ],
     );
     const row = result.rows[0];
     if (!row) {
@@ -173,11 +186,30 @@ export class PostgresDrawingRepository implements DrawingRepository {
   }
 
   public async leave(input: { drawingId: string; userId: string }) {
-    const result = await this.pool.query(
-      `DELETE FROM drawing_members WHERE drawing_id = $1 AND user_id = $2`,
-      [input.drawingId, input.userId],
-    );
-    return result.rowCount === 1 ? "left" : "not-found";
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const drawing = await client.query(
+        `SELECT id FROM drawings
+         WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+        [input.drawingId],
+      );
+      if (!drawing.rows[0]) {
+        await client.query("ROLLBACK");
+        return "not-found";
+      }
+      const result = await client.query(
+        `DELETE FROM drawing_members WHERE drawing_id = $1 AND user_id = $2`,
+        [input.drawingId, input.userId],
+      );
+      await client.query("COMMIT");
+      return result.rowCount === 1 ? "left" : "not-found";
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   public async transferOwnership(input: {
@@ -247,6 +279,24 @@ export class PostgresDrawingRepository implements DrawingRepository {
       client.release();
     }
   }
+}
+
+/** Owner-scoped deterministic UUID used only when a create idempotency key exists. */
+export function deterministicDrawingId(
+  ownerUserId: string,
+  idempotencyKey: string,
+): string {
+  const bytes = createHash("sha256")
+    .update("open-excalidraw:drawing-create\0")
+    .update(ownerUserId)
+    .update("\0")
+    .update(idempotencyKey)
+    .digest()
+    .subarray(0, 16);
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x50;
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 async function findAccessibleWith(

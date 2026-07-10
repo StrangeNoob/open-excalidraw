@@ -41,6 +41,7 @@ export interface DrawingRepository {
   create(input: {
     ownerUserId: string;
     title: string;
+    idempotencyKey?: string;
   }): Promise<AccessibleDrawing>;
   rename(input: {
     drawingId: string;

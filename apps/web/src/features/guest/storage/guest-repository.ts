@@ -14,7 +14,7 @@ import type {
   SaveGuestSnapshotInput,
 } from "../model";
 
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 const DEFAULT_DATABASE_NAME = "open-excalidraw-guest";
 
 interface GuestDatabaseSchema extends DBSchema {
@@ -24,7 +24,8 @@ interface GuestDatabaseSchema extends DBSchema {
     value: GuestAssetRecord;
   };
   migrations: {
-    key: string;
+    indexes: { "by-user": string };
+    key: [string, string];
     value: GuestMigrationRecord;
   };
   scenes: {
@@ -166,13 +167,18 @@ export class GuestRepository {
   }
 
   async getMigrationMarker(
+    userId: string,
     drawingId: string,
   ): Promise<GuestMigrationRecord | undefined> {
-    return (await this.#database()).get("migrations", drawingId);
+    return (await this.#database()).get("migrations", [userId, drawingId]);
   }
 
-  async getMigrationMarkers(): Promise<GuestMigrationRecord[]> {
-    return (await this.#database()).getAll("migrations");
+  async getMigrationMarkers(userId: string): Promise<GuestMigrationRecord[]> {
+    return (await this.#database()).getAllFromIndex(
+      "migrations",
+      "by-user",
+      userId,
+    );
   }
 
   async markMigrationComplete(
@@ -205,7 +211,7 @@ export class GuestRepository {
     }
 
     const migrations = transaction.objectStore("migrations");
-    const current = await migrations.get(input.drawingId);
+    const current = await migrations.get([input.userId, input.drawingId]);
 
     if (
       current &&
@@ -234,8 +240,8 @@ export class GuestRepository {
     return marker;
   }
 
-  async clearMigrationMarker(drawingId: string): Promise<void> {
-    await (await this.#database()).delete("migrations", drawingId);
+  async clearMigrationMarker(userId: string, drawingId: string): Promise<void> {
+    await (await this.#database()).delete("migrations", [userId, drawingId]);
   }
 
   async close(): Promise<void> {
@@ -252,17 +258,28 @@ export class GuestRepository {
       this.#databaseName,
       DATABASE_VERSION,
       {
-        upgrade(database) {
-          database.createObjectStore("scenes", { keyPath: "drawingId" });
+        upgrade(database, oldVersion) {
+          if (oldVersion < 1) {
+            database.createObjectStore("scenes", { keyPath: "drawingId" });
 
-          const assets = database.createObjectStore("assets", {
-            keyPath: ["drawingId", "id"],
-          });
-          assets.createIndex("by-drawing", "drawingId");
+            const assets = database.createObjectStore("assets", {
+              keyPath: ["drawingId", "id"],
+            });
+            assets.createIndex("by-drawing", "drawingId");
+          }
 
-          database.createObjectStore("migrations", {
-            keyPath: "drawingId",
+          if (
+            oldVersion >= 1 &&
+            database.objectStoreNames.contains("migrations")
+          ) {
+            // Version-one markers had no account identity and cannot be
+            // attributed safely. Discard them so each account migrates anew.
+            database.deleteObjectStore("migrations");
+          }
+          const migrations = database.createObjectStore("migrations", {
+            keyPath: ["userId", "drawingId"],
           });
+          migrations.createIndex("by-user", "userId");
         },
       },
     );

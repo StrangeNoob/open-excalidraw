@@ -1,4 +1,5 @@
 import type { BinaryFileData, DataURL } from "@excalidraw/excalidraw/types";
+import { openDB } from "idb";
 
 import { GuestRepository, deleteGuestDatabase } from "./guest-repository";
 
@@ -60,7 +61,7 @@ describe("GuestRepository", () => {
       elements: [],
       files: { "asset-1": file },
     });
-    await expect(reopened.getMigrationMarkers()).resolves.toEqual([]);
+    await expect(reopened.getMigrationMarkers("user-a")).resolves.toEqual([]);
   });
 
   it("preserves existing asset references when a scene-only save omits asset ids", async () => {
@@ -133,6 +134,7 @@ describe("GuestRepository", () => {
       drawingId: "default",
       migratedLocalRevision: 1,
       targetCloudDrawingId: "015b3d63-6e17-4a4a-aebf-dc79aa220d87",
+      userId: "user-a",
     });
 
     expect(marker).toEqual({
@@ -140,19 +142,60 @@ describe("GuestRepository", () => {
       drawingId: "default",
       migratedLocalRevision: 1,
       targetCloudDrawingId: "015b3d63-6e17-4a4a-aebf-dc79aa220d87",
+      userId: "user-a",
     });
     await repository.close();
 
     const reopened = new GuestRepository({ databaseName });
     repositories.add(reopened);
-    await expect(reopened.getMigrationMarker("default")).resolves.toEqual(
-      marker,
-    );
-
-    await reopened.clearMigrationMarker("default");
     await expect(
-      reopened.getMigrationMarker("default"),
+      reopened.getMigrationMarker("user-a", "default"),
+    ).resolves.toEqual(marker);
+    await expect(
+      reopened.getMigrationMarker("user-b", "default"),
     ).resolves.toBeUndefined();
+
+    await reopened.clearMigrationMarker("user-a", "default");
+    await expect(
+      reopened.getMigrationMarker("user-a", "default"),
+    ).resolves.toBeUndefined();
+  });
+
+  it("discards unsafe accountless v1 markers while retaining guest stores", async () => {
+    const databaseName = `guest-v1-${crypto.randomUUID()}`;
+    databaseNames.add(databaseName);
+    const legacy = await openDB(databaseName, 1, {
+      upgrade(database) {
+        database.createObjectStore("scenes", { keyPath: "drawingId" });
+        const assets = database.createObjectStore("assets", {
+          keyPath: ["drawingId", "id"],
+        });
+        assets.createIndex("by-drawing", "drawingId");
+        database.createObjectStore("migrations", { keyPath: "drawingId" });
+      },
+    });
+    await legacy.put("scenes", {
+      assetIds: [],
+      drawingId: "default",
+      revision: 1,
+      scene: { elements: [] },
+      title: "Legacy local scene",
+      updatedAt: "2026-07-10T00:00:00.000Z",
+    });
+    await legacy.put("migrations", {
+      completedAt: "2026-07-10T00:01:00.000Z",
+      drawingId: "default",
+      migratedLocalRevision: 1,
+      targetCloudDrawingId: "015b3d63-6e17-4a4a-aebf-dc79aa220d87",
+    });
+    legacy.close();
+
+    const repository = new GuestRepository({ databaseName });
+    repositories.add(repository);
+    await expect(repository.getMigrationMarkers("user-a")).resolves.toEqual([]);
+    await expect(repository.loadScene("default")).resolves.toMatchObject({
+      title: "Legacy local scene",
+    });
   });
 
   it("rejects migration markers ahead of the local scene revision", async () => {
@@ -168,6 +211,7 @@ describe("GuestRepository", () => {
         drawingId: "default",
         migratedLocalRevision: 2,
         targetCloudDrawingId: "015b3d63-6e17-4a4a-aebf-dc79aa220d87",
+        userId: "user-a",
       }),
     ).rejects.toThrow("newer than the guest drawing");
   });

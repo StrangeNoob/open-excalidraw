@@ -31,6 +31,16 @@ import {
   DrawingService,
   PostgresDrawingRepository,
 } from "../src/modules/drawings/index.js";
+import {
+  ContentService,
+  createContentRouter,
+  PostgresContentRepository,
+} from "../src/modules/content/index.js";
+import {
+  createSharingRouter,
+  PostgresSharingRepository,
+  SharingService,
+} from "../src/modules/sharing/index.js";
 
 const BASE_URL = "http://localhost:3000";
 const SECRET = "integration-secret-with-at-least-thirty-two-characters";
@@ -89,6 +99,15 @@ describe("Wave 2 platform flow", () => {
       const drawingService = new DrawingService(
         new PostgresDrawingRepository(database.pool),
       );
+      const contentService = new ContentService(
+        new PostgresContentRepository(database.pool),
+      );
+      const sharingService = new SharingService({
+        repository: new PostgresSharingRepository(database.pool),
+        mailer: new DisabledMailer(),
+        publicBaseUrl: BASE_URL,
+        requireVerifiedEmailForAcceptance: false,
+      });
       const assetService = new AssetService({
         repository: new DrizzleAssetRepository(database.db),
         storage: new LocalObjectStorage({ rootDirectory: assetDirectory }),
@@ -114,6 +133,8 @@ describe("Wave 2 platform flow", () => {
             capabilities: authCapabilities({ smtpEnabled: false }),
           }),
           createDrawingRouter({ service: drawingService, identity }),
+          createContentRouter({ service: contentService, identity }),
+          createSharingRouter({ service: sharingService, identity }),
           assetRouter,
         ],
       });
@@ -135,11 +156,23 @@ describe("Wave 2 platform flow", () => {
         email: "platform-flow@example.test",
       });
 
-      const created = await agent
-        .post("/api/v1/drawings")
-        .send({ title: "Platform flow drawing" })
-        .expect(201);
+      const createDrawing = () =>
+        agent.post("/api/v1/drawings").send({
+          title: "Platform flow drawing",
+          idempotencyKey: "d021fbbb-f9c4-4dc4-a679-fafacbbc4ef4",
+        });
+      const [created, replayedCreate] = await Promise.all([
+        createDrawing(),
+        createDrawing(),
+      ]);
+      expect(created.status).toBe(201);
+      expect(replayedCreate.status).toBe(201);
       const drawingId = String(created.body.id);
+      expect(replayedCreate.body.id).toBe(drawingId);
+      const drawingCount = await database.pool.query<{ count: string }>(
+        "SELECT count(*) FROM drawings",
+      );
+      expect(drawingCount.rows[0]?.count).toBe("1");
       const checksum = createHash("sha256").update(PNG).digest("hex");
 
       await agent
@@ -152,6 +185,64 @@ describe("Wave 2 platform flow", () => {
         .get(`/api/v1/drawings/${drawingId}/assets/platform-image`)
         .expect(200);
       expect(downloaded.body).toEqual(PNG);
+
+      const saved = await agent
+        .put(`/api/v1/drawings/${drawingId}/content`)
+        .set("if-match", '"0"')
+        .set("idempotency-key", "a8bc7237-0778-46d7-85d0-392ed424fc85")
+        .send({
+          scene: {
+            type: "excalidraw",
+            version: 2,
+            source: "open-excalidraw-platform-test",
+            elements: [
+              {
+                id: "image-1",
+                type: "image",
+                version: 1,
+                versionNonce: 1,
+                isDeleted: false,
+                index: "a0",
+                fileId: "platform-image",
+              },
+            ],
+            appState: {},
+          },
+          assetIds: ["platform-image"],
+        })
+        .expect(200);
+      expect(saved.headers.etag).toBe('"1"');
+
+      const invitation = await agent
+        .post(`/api/v1/drawings/${drawingId}/invitations`)
+        .send({ email: "platform-editor@example.test", role: "editor" })
+        .expect(201);
+      expect(invitation.body.deliveryStatus).toBe("manual");
+      const invitationToken = new URL(
+        String(invitation.body.manualUrl),
+      ).pathname
+        .split("/")
+        .at(-1);
+      expect(invitationToken).toBeTruthy();
+
+      const editor = request.agent(app);
+      await editor
+        .post("/api/auth/sign-up/email")
+        .set("origin", BASE_URL)
+        .send({
+          email: "platform-editor@example.test",
+          name: "Platform Editor",
+          password: "correct-horse-battery-staple",
+        })
+        .expect(200);
+      await editor
+        .post(`/api/v1/invitations/${invitationToken}/accept`)
+        .expect(200);
+      const sharedContent = await editor
+        .get(`/api/v1/drawings/${drawingId}/content`)
+        .expect(200);
+      expect(sharedContent.headers.etag).toBe('"1"');
+      expect(sharedContent.body.assetIds).toEqual(["platform-image"]);
     } finally {
       await database.close();
       await rm(assetDirectory, { force: true, recursive: true });

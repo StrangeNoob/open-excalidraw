@@ -27,6 +27,16 @@ import {
   DrawingService,
   PostgresDrawingRepository,
 } from "./modules/drawings/index.js";
+import {
+  ContentService,
+  createContentRouter,
+  PostgresContentRepository,
+} from "./modules/content/index.js";
+import {
+  createSharingRouter,
+  PostgresSharingRepository,
+  SharingService,
+} from "./modules/sharing/index.js";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const baseUrl = process.env.APP_BASE_URL ?? "http://localhost:3000";
@@ -57,6 +67,15 @@ const identity = createIdentityService(auth);
 const drawingService = new DrawingService(
   new PostgresDrawingRepository(database.pool),
 );
+const contentService = new ContentService(
+  new PostgresContentRepository(database.pool),
+);
+const sharingService = new SharingService({
+  repository: new PostgresSharingRepository(database.pool),
+  mailer,
+  publicBaseUrl: baseUrl,
+  requireVerifiedEmailForAcceptance: smtpEnabled,
+});
 
 if ((process.env.STORAGE_DRIVER ?? "local") !== "local") {
   throw new Error("Only STORAGE_DRIVER=local is available in this release");
@@ -102,6 +121,8 @@ const app = createApp({
       ...(adminResetToken ? { adminResetToken } : {}),
     }),
     createDrawingRouter({ service: drawingService, identity }),
+    createContentRouter({ service: contentService, identity }),
+    createSharingRouter({ service: sharingService, identity }),
     assetRouter,
   ],
   ...(staticDirectory ? { staticDirectory } : {}),

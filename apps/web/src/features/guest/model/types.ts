@@ -32,12 +32,14 @@ export interface GuestMigrationRecord {
   drawingId: string;
   migratedLocalRevision: number;
   targetCloudDrawingId: string;
+  userId: string;
 }
 
 export interface CompleteGuestMigrationInput {
   drawingId: string;
   migratedLocalRevision: number;
   targetCloudDrawingId: string;
+  userId: string;
 }
 
 export interface SaveGuestSceneInput {

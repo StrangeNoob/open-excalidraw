@@ -38,8 +38,8 @@ export const GuestCanvasPage = ({
           <span className="local-only-badge">Local only</span>
         </div>
         <nav aria-label="Guest account actions">
-          <Link to="/login?returnTo=%2F">Sign in</Link>
-          <Link to="/signup?returnTo=%2F">Create account</Link>
+          <Link to="/login?returnTo=%2Fapp">Sign in</Link>
+          <Link to="/signup?returnTo=%2Fapp">Create account</Link>
         </nav>
       </header>
 

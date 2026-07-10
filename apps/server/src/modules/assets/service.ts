@@ -178,6 +178,23 @@ export class AssetService {
         createdByUserId: input.identity.userId,
       });
 
+      if (inserted.status === "not-found") {
+        throw assetError(
+          404,
+          "DRAWING_NOT_FOUND",
+          "Drawing not found",
+          "The drawing is unavailable.",
+        );
+      }
+      if (inserted.status === "forbidden") {
+        throw assetError(
+          403,
+          "ASSET_UPLOAD_FORBIDDEN",
+          "Asset upload forbidden",
+          "Viewer access does not allow asset uploads.",
+        );
+      }
+
       if (inserted.asset.sha256 !== actualSha256) {
         throw assetConflict();
       }
