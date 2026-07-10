@@ -170,7 +170,8 @@ describe("Wave 2 platform flow", () => {
       const drawingId = String(created.body.id);
       expect(replayedCreate.body.id).toBe(drawingId);
       const drawingCount = await database.pool.query<{ count: string }>(
-        "SELECT count(*) FROM drawings",
+        "SELECT count(*) FROM drawings WHERE id = $1",
+        [drawingId],
       );
       expect(drawingCount.rows[0]?.count).toBe("1");
       const checksum = createHash("sha256").update(PNG).digest("hex");

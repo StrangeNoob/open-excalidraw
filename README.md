@@ -5,13 +5,16 @@ around the published `@excalidraw/excalidraw` React package.
 
 The current implementation includes guest IndexedDB persistence, email/password
 authentication, optional Google and GitHub OAuth configuration, named drawing
-dashboard APIs/UI, owner/editor/viewer capabilities, PostgreSQL persistence,
-binary asset storage, and a single-VPS production image. Real-time editing,
-sharing invitations, and revision history are the next implementation waves.
+dashboards, email-based invitations, owner/editor/viewer permissions,
+PostgreSQL persistence, binary asset storage, conflict-safe revisioned autosave,
+and authenticated real-time editing. It ships as a single-VPS production image
+with an optional managed PostgreSQL override.
 
 See the
 [platform design](docs/design/open-excalidraw-platform-design.md) and
-[implementation plan](docs/plans/open-excalidraw-implementation-plan.md).
+[implementation plan](docs/plans/open-excalidraw-implementation-plan.md). The
+[collaboration runbook](docs/operations/collaboration.md) documents the realtime
+protocol, permission enforcement, monitoring, and scaling boundary.
 
 ## Run with Docker Compose
 
@@ -21,8 +24,12 @@ cp .env.example .env
 docker compose up --build -d
 ```
 
-The application binds to `127.0.0.1:3000` by default. PostgreSQL and asset
-storage are private named volumes. See the
+The application binds to `127.0.0.1:3000` by default. PostgreSQL and binary
+asset storage use private named volumes. SMTP is optional: when it is absent,
+owners can copy invitation links for manual delivery. Email verification and
+ordinary reset-email delivery require SMTP; a loopback-only operator recovery
+flow is documented for SMTP-disabled installations.
+See the
 [deployment draft](docs/operations/deployment-draft.md) for HTTPS and managed
 database options.
 

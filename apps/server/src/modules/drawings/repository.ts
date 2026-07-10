@@ -190,7 +190,7 @@ export class PostgresDrawingRepository implements DrawingRepository {
     try {
       await client.query("BEGIN");
       const drawing = await client.query(
-        `SELECT id FROM drawings
+        `SELECT id FROM drawings /* drawing-self-leave */
          WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
         [input.drawingId],
       );

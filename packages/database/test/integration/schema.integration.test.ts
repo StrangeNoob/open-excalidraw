@@ -96,8 +96,10 @@ describe("initial PostgreSQL migration", () => {
       checksum: string;
     }>(`SELECT name, checksum FROM open_excalidraw_migrations ORDER BY name`);
 
-    expect(first.applied).toHaveLength(1);
-    expect(first.applied[0]?.name).toBe("0001_initial.sql");
+    expect(first.applied.map(({ name }) => name)).toEqual([
+      "0001_initial.sql",
+      "0002_mutation_noop.sql",
+    ]);
     expect(second.alreadyApplied).toEqual(first.applied);
     expect(record.rows).toEqual(first.applied);
   });
@@ -379,6 +381,29 @@ describe("database constraints", () => {
       code: "23505",
     });
     await expect(insertMutation(secondDrawing)).resolves.toBeDefined();
+
+    await expect(
+      pool.query(
+        `
+          INSERT INTO drawing_mutations (
+            drawing_id, mutation_id, payload_hash, base_revision,
+            resulting_revision
+          ) VALUES ($1, $2, $3, 1, 1)
+        `,
+        [firstDrawing, randomUUID(), randomBytes(32)],
+      ),
+    ).resolves.toBeDefined();
+    await expect(
+      pool.query(
+        `
+          INSERT INTO drawing_mutations (
+            drawing_id, mutation_id, payload_hash, base_revision,
+            resulting_revision
+          ) VALUES ($1, $2, $3, 2, 1)
+        `,
+        [firstDrawing, randomUUID(), randomBytes(32)],
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
   });
 });
 

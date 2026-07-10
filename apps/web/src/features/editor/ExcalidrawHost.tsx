@@ -9,21 +9,28 @@ import { useCallback, useEffect, useRef } from "react";
 import "./excalidraw-host.css";
 
 export type ExcalidrawChangeHandler = NonNullable<ExcalidrawProps["onChange"]>;
+export type ExcalidrawPointerHandler = NonNullable<
+  ExcalidrawProps["onPointerUpdate"]
+>;
 export type ExcalidrawInitialData = ExcalidrawInitialDataState | null;
 export type ExcalidrawInitialDataSource = ExcalidrawProps["initialData"];
 
 export interface ExcalidrawHostProps {
   initialData?: ExcalidrawInitialDataSource;
+  isCollaborating?: boolean;
   onApiChange?: (api: ExcalidrawImperativeAPI | null) => void;
   onChange?: ExcalidrawChangeHandler;
+  onPointerUpdate?: ExcalidrawPointerHandler;
   readOnly?: boolean;
   title: string;
 }
 
 export const ExcalidrawHost = ({
   initialData,
+  isCollaborating = false,
   onApiChange,
   onChange,
+  onPointerUpdate,
   readOnly = false,
   title,
 }: ExcalidrawHostProps) => {
@@ -78,8 +85,10 @@ export const ExcalidrawHost = ({
       <Excalidraw
         excalidrawAPI={captureApi}
         initialData={initialData}
+        isCollaborating={isCollaborating}
         name={title}
         onChange={onChange}
+        onPointerUpdate={onPointerUpdate}
         viewModeEnabled={readOnly}
       />
     </section>

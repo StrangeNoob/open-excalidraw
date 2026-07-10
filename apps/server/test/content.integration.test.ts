@@ -274,7 +274,7 @@ async function waitForLeaveLockWaiter(pool: Pool, attempts = 100) {
          SELECT 1 FROM pg_stat_activity
          WHERE datname = current_database()
            AND wait_event_type = 'Lock'
-           AND query LIKE '%SELECT id FROM drawings%FOR UPDATE%'
+           AND query LIKE '%drawing-self-leave%'
        ) AS waiting`,
     );
     if (result.rows[0]?.waiting) return;

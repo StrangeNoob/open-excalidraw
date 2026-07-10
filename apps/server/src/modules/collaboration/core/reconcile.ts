@@ -137,7 +137,11 @@ function elementsEqual(
   return left !== undefined && stableJson(left) === stableJson(right);
 }
 
-function stableJson(value: unknown): string {
+/**
+ * Deterministic, iterative JSON canonicalization with the same structural
+ * bounds used by reconciliation. Safe for hashing untrusted passthrough data.
+ */
+export function canonicalizeWithinStructuralLimits(value: unknown): string {
   const output: string[] = [];
   const activeObjects = new WeakSet<object>();
   const work: CanonicalTask[] = [{ kind: "value", value, depth: 0 }];
@@ -238,6 +242,8 @@ function stableJson(value: unknown): string {
 
   return output.join("");
 }
+
+const stableJson = canonicalizeWithinStructuralLimits;
 
 type CanonicalTask =
   | { kind: "value"; value: unknown; depth: number }

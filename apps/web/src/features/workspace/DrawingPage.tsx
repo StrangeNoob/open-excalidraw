@@ -30,6 +30,12 @@ import {
   type ConnectivitySource,
   useConnectivity,
 } from "../connectivity";
+import { CloudOutboxDb } from "../connectivity/storage/cloudOutboxDb";
+import {
+  CollaborationController,
+  SocketIoTransport,
+  type CollaborationState,
+} from "../collaboration";
 import {
   ExcalidrawHost,
   type ExcalidrawChangeHandler,
@@ -56,6 +62,12 @@ type ContentSource = Pick<ContentClient, "load" | "save">;
 type AssetSource = Pick<AssetClient, "download" | "upload">;
 type RecoverySource = Pick<CloudRecoveryRepository, "put">;
 type UpdateSceneData = Parameters<ExcalidrawImperativeAPI["updateScene"]>[0];
+type PendingRealtimeChange = {
+  appState: Parameters<ExcalidrawChangeHandler>[1];
+  drawingId: string;
+  elements: Parameters<ExcalidrawChangeHandler>[0];
+  files: Parameters<ExcalidrawChangeHandler>[2];
+};
 
 export interface DrawingWorkspaceDependencies {
   assets?: AssetSource;
@@ -70,6 +82,7 @@ export interface DrawingWorkspaceDependencies {
 
 export interface DrawingPageProps {
   autosaveDebounceMs?: number;
+  collaborationEnabled?: boolean;
   dependencies?: DrawingWorkspaceDependencies;
   drawingId: string;
   onCreatePrivateCopy?: (drawingId: string, snapshot: AutosaveSnapshot) => void;
@@ -98,8 +111,17 @@ const EMPTY_AUTOSAVE_STATE: AutosaveState = {
   status: "idle",
 };
 
+const EMPTY_COLLABORATION_STATE: CollaborationState = {
+  collaborators: new Map(),
+  error: null,
+  revision: "0",
+  role: null,
+  status: "idle",
+};
+
 export const DrawingPage = ({
   autosaveDebounceMs,
+  collaborationEnabled = true,
   dependencies,
   drawingId,
   onCreatePrivateCopy,
@@ -138,6 +160,13 @@ export const DrawingPage = ({
   const [loadGeneration, setLoadGeneration] = useState(0);
   const [controller, setController] = useState<AutosaveController | null>(null);
   const [autosave, setAutosave] = useState<AutosaveState>(EMPTY_AUTOSAVE_STATE);
+  const collaborationControllerRef = useRef<CollaborationController | null>(
+    null,
+  );
+  const pendingRealtimeChangeRef = useRef<PendingRealtimeChange | null>(null);
+  const [collaboration, setCollaboration] = useState<CollaborationState>(
+    EMPTY_COLLABORATION_STATE,
+  );
   const [editorApi, setEditorApi] = useState<ExcalidrawImperativeAPI | null>(
     null,
   );
@@ -233,11 +262,68 @@ export const DrawingPage = ({
   }, [autosaveDebounceMs, drawingId, loadGeneration, resolved, userId]);
 
   useEffect(() => {
-    if (
-      !editorApi ||
-      !workspace ||
-      workspace.content.content.assetIds.length === 0
-    ) {
+    if (!collaborationEnabled || !editorApi || !workspace) {
+      return;
+    }
+
+    const outbox = new CloudOutboxDb();
+    const uploads = new AssetUploadManager({ client: resolved.assets });
+    const realtime = new CollaborationController({
+      drawingId,
+      editor: editorApi,
+      initialAppState: workspace.content.content.scene.appState,
+      initialElements: workspace.content.content.scene.elements,
+      initialRole: workspace.drawing.role,
+      outbox,
+      transport: new SocketIoTransport(),
+      uploadAssets: (nextDrawingId, files, fileIds) =>
+        uploads.uploadReferenced(nextDrawingId, files, fileIds),
+      userId,
+    });
+    const unsubscribe = realtime.subscribe(setCollaboration);
+    collaborationControllerRef.current = realtime;
+    realtime.start();
+    const pending = pendingRealtimeChangeRef.current;
+    if (pending?.drawingId === drawingId) {
+      realtime.onChange(pending.elements, pending.appState, pending.files);
+      pendingRealtimeChangeRef.current = null;
+    } else {
+      realtime.onChange(
+        editorApi.getSceneElementsIncludingDeleted(),
+        editorApi.getAppState(),
+        editorApi.getFiles(),
+      );
+    }
+
+    return () => {
+      unsubscribe();
+      if (collaborationControllerRef.current === realtime) {
+        collaborationControllerRef.current = null;
+      }
+      setCollaboration(EMPTY_COLLABORATION_STATE);
+      void realtime
+        .stop()
+        .catch(() => undefined)
+        .finally(() => outbox.close());
+    };
+  }, [
+    collaborationEnabled,
+    drawingId,
+    editorApi,
+    resolved.assets,
+    userId,
+    workspace,
+  ]);
+
+  useEffect(() => {
+    if (!editorApi || !workspace) {
+      return;
+    }
+    const assetIds =
+      collaborationEnabled && collaboration.status !== "idle"
+        ? collectAssetReferences(editorApi.getSceneElementsIncludingDeleted())
+        : workspace.content.content.assetIds;
+    if (assetIds.length === 0) {
       return;
     }
 
@@ -249,13 +335,7 @@ export const DrawingPage = ({
       }
     });
     void resolved
-      .hydrate(
-        editorApi,
-        resolved.assets,
-        drawingId,
-        workspace.content.content.assetIds,
-        abort.signal,
-      )
+      .hydrate(editorApi, resolved.assets, drawingId, assetIds, abort.signal)
       .then((result: HydrationResult) => {
         if (generation === hydrationGeneration.current && !result.cancelled) {
           setAssetFailures(result.failed);
@@ -275,7 +355,15 @@ export const DrawingPage = ({
       abort.abort();
       hydrationGeneration.current += 1;
     };
-  }, [drawingId, editorApi, resolved, workspace]);
+  }, [
+    collaboration.revision,
+    collaboration.status,
+    collaborationEnabled,
+    drawingId,
+    editorApi,
+    resolved,
+    workspace,
+  ]);
 
   useEffect(
     () => () => {
@@ -292,8 +380,28 @@ export const DrawingPage = ({
       if (!controller || !workspace) {
         return;
       }
-      const capabilities = getDrawingCapabilities(workspace.drawing.role);
+      const effectiveRole = collaboration.role ?? workspace.drawing.role;
+      const capabilities = getDrawingCapabilities(effectiveRole);
       if (!capabilities.editScene || !capabilities.uploadAssets) {
+        return;
+      }
+
+      const collaborationController = collaborationControllerRef.current;
+      if (collaborationEnabled) {
+        if (collaborationController) {
+          collaborationController.onChange(elements, appState, files);
+          collaborationController.publishPresence({
+            idleState: "active",
+            selectedElementIds: appState.selectedElementIds,
+          });
+        } else {
+          pendingRealtimeChangeRef.current = {
+            appState,
+            drawingId,
+            elements,
+            files,
+          };
+        }
         return;
       }
 
@@ -306,8 +414,24 @@ export const DrawingPage = ({
         ),
       });
     },
-    [controller, workspace],
+    [
+      collaboration.role,
+      collaborationEnabled,
+      controller,
+      drawingId,
+      workspace,
+    ],
   );
+
+  const onPointerUpdate = useCallback<
+    NonNullable<ExcalidrawHostProps["onPointerUpdate"]>
+  >(({ button, pointer }) => {
+    collaborationControllerRef.current?.publishPresence({
+      button,
+      idleState: "active",
+      pointer,
+    });
+  }, []);
 
   const reloadServer = useCallback(
     (server: LoadedContent) => {
@@ -353,7 +477,8 @@ export const DrawingPage = ({
     );
   }
 
-  const capabilities = getDrawingCapabilities(workspace.drawing.role);
+  const effectiveRole = collaboration.role ?? workspace.drawing.role;
+  const capabilities = getDrawingCapabilities(effectiveRole);
   const conflictSnapshot = autosave.conflict?.local;
   const actionableSnapshot = conflictSnapshot;
   const WorkspaceHost = resolved.Host;
@@ -363,7 +488,7 @@ export const DrawingPage = ({
       <header className="workspace-header">
         <div>
           <h1>{workspace.drawing.title}</h1>
-          <span className="workspace-role">{workspace.drawing.role}</span>
+          <span className="workspace-role">{effectiveRole}</span>
         </div>
         <span
           aria-live="polite"
@@ -452,8 +577,10 @@ export const DrawingPage = ({
         <WorkspaceHost
           key={drawingId}
           initialData={workspace.initialData}
+          isCollaborating={collaboration.status === "ready"}
           onApiChange={setEditorApi}
           onChange={capabilities.editScene ? onChange : undefined}
+          onPointerUpdate={onPointerUpdate}
           readOnly={!capabilities.editScene}
           title={workspace.drawing.title}
         />

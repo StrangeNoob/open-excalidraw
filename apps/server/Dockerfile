@@ -46,7 +46,7 @@ RUN pnpm exec esbuild apps/server/src/server.ts \
     --alias:@open-excalidraw/mail=./packages/mail/src/index.ts \
     --alias:@open-excalidraw/storage=./packages/storage/src/index.ts \
     --outfile=/output/apps/server/server.mjs
-RUN pnpm exec esbuild packages/database/src/migrate.ts \
+RUN pnpm exec esbuild packages/database/src/migrate-cli.ts \
     --bundle \
     --platform=node \
     --format=esm \

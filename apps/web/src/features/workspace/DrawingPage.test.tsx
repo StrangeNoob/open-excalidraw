@@ -191,6 +191,7 @@ describe("DrawingPage", () => {
     render(
       <DrawingPage
         autosaveDebounceMs={1}
+        collaborationEnabled={false}
         dependencies={fixture.dependencies}
         drawingId={DRAWING_A}
         userId={USER}
@@ -231,6 +232,7 @@ describe("DrawingPage", () => {
     render(
       <DrawingPage
         autosaveDebounceMs={1}
+        collaborationEnabled={false}
         dependencies={fixture.dependencies}
         drawingId={DRAWING_A}
         userId={USER}
@@ -268,6 +270,7 @@ describe("DrawingPage", () => {
     const view = render(
       <DrawingPage
         dependencies={fixture.dependencies}
+        collaborationEnabled={false}
         drawingId={DRAWING_A}
         userId={USER}
       />,
@@ -275,6 +278,7 @@ describe("DrawingPage", () => {
     view.rerender(
       <DrawingPage
         dependencies={fixture.dependencies}
+        collaborationEnabled={false}
         drawingId={DRAWING_B}
         userId={USER}
       />,
@@ -307,6 +311,7 @@ describe("DrawingPage", () => {
     const view = render(
       <DrawingPage
         dependencies={fixture.dependencies}
+        collaborationEnabled={false}
         drawingId={DRAWING_A}
         userId={USER}
       />,
@@ -316,6 +321,7 @@ describe("DrawingPage", () => {
     );
     view.rerender(
       <DrawingPage
+        collaborationEnabled={false}
         dependencies={fixture.dependencies}
         drawingId={DRAWING_B}
         userId={USER}
@@ -345,6 +351,7 @@ describe("DrawingPage", () => {
     render(
       <DrawingPage
         autosaveDebounceMs={1}
+        collaborationEnabled={false}
         dependencies={fixture.dependencies}
         drawingId={DRAWING_A}
         onCreatePrivateCopy={onCreatePrivateCopy}
@@ -397,6 +404,7 @@ describe("DrawingPage", () => {
     render(
       <DrawingPage
         autosaveDebounceMs={1}
+        collaborationEnabled={false}
         dependencies={fixture.dependencies}
         drawingId={DRAWING_A}
         userId={USER}

@@ -157,7 +157,7 @@ export const drawingMutations = pgTable(
     ),
     check(
       "drawing_mutations_resulting_revision_valid",
-      sql`${table.resultingRevision} > ${table.baseRevision}`,
+      sql`${table.resultingRevision} >= ${table.baseRevision}`,
     ),
   ],
 );

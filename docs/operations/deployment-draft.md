@@ -55,15 +55,25 @@ single-use invitation links to an authorized owner for manual copying. Email
 verification and ordinary email password reset cannot be delivered; the final
 runbook will wrap the administrative one-time reset-link endpoint in an
 operator command. Until then, an operator can consume a generated reset URL
-exactly once over the loopback-bound application port:
+exactly once over the loopback-bound application port. First request the reset
+for the account (the public response is deliberately non-enumerating), then
+consume the server-held one-time URL with the administrative token:
 
 ```bash
+curl --fail --silent \
+  -H "Content-Type: application/json" \
+  --data '{"email":"person@example.com","redirectTo":"https://draw.example.com/reset-password"}' \
+  http://127.0.0.1:3000/api/auth/request-password-reset
+
 curl --fail --silent \
   -H "Authorization: Bearer $ADMIN_RESET_TOKEN" \
   -H "Content-Type: application/json" \
   --data '{"email":"person@example.com"}' \
   http://127.0.0.1:3000/api/admin/manual-reset-links/consume
 ```
+
+The manual reset store is process-local and intentionally one-time; restarting
+the application discards unconsumed URLs. Request a new reset after a restart.
 
 When SMTP is enabled, prefer port 465 with `SMTP_SECURE=true` or port 587 with
 STARTTLS, and use a restricted credential.

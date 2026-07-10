@@ -19,6 +19,10 @@ export interface SharingServiceOptions {
   publicBaseUrl: string;
   requireVerifiedEmailForAcceptance: boolean;
   invitationLifetimeMs?: number;
+  membershipEvents?: {
+    roleChanged(drawingId: string, userId: string, role: MemberRole): void;
+    revoked(drawingId: string, userId: string): void;
+  };
 }
 
 type CreateInvitationResponse = z.infer<typeof createInvitationResponseSchema>;
@@ -29,6 +33,7 @@ export class SharingService {
   readonly #publicBaseUrl: URL;
   readonly #requireVerifiedEmail: boolean;
   readonly #invitationLifetimeMs: number;
+  readonly #membershipEvents: SharingServiceOptions["membershipEvents"];
 
   public constructor(options: SharingServiceOptions) {
     this.#repository = options.repository;
@@ -38,6 +43,7 @@ export class SharingService {
       throw new TypeError("publicBaseUrl must use HTTP or HTTPS");
     }
     this.#requireVerifiedEmail = options.requireVerifiedEmailForAcceptance;
+    this.#membershipEvents = options.membershipEvents;
     this.#invitationLifetimeMs = options.invitationLifetimeMs ?? SEVEN_DAYS_MS;
     if (
       !Number.isSafeInteger(this.#invitationLifetimeMs) ||
@@ -129,6 +135,7 @@ export class SharingService {
       role,
     });
     this.#handleMutationResult(result, "updated");
+    this.#membershipEvents?.roleChanged(drawingId, memberUserId, role);
   }
 
   public async removeMember(
@@ -142,6 +149,7 @@ export class SharingService {
       memberUserId,
     });
     this.#handleMutationResult(result, "removed");
+    this.#membershipEvents?.revoked(drawingId, memberUserId);
   }
 
   public async revokeInvitation(

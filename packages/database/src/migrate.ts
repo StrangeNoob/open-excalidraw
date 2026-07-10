@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
-import { Pool, type PoolClient } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 const MIGRATION_FILENAME = /^\d{4}_[a-z0-9_]+\.sql$/;
 const DEFAULT_MIGRATIONS_DIRECTORY = fileURLToPath(
@@ -116,37 +116,4 @@ export async function runMigrations({
   } finally {
     client.release();
   }
-}
-
-function isMainModule() {
-  const entry = process.argv[1];
-  return (
-    entry !== undefined &&
-    pathToFileURL(resolve(entry)).href === import.meta.url
-  );
-}
-
-async function main() {
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) {
-    throw new Error("DATABASE_URL is required");
-  }
-
-  const pool = new Pool({ connectionString: databaseUrl });
-  try {
-    const result = await runMigrations({ pool });
-    process.stdout.write(
-      `Applied ${result.applied.length} migration(s); ${result.alreadyApplied.length} already current.\n`,
-    );
-  } finally {
-    await pool.end();
-  }
-}
-
-if (isMainModule()) {
-  void main().catch((error: unknown) => {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    process.stderr.write(`Migration failed: ${message}\n`);
-    process.exitCode = 1;
-  });
 }

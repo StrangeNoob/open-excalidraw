@@ -1,12 +1,15 @@
 import "dotenv/config";
 
+import { existsSync } from "node:fs";
 import { createServer } from "node:http";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { createDatabase } from "@open-excalidraw/database";
 import { DisabledMailer, SmtpMailer, type Mailer } from "@open-excalidraw/mail";
 import { LocalObjectStorage } from "@open-excalidraw/storage";
 import { Router } from "express";
+import { Server as SocketIoServer } from "socket.io";
 
 import { createApp } from "./app.js";
 import {
@@ -27,6 +30,13 @@ import {
   DrawingService,
   PostgresDrawingRepository,
 } from "./modules/drawings/index.js";
+import { MutationService } from "./modules/collaboration/mutation-service.js";
+import { PostgresMutationRepository } from "./modules/collaboration/persistence/index.js";
+import { PresenceService } from "./modules/collaboration/presence-service.js";
+import { PreviewService } from "./modules/collaboration/preview-service.js";
+import { RoomRegistry } from "./modules/collaboration/room-registry.js";
+import { StrictOriginPolicy } from "./modules/collaboration/security/index.js";
+import { attachCollaborationGateway } from "./modules/collaboration/socket-gateway.js";
 import {
   ContentService,
   createContentRouter,
@@ -70,11 +80,20 @@ const drawingService = new DrawingService(
 const contentService = new ContentService(
   new PostgresContentRepository(database.pool),
 );
+const roomRegistry = new RoomRegistry();
 const sharingService = new SharingService({
   repository: new PostgresSharingRepository(database.pool),
   mailer,
   publicBaseUrl: baseUrl,
   requireVerifiedEmailForAcceptance: smtpEnabled,
+  membershipEvents: {
+    roleChanged: (drawingId, userId, role) => {
+      roomRegistry.changeRole(drawingId, userId, role);
+    },
+    revoked: (drawingId, userId) => {
+      roomRegistry.revoke(drawingId, userId);
+    },
+  },
 });
 
 if ((process.env.STORAGE_DRIVER ?? "local") !== "local") {
@@ -89,6 +108,50 @@ const assetService = new AssetService({
   repository: new DrizzleAssetRepository(database.db),
   storage,
 });
+const collaborationRepository = new PostgresMutationRepository(database.pool);
+const membershipResolver = {
+  async getRole(drawingId: string, userId: string) {
+    const result = await database.pool.query<{
+      role: "owner" | "editor" | "viewer";
+    }>(
+      `SELECT CASE
+         WHEN d.owner_user_id = $2 THEN 'owner'
+         ELSE m.role
+       END AS role
+       FROM drawings d
+       LEFT JOIN drawing_members m
+         ON m.drawing_id = d.id AND m.user_id = $2
+       WHERE d.id = $1 AND d.deleted_at IS NULL
+         AND (d.owner_user_id = $2 OR m.user_id IS NOT NULL)
+       LIMIT 1`,
+      [drawingId, userId],
+    );
+    return result.rows[0]?.role ?? null;
+  },
+};
+const sessionValidityResolver = {
+  async isSessionActive(sessionId: string, userId: string) {
+    const result = await database.pool.query(
+      `SELECT 1 FROM session
+       WHERE id = $1 AND user_id = $2 AND expires_at > now()
+       LIMIT 1`,
+      [sessionId, userId],
+    );
+    return result.rowCount === 1;
+  },
+};
+const mutationService = new MutationService({
+  repository: collaborationRepository,
+  sessionValidityResolver,
+});
+const previewService = new PreviewService({
+  membershipResolver,
+  sessionValidityResolver,
+});
+const presenceService = new PresenceService({
+  membershipResolver,
+  sessionValidityResolver,
+});
 const assetRouter = Router().use(
   "/api/v1",
   createAssetRouter({
@@ -102,7 +165,7 @@ const assetRouter = Router().use(
 const staticDirectory =
   process.env.STATIC_DIRECTORY ??
   (process.env.NODE_ENV === "production"
-    ? join(process.cwd(), "public")
+    ? productionStaticDirectory()
     : undefined);
 const app = createApp({
   readiness: async () => {
@@ -130,13 +193,29 @@ const app = createApp({
 
 const port = Number.parseInt(process.env.APP_PORT ?? "3000", 10);
 const server = createServer(app);
+const io = new SocketIoServer(server, {
+  path: "/socket.io",
+  serveClient: false,
+});
+const collaborationGateway = attachCollaborationGateway(io, {
+  identityService: identity,
+  membershipResolver,
+  mutationService,
+  originPolicy: new StrictOriginPolicy(socketAllowedOrigins(baseUrl)),
+  presenceService,
+  previewService,
+  roomRegistry,
+  sessionValidityResolver,
+  snapshotProvider: collaborationRepository,
+});
 
 server.listen(port, () => {
   process.stdout.write(`Open Excalidraw server listening on ${port}\n`);
 });
 
 const shutdown = () => {
-  server.close(() => {
+  collaborationGateway.close();
+  void io.close(() => {
     void database.close().finally(() => process.exit(0));
   });
 };
@@ -150,6 +229,23 @@ function requiredEnvironment(name: string): string {
     throw new Error(`${name} is required`);
   }
   return value;
+}
+
+function socketAllowedOrigins(publicBaseUrl: string): string[] {
+  const configured = (process.env.SOCKET_ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  if (process.env.NODE_ENV !== "production") {
+    configured.push("http://localhost:5173");
+  }
+  return [...new Set([new URL(publicBaseUrl).origin, ...configured])];
+}
+
+function productionStaticDirectory(): string {
+  const imageDirectory = join(process.cwd(), "public");
+  if (existsSync(imageDirectory)) return imageDirectory;
+  return join(dirname(fileURLToPath(import.meta.url)), "../../web/dist");
 }
 
 function oauthCredentials(

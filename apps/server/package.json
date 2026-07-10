@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && pnpm run bundle",
+    "bundle": "esbuild src/server.ts --bundle --platform=node --format=esm --target=node22 --packages=external --alias:@open-excalidraw/contracts=../../packages/contracts/src/index.ts --alias:@open-excalidraw/database=../../packages/database/src/index.ts --alias:@open-excalidraw/mail=../../packages/mail/src/index.ts --alias:@open-excalidraw/storage=../../packages/storage/src/index.ts --outfile=dist/server.mjs",
     "dev": "tsx watch src/server.ts",
-    "start": "node dist/server.js",
+    "start": "node dist/server.mjs",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:integration": "vitest run --passWithNoTests --config vitest.integration.config.ts",
@@ -35,6 +36,7 @@
     "@types/express": "5.0.6",
     "@types/pg": "8.20.0",
     "@types/supertest": "7.2.0",
+    "esbuild": "0.28.1",
     "supertest": "7.2.2",
     "testcontainers": "12.0.4",
     "tsx": "4.23.0"
