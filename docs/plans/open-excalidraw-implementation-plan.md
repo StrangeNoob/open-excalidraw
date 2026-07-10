@@ -50,12 +50,12 @@ All agents must follow these decisions:
 
 At most four agents are active: the orchestrator and three workers.
 
-| Role | Primary ownership |
-| --- | --- |
-| Orchestrator | Root configuration, manifests, lockfile, contracts, router/server composition, integration, final verification |
-| Backend worker | `packages/database`, `apps/server/src/modules/auth`, `drawings`, `content`, `sharing` |
-| Frontend worker | `apps/web/src/features`, feature-local tests and pages |
-| Platform/realtime worker | `packages/storage`, `packages/mail`, collaboration server modules, Compose and operations |
+| Role                     | Primary ownership                                                                                              |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| Orchestrator             | Root configuration, manifests, lockfile, contracts, router/server composition, integration, final verification |
+| Backend worker           | `packages/database`, `apps/server/src/modules/auth`, `drawings`, `content`, `sharing`                          |
+| Frontend worker          | `apps/web/src/features`, feature-local tests and pages                                                         |
+| Platform/realtime worker | `packages/storage`, `packages/mail`, collaboration server modules, Compose and operations                      |
 
 Rules:
 

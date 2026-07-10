@@ -572,8 +572,8 @@ drawing is never copied automatically into guest storage.
   rate-limited.
 - Cross-site WebSocket hijacking is prevented with same-origin cookies and
   strict Origin validation.
-- Assets are served with validated MIME types and `X-Content-Type-Options:
-  nosniff`.
+- Assets are served with validated MIME types and
+  `X-Content-Type-Options: nosniff`.
 - Embeddable URLs follow Excalidraw validation and the application uses a strict
   Content Security Policy.
 - Audit events cover invitation lifecycle, role changes, ownership transfer,

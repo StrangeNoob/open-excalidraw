@@ -1,0 +1,19 @@
+{
+  "name": "@open-excalidraw/storage",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc -p tsconfig.json --pretty false"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.1084.0",
+    "file-type": "22.0.1"
+  }
+}
