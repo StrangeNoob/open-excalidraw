@@ -88,6 +88,32 @@ describe("GuestRepository", () => {
     });
   });
 
+  it("removes guest assets omitted from a later complete snapshot", async () => {
+    const { repository } = createRepository();
+    const retained = createFile("retained");
+    const removed = createFile("removed");
+
+    await repository.saveSnapshot({
+      drawingId: "default",
+      files: { [retained.id]: retained, [removed.id]: removed },
+      scene: { elements: [] },
+      title: "Two assets",
+    });
+    await repository.saveSnapshot({
+      drawingId: "default",
+      files: { [retained.id]: retained },
+      scene: { elements: [] },
+      title: "One asset",
+    });
+
+    await expect(repository.getAsset("default", "retained")).resolves.toEqual(
+      retained,
+    );
+    await expect(
+      repository.getAsset("default", "removed"),
+    ).resolves.toBeUndefined();
+  });
+
   it("records guest-to-cloud migration progress per drawing", async () => {
     const databaseName = `guest-test-${crypto.randomUUID()}`;
     const completedAt = new Date("2026-07-10T12:30:00.000Z");

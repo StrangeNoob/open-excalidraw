@@ -1,0 +1,370 @@
+import express from "express";
+import { randomUUID } from "node:crypto";
+import request from "supertest";
+
+import type {
+  IdentityService,
+  RequestIdentity,
+} from "../src/modules/auth/index.js";
+import {
+  can,
+  createDrawingRouter,
+  DrawingService,
+  type AccessibleDrawing,
+  type DrawingRepository,
+  type RenameDrawingResult,
+  type TransferOwnershipResult,
+} from "../src/modules/drawings/index.js";
+
+const ownerId = randomUUID();
+const editorId = randomUUID();
+const viewerId = randomUUID();
+const outsiderId = randomUUID();
+
+describe("drawing capability policy", () => {
+  it("defines the complete owner/editor/viewer matrix", () => {
+    expect(can("owner", "rename")).toBe(true);
+    expect(can("editor", "rename")).toBe(true);
+    expect(can("viewer", "rename")).toBe(false);
+    expect(can("owner", "share")).toBe(true);
+    expect(can("editor", "share")).toBe(false);
+    expect(can("viewer", "share")).toBe(false);
+    expect(can("owner", "delete")).toBe(true);
+    expect(can("editor", "delete")).toBe(false);
+    expect(can("owner", "transfer-ownership")).toBe(true);
+    expect(can("editor", "transfer-ownership")).toBe(false);
+    expect(can("owner", "leave")).toBe(false);
+    expect(can("editor", "leave")).toBe(true);
+    expect(can("viewer", "leave")).toBe(true);
+  });
+});
+
+describe("drawing HTTP domain", () => {
+  it("lists only active owned/shared drawings and never leaks an outsider drawing", async () => {
+    const fixture = createFixture();
+    const owned = fixture.repository.seed(ownerId, "Owned", "owner");
+    const shared = fixture.repository.seed(
+      randomUUID(),
+      "Shared",
+      "viewer",
+      ownerId,
+    );
+    fixture.repository.seed(randomUUID(), "Inaccessible", "owner");
+    const deleted = fixture.repository.seed(ownerId, "Deleted", "owner");
+    fixture.repository.deleted.add(deleted.id);
+
+    const response = await request(fixture.app)
+      .get("/api/v1/drawings")
+      .set("x-test-user", ownerId);
+
+    expect(response.status).toBe(200);
+    expect(
+      response.body.owned.map((drawing: { id: string }) => drawing.id),
+    ).toEqual([owned.id]);
+    expect(
+      response.body.shared.map((drawing: { id: string }) => drawing.id),
+    ).toEqual([shared.id]);
+    expect(JSON.stringify(response.body)).not.toContain("Inaccessible");
+    expect(JSON.stringify(response.body)).not.toContain("Deleted");
+  });
+
+  it("allows owners and editors to rename, rejects viewers, and detects stale revisions", async () => {
+    const fixture = createFixture();
+    const ownerDrawing = fixture.repository.seed(ownerId, "Owner", "owner");
+    const editorDrawing = fixture.repository.seed(
+      ownerId,
+      "Editor",
+      "editor",
+      editorId,
+    );
+    const viewerDrawing = fixture.repository.seed(
+      ownerId,
+      "Viewer",
+      "viewer",
+      viewerId,
+    );
+
+    const owner = await rename(
+      fixture.app,
+      ownerId,
+      ownerDrawing.id,
+      "Owner renamed",
+      "0",
+    );
+    const editor = await rename(
+      fixture.app,
+      editorId,
+      editorDrawing.id,
+      "Editor renamed",
+      "0",
+    );
+    const viewer = await rename(
+      fixture.app,
+      viewerId,
+      viewerDrawing.id,
+      "Rejected",
+      "0",
+    );
+    const stale = await rename(
+      fixture.app,
+      ownerId,
+      ownerDrawing.id,
+      "Stale",
+      "0",
+    );
+
+    expect(owner.status).toBe(200);
+    expect(owner.body.metadataRevision).toBe("1");
+    expect(editor.status).toBe(200);
+    expect(viewer.status).toBe(403);
+    expect(viewer.body.code).toBe("FORBIDDEN");
+    expect(stale.status).toBe(412);
+    expect(stale.body).toMatchObject({
+      code: "METADATA_VERSION_CONFLICT",
+      status: 412,
+    });
+  });
+
+  it("restricts deletion and ownership transfer to owners", async () => {
+    const fixture = createFixture();
+    const drawing = fixture.repository.seed(ownerId, "Transfer me", "owner");
+    fixture.repository.members.set(`${drawing.id}:${editorId}`, "editor");
+
+    const editorDelete = await request(fixture.app)
+      .delete(`/api/v1/drawings/${drawing.id}`)
+      .set("x-test-user", editorId);
+    expect(editorDelete.status).toBe(403);
+
+    const editorTransfer = await request(fixture.app)
+      .post(`/api/v1/drawings/${drawing.id}/transfer-ownership`)
+      .set("x-test-user", editorId)
+      .send({ newOwnerUserId: viewerId });
+    expect(editorTransfer.status).toBe(403);
+
+    const transferred = await request(fixture.app)
+      .post(`/api/v1/drawings/${drawing.id}/transfer-ownership`)
+      .set("x-test-user", ownerId)
+      .send({ newOwnerUserId: editorId });
+    expect(transferred.status).toBe(200);
+    expect(transferred.body).toMatchObject({
+      ownerUserId: editorId,
+      role: "owner",
+      metadataRevision: "1",
+    });
+    expect(fixture.repository.members.get(`${drawing.id}:${ownerId}`)).toBe(
+      "editor",
+    );
+    expect(fixture.repository.members.has(`${drawing.id}:${editorId}`)).toBe(
+      false,
+    );
+
+    const oldOwnerDelete = await request(fixture.app)
+      .delete(`/api/v1/drawings/${drawing.id}`)
+      .set("x-test-user", ownerId);
+    expect(oldOwnerDelete.status).toBe(403);
+
+    const newOwnerDelete = await request(fixture.app)
+      .delete(`/api/v1/drawings/${drawing.id}`)
+      .set("x-test-user", editorId);
+    expect(newOwnerDelete.status).toBe(204);
+  });
+
+  it("allows members to leave while requiring an owner to transfer first", async () => {
+    const fixture = createFixture();
+    const drawing = fixture.repository.seed(ownerId, "Leave", "owner");
+    fixture.repository.members.set(`${drawing.id}:${viewerId}`, "viewer");
+
+    const ownerLeave = await request(fixture.app)
+      .delete(`/api/v1/drawings/${drawing.id}/members/me`)
+      .set("x-test-user", ownerId);
+    expect(ownerLeave.status).toBe(409);
+    expect(ownerLeave.body.code).toBe("OWNER_CANNOT_LEAVE");
+
+    const viewerLeave = await request(fixture.app)
+      .delete(`/api/v1/drawings/${drawing.id}/members/me`)
+      .set("x-test-user", viewerId);
+    expect(viewerLeave.status).toBe(204);
+    expect(fixture.repository.members.has(`${drawing.id}:${viewerId}`)).toBe(
+      false,
+    );
+  });
+
+  it("requires a valid session on every route", async () => {
+    const fixture = createFixture();
+    const response = await request(fixture.app).get("/api/v1/drawings");
+    expect(response.status).toBe(401);
+    expect(response.type).toBe("application/problem+json");
+    expect(response.body.code).toBe("AUTHENTICATION_REQUIRED");
+  });
+});
+
+function createFixture() {
+  const repository = new InMemoryDrawingRepository();
+  const service = new DrawingService(repository);
+  const identity: IdentityService = {
+    resolve(headers) {
+      const userId =
+        headers instanceof Headers
+          ? headers.get("x-test-user")
+          : typeof headers["x-test-user"] === "string"
+            ? headers["x-test-user"]
+            : null;
+      return Promise.resolve(userId ? identityFor(userId) : null);
+    },
+  };
+  const app = express();
+  app.use(express.json());
+  app.use(createDrawingRouter({ service, identity }));
+  return { app, repository };
+}
+
+function identityFor(userId: string): RequestIdentity {
+  return {
+    userId,
+    email: `${userId}@example.test`,
+    name: "Test User",
+    image: null,
+    emailVerified: true,
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    sessionId: randomUUID(),
+    sessionExpiresAt: new Date("2027-01-01T00:00:00.000Z"),
+  };
+}
+
+function rename(
+  app: express.Express,
+  userId: string,
+  drawingId: string,
+  title: string,
+  metadataRevision: string,
+) {
+  return request(app)
+    .patch(`/api/v1/drawings/${drawingId}`)
+    .set("x-test-user", userId)
+    .send({ title, metadataRevision });
+}
+
+class InMemoryDrawingRepository implements DrawingRepository {
+  public readonly drawings = new Map<string, AccessibleDrawing>();
+  public readonly members = new Map<string, "editor" | "viewer">();
+  public readonly deleted = new Set<string>();
+
+  public seed(
+    ownerUserId: string,
+    title: string,
+    role: "owner" | "editor" | "viewer",
+    currentUserId: string = ownerUserId,
+  ): AccessibleDrawing {
+    const now = new Date("2026-01-01T00:00:00.000Z");
+    const drawing: AccessibleDrawing = {
+      id: randomUUID(),
+      title,
+      ownerUserId,
+      ownerName: "Owner",
+      role: "owner",
+      contentRevision: 0n,
+      metadataRevision: 0n,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.drawings.set(drawing.id, drawing);
+    if (role !== "owner") {
+      this.members.set(`${drawing.id}:${currentUserId}`, role);
+    }
+    return { ...drawing, role };
+  }
+
+  public listForUser(userId: string) {
+    const owned: AccessibleDrawing[] = [];
+    const shared: AccessibleDrawing[] = [];
+    for (const drawing of this.drawings.values()) {
+      if (this.deleted.has(drawing.id)) continue;
+      if (drawing.ownerUserId === userId) {
+        owned.push({ ...drawing, role: "owner" });
+        continue;
+      }
+      const role = this.members.get(`${drawing.id}:${userId}`);
+      if (role) shared.push({ ...drawing, role });
+    }
+    return Promise.resolve({ owned, shared });
+  }
+
+  public findAccessible(drawingId: string, userId: string) {
+    const drawing = this.drawings.get(drawingId);
+    if (!drawing || this.deleted.has(drawingId)) return Promise.resolve(null);
+    if (drawing.ownerUserId === userId) {
+      return Promise.resolve({ ...drawing, role: "owner" as const });
+    }
+    const role = this.members.get(`${drawingId}:${userId}`);
+    return Promise.resolve(role ? { ...drawing, role } : null);
+  }
+
+  public create(input: { ownerUserId: string; title: string }) {
+    return Promise.resolve(this.seed(input.ownerUserId, input.title, "owner"));
+  }
+
+  public async rename(input: {
+    drawingId: string;
+    actorUserId: string;
+    title: string;
+    expectedMetadataRevision: bigint;
+  }): Promise<RenameDrawingResult> {
+    const accessible = await this.findAccessible(
+      input.drawingId,
+      input.actorUserId,
+    );
+    if (!accessible) return { status: "not-found" };
+    const current = this.drawings.get(input.drawingId)!;
+    if (current.metadataRevision !== input.expectedMetadataRevision) {
+      return {
+        status: "conflict",
+        currentRevision: current.metadataRevision,
+      };
+    }
+    current.title = input.title;
+    current.metadataRevision += 1n;
+    return {
+      status: "updated",
+      drawing: { ...current, role: accessible.role },
+    };
+  }
+
+  public softDelete(input: { drawingId: string; ownerUserId: string }) {
+    const drawing = this.drawings.get(input.drawingId);
+    if (!drawing || drawing.ownerUserId !== input.ownerUserId) {
+      return Promise.resolve("not-found" as const);
+    }
+    this.deleted.add(input.drawingId);
+    return Promise.resolve("deleted" as const);
+  }
+
+  public leave(input: { drawingId: string; userId: string }) {
+    return Promise.resolve(
+      this.members.delete(`${input.drawingId}:${input.userId}`)
+        ? ("left" as const)
+        : ("not-found" as const),
+    );
+  }
+
+  public transferOwnership(input: {
+    drawingId: string;
+    currentOwnerUserId: string;
+    newOwnerUserId: string;
+  }): Promise<TransferOwnershipResult> {
+    if (input.newOwnerUserId === outsiderId) {
+      return Promise.resolve({ status: "target-not-found" });
+    }
+    const drawing = this.drawings.get(input.drawingId);
+    if (!drawing || drawing.ownerUserId !== input.currentOwnerUserId) {
+      return Promise.resolve({ status: "not-found" });
+    }
+    this.members.delete(`${drawing.id}:${input.newOwnerUserId}`);
+    this.members.set(`${drawing.id}:${input.currentOwnerUserId}`, "editor");
+    drawing.ownerUserId = input.newOwnerUserId;
+    drawing.metadataRevision += 1n;
+    return Promise.resolve({
+      status: "transferred",
+      drawing: { ...drawing, role: "owner" },
+    });
+  }
+}

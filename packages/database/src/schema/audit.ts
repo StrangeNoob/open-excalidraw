@@ -7,8 +7,8 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 
-import { user } from "./auth";
-import { drawings } from "./drawings";
+import { user } from "./auth.js";
+import { drawings } from "./drawings.js";
 
 export const auditEvents = pgTable(
   "audit_events",

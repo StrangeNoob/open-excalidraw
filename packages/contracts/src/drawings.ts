@@ -5,8 +5,8 @@ import {
   revisionSchema,
   roleSchema,
   uuidSchema,
-} from "./common/primitives";
-import { CONTRACT_LIMITS } from "./limits";
+} from "./common/primitives.js";
+import { CONTRACT_LIMITS } from "./limits.js";
 
 export const drawingTitleSchema = z
   .string()

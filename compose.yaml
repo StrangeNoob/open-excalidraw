@@ -7,7 +7,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-open_excalidraw}
       POSTGRES_USER: ${POSTGRES_USER:-open_excalidraw}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     networks:
@@ -37,7 +37,8 @@ services:
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
       APP_PORT: 3000
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?Set BETTER_AUTH_SECRET in .env}
-      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-open_excalidraw}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-open_excalidraw}}
+      ADMIN_RESET_TOKEN: ${ADMIN_RESET_TOKEN:-}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-open_excalidraw}:${POSTGRES_PASSWORD:-}@postgres:5432/${POSTGRES_DB:-open_excalidraw}}
       STORAGE_DRIVER: local
       STORAGE_LOCAL_PATH: /data/assets
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}

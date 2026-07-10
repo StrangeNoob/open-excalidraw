@@ -295,7 +295,7 @@ Owned paths:
 Storage tests:
 
 - Streaming put/get/stat/delete.
-- Atomic temporary write and rename.
+- Atomic temporary write and no-replace publication.
 - Idempotent identical writes.
 - Path traversal impossible.
 - Interrupted writes expose no partial object.

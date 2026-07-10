@@ -4,7 +4,7 @@ import {
   fileIdSchema,
   isoDateTimeSchema,
   uuidSchema,
-} from "./common/primitives";
+} from "./common/primitives.js";
 
 export const assetMetadataSchema = z
   .object({

@@ -1,15 +1,15 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool, type PoolConfig } from "pg";
 
-import { auditEvents } from "./schema/audit";
-import { account, session, user, verification } from "./schema/auth";
-import { drawingAssets } from "./schema/assets";
+import { auditEvents } from "./schema/audit.js";
+import { account, session, user, verification } from "./schema/auth.js";
+import { drawingAssets } from "./schema/assets.js";
 import {
   drawingMutations,
   drawingRevisions,
   drawings,
-} from "./schema/drawings";
-import { drawingInvitations, drawingMembers } from "./schema/sharing";
+} from "./schema/drawings.js";
+import { drawingInvitations, drawingMembers } from "./schema/sharing.js";
 
 export const schema = {
   account,

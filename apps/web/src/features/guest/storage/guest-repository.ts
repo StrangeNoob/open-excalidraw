@@ -86,6 +86,16 @@ export class GuestRepository {
       await assets.put({ ...file, drawingId: input.drawingId });
     }
 
+    const currentAssetIds = new Set(assetIds);
+    const storedAssetKeys = await assets
+      .index("by-drawing")
+      .getAllKeys(input.drawingId);
+    for (const key of storedAssetKeys) {
+      if (!currentAssetIds.has(key[1])) {
+        await assets.delete(key);
+      }
+    }
+
     const next = createSceneRecord(
       { ...input, assetIds },
       (current?.revision ?? 0) + 1,

@@ -1,9 +1,9 @@
 import { z } from "zod";
 
-import { assetManifestSchema } from "./assets";
-import { revisionSchema, roleSchema, uuidSchema } from "./common/primitives";
-import { excalidrawElementSchema, sceneEnvelopeSchema } from "./content";
-import { CONTRACT_LIMITS } from "./limits";
+import { assetManifestSchema } from "./assets.js";
+import { revisionSchema, roleSchema, uuidSchema } from "./common/primitives.js";
+import { excalidrawElementSchema, sceneEnvelopeSchema } from "./content.js";
+import { CONTRACT_LIMITS } from "./limits.js";
 
 export const protocolVersionSchema = z.literal(1);
 

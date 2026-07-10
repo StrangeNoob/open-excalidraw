@@ -1,8 +1,9 @@
 # Single-VPS deployment draft
 
-Status: foundation draft. The production Dockerfiles, migration entrypoint, and
-backup scripts land in later implementation waves. Do not treat this document
-as a release runbook until the release gate marks it complete.
+Status: implementation draft. The production image and migration entrypoint
+are present; backup/restore automation and release hardening land in later
+waves. Do not treat this document as a release runbook until the release gate
+marks it complete.
 
 ## Topology
 
@@ -36,6 +37,7 @@ POSTGRES_DB=open_excalidraw
 POSTGRES_USER=open_excalidraw
 POSTGRES_PASSWORD=replace-with-a-long-random-password
 BETTER_AUTH_SECRET=replace-with-at-least-32-random-characters
+ADMIN_RESET_TOKEN=replace-with-another-long-random-token
 APP_BASE_URL=https://draw.example.com
 DOMAIN=draw.example.com
 ```
@@ -51,11 +53,22 @@ documented with the authentication module.
 SMTP is off when `SMTP_HOST` is blank. In that mode, the application returns
 single-use invitation links to an authorized owner for manual copying. Email
 verification and ordinary email password reset cannot be delivered; the final
-runbook will include the administrative one-time reset-link command. When SMTP
-is enabled, prefer port 465 with `SMTP_SECURE=true` or port 587 with STARTTLS,
-and use a restricted credential.
+runbook will wrap the administrative one-time reset-link endpoint in an
+operator command. Until then, an operator can consume a generated reset URL
+exactly once over the loopback-bound application port:
 
-## Startup (after the deployment image lands)
+```bash
+curl --fail --silent \
+  -H "Authorization: Bearer $ADMIN_RESET_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"email":"person@example.com"}' \
+  http://127.0.0.1:3000/api/admin/manual-reset-links/consume
+```
+
+When SMTP is enabled, prefer port 465 with `SMTP_SECURE=true` or port 587 with
+STARTTLS, and use a restricted credential.
+
+## Startup
 
 The plain local/reverse-proxy shape will use:
 
@@ -73,10 +86,17 @@ docker compose --profile https up -d
 docker compose --profile https ps
 ```
 
+For managed PostgreSQL, set `DATABASE_URL` and apply the overlay; the bundled
+database service remains disabled and no `POSTGRES_PASSWORD` is required:
+
+```bash
+docker compose -f compose.yaml -f compose.managed.yaml up -d
+```
+
 Compose waits for PostgreSQL before starting the application. The application
-image will take a PostgreSQL advisory lock, apply migrations, start the server,
-and expose `/health/live` and `/health/ready`. Do not automate these draft
-commands until that entrypoint exists and its rollback behavior is verified.
+entrypoint takes a PostgreSQL advisory lock, applies checksum-verified
+migrations, starts the server, and exposes `/health/live` and `/health/ready`.
+Do not automate upgrades until backup and rollback behavior is verified.
 
 ## Network and filesystem security
 
@@ -117,6 +137,7 @@ back up before each update. Database migrations are forward-only; rollback is
 therefore an application-plus-data restoration operation unless a release
 explicitly documents backward compatibility.
 
-Managed PostgreSQL and S3-compatible storage are later adapters. Moving to
-either does not change the public application/Caddy topology, but must be
-verified through the same storage contract and restore tests.
+The managed PostgreSQL overlay is available. S3-compatible storage remains a
+later adapter. Moving storage does not change the public application/Caddy
+topology, but must be verified through the same storage contract and restore
+tests.

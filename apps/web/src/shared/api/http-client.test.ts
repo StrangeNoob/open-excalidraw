@@ -49,6 +49,25 @@ describe("HttpApiClient", () => {
     });
   });
 
+  it("surfaces Better Auth error messages", async () => {
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          code: "INVALID_EMAIL_OR_PASSWORD",
+          message: "Invalid email or password",
+        }),
+        { status: 401 },
+      ),
+    );
+    const client = new HttpApiClient({ fetch });
+
+    await expect(client.request("auth/sign-in/email")).rejects.toMatchObject({
+      message: "Invalid email or password",
+      problem: { code: "INVALID_EMAIL_OR_PASSWORD" },
+      status: 401,
+    });
+  });
+
   it("lets the runtime set multipart boundaries for FormData requests", async () => {
     const fetch = vi
       .fn()

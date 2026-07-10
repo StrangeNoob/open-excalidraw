@@ -1,0 +1,11 @@
+.viewer-banner {
+  align-items: center;
+  background: #fff4d6;
+  border: 1px solid #f1c75b;
+  border-radius: 0.75rem;
+  color: #5c4700;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  padding: 0.75rem 1rem;
+}

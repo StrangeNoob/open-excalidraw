@@ -5,7 +5,7 @@ import {
   memberRoleSchema,
   roleSchema,
   uuidSchema,
-} from "./common/primitives";
+} from "./common/primitives.js";
 
 export const drawingMemberSchema = z
   .object({

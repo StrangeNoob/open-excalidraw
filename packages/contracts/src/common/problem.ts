@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { CONTRACT_LIMITS } from "../limits";
+import { CONTRACT_LIMITS } from "../limits.js";
 
 export const problemDetailsSchema = z
   .object({

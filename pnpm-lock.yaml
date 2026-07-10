@@ -64,6 +64,9 @@ importers:
       dotenv:
         specifier: 17.4.2
         version: 17.4.2
+      drizzle-orm:
+        specifier: 0.45.2
+        version: 0.45.2(@types/pg@8.20.0)(kysely@0.29.3)(pg@8.22.0)
       express:
         specifier: 5.2.1
         version: 5.2.1
@@ -76,6 +79,9 @@ importers:
       helmet:
         specifier: 8.2.0
         version: 8.2.0
+      nodemailer:
+        specifier: 9.0.3
+        version: 9.0.3
       pg:
         specifier: 8.22.0
         version: 8.22.0

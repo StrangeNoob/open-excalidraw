@@ -77,8 +77,31 @@ const parseProblem = async (
   response: Response,
 ): Promise<ProblemDetails | null> => {
   try {
-    const result = problemDetailsSchema.safeParse(await response.json());
-    return result.success ? result.data : null;
+    const body: unknown = await response.json();
+    const result = problemDetailsSchema.safeParse(body);
+    if (result.success) {
+      return result.data;
+    }
+
+    if (
+      typeof body === "object" &&
+      body !== null &&
+      "code" in body &&
+      typeof body.code === "string" &&
+      "message" in body &&
+      typeof body.message === "string"
+    ) {
+      const message = body.message.slice(0, 256) || "Authentication failed";
+      return {
+        code: body.code.slice(0, 128) || "AUTH_ERROR",
+        status: response.status,
+        title: message,
+        detail: body.message.slice(0, 4_000),
+        requestId: response.headers.get("x-request-id") ?? "auth-upstream",
+      };
+    }
+
+    return null;
   } catch {
     return null;
   }

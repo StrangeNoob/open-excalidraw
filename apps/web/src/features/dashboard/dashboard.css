@@ -1,0 +1,149 @@
+.dashboard-page {
+  margin: 0 auto;
+  max-width: 78rem;
+  min-height: 100%;
+  padding: 2rem clamp(1rem, 4vw, 3rem) 4rem;
+  width: 100%;
+}
+
+.dashboard-header {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2rem;
+  justify-content: space-between;
+}
+
+.dashboard-eyebrow {
+  color: #6741d9;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+
+.create-drawing,
+.create-drawing label {
+  align-items: end;
+  display: flex;
+  gap: 0.75rem;
+}
+
+.create-drawing label {
+  align-items: start;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.create-drawing input,
+.create-drawing button,
+.drawing-card input,
+.drawing-card button,
+.dashboard-error button {
+  border: 1px solid #c9c9d3;
+  border-radius: 0.6rem;
+  font: inherit;
+  min-height: 2.5rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.dashboard-sections {
+  display: grid;
+  gap: 2.5rem;
+  margin-top: 2.5rem;
+}
+
+.drawing-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+}
+
+.drawing-card {
+  background: white;
+  border: 1px solid #e3e3eb;
+  border-radius: 0.9rem;
+  padding: 1rem;
+}
+
+.drawing-card-heading,
+.drawing-card-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: space-between;
+}
+
+.drawing-card-heading form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.drawing-card-heading label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.drawing-card dl {
+  color: #62626d;
+  font-size: 0.9rem;
+}
+
+.drawing-card dl div {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: 4rem 1fr;
+}
+
+.drawing-card dd {
+  margin: 0;
+}
+
+.role-badge {
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.25rem 0.55rem;
+  text-transform: capitalize;
+}
+
+.role-badge-owner {
+  background: #e5dbff;
+  color: #5f3dc4;
+}
+
+.role-badge-editor {
+  background: #d3f9d8;
+  color: #2b8a3e;
+}
+
+.role-badge-viewer {
+  background: #e7f5ff;
+  color: #1971c2;
+}
+
+.danger-button {
+  color: #c92a2a;
+}
+
+.dashboard-empty,
+.dashboard-error,
+.dashboard-notice {
+  background: #f7f7fb;
+  border-radius: 0.75rem;
+  padding: 1rem;
+}
+
+@media (max-width: 42rem) {
+  .create-drawing,
+  .create-drawing label,
+  .create-drawing input {
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .create-drawing {
+    flex-direction: column;
+  }
+}

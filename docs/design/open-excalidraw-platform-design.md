@@ -301,8 +301,9 @@ Initial safety limits are configurable and default to:
 - 4 MiB per binary asset.
 - 100 asset uploads per minute per user.
 
-Local storage uses atomic temporary-file writes followed by rename. S3 storage
-uses private objects and server-side encryption.
+Local storage uses atomic temporary-file writes followed by a no-replace
+hard-link publication, preventing concurrent writers from overwriting an
+existing object. S3 storage uses private objects and server-side encryption.
 
 ## 10. HTTP API
 

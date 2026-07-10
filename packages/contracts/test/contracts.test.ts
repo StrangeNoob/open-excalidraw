@@ -4,6 +4,7 @@ import {
   clientRealtimeEventSchema,
   createDrawingRequestSchema,
   createInvitationRequestSchema,
+  fileIdSchema,
   problemDetailsSchema,
   revisionSchema,
   roleSchema,
@@ -43,6 +44,8 @@ describe("common contracts", () => {
     expect(roleSchema.safeParse("admin").success).toBe(false);
     expect(revisionSchema.safeParse(1).success).toBe(false);
     expect(revisionSchema.safeParse("01").success).toBe(false);
+    expect(fileIdSchema.safeParse("unsafe/file").success).toBe(false);
+    expect(fileIdSchema.safeParse("safe_file-id").success).toBe(true);
   });
 
   it("requires stable problem detail fields", () => {

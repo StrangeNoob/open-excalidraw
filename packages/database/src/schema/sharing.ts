@@ -11,8 +11,8 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 
-import { citext, user } from "./auth";
-import { drawings } from "./drawings";
+import { citext, user } from "./auth.js";
+import { drawings } from "./drawings.js";
 
 const bytea = customType<{ data: Buffer }>({
   dataType() {

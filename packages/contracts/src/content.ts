@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-import { fileIdSchema, revisionSchema } from "./common/primitives";
-import { CONTRACT_LIMITS } from "./limits";
+import { fileIdSchema, revisionSchema } from "./common/primitives.js";
+import { CONTRACT_LIMITS } from "./limits.js";
 
 export const excalidrawElementSchema = z
   .object({

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { isoDateTimeSchema, uuidSchema } from "./common/primitives";
+import { isoDateTimeSchema, uuidSchema } from "./common/primitives.js";
 
 export const authCapabilitiesSchema = z
   .object({
