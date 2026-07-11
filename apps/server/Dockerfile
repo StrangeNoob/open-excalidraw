@@ -35,18 +35,11 @@ COPY packages/mail/src packages/mail/src
 COPY packages/storage/tsconfig.json packages/storage/
 COPY packages/storage/src packages/storage/src
 RUN pnpm --filter @open-excalidraw/web build
-RUN pnpm exec esbuild apps/server/src/server.ts \
-    --bundle \
-    --platform=node \
-    --format=esm \
-    --target=node22 \
-    --packages=external \
-    --alias:@open-excalidraw/contracts=./packages/contracts/src/index.ts \
-    --alias:@open-excalidraw/database=./packages/database/src/index.ts \
-    --alias:@open-excalidraw/mail=./packages/mail/src/index.ts \
-    --alias:@open-excalidraw/storage=./packages/storage/src/index.ts \
-    --outfile=/output/apps/server/server.mjs
-RUN pnpm exec esbuild packages/database/src/migrate-cli.ts \
+# esbuild is a dev dependency of the server package, so both bundles must be
+# produced through that package rather than with a workspace-root pnpm exec.
+RUN pnpm --filter @open-excalidraw/server run bundle
+RUN pnpm --filter @open-excalidraw/server exec esbuild \
+    ../../packages/database/src/migrate-cli.ts \
     --bundle \
     --platform=node \
     --format=esm \
@@ -70,7 +63,7 @@ RUN addgroup -S -g 10001 open-excalidraw \
 COPY --from=production-dependencies --chown=10001:10001 /workspace/node_modules /app/node_modules
 COPY --from=production-dependencies --chown=10001:10001 /workspace/apps/server/node_modules ./node_modules
 COPY --from=production-dependencies --chown=10001:10001 /workspace/packages/database/node_modules /app/packages/database/node_modules
-COPY --from=build --chown=10001:10001 /output/apps/server/server.mjs ./server.mjs
+COPY --from=build --chown=10001:10001 /workspace/apps/server/dist/server.mjs ./server.mjs
 COPY --from=build --chown=10001:10001 /workspace/apps/web/dist ./public
 COPY --from=build --chown=10001:10001 /output/packages/database/src/migrate.mjs /app/packages/database/src/migrate.mjs
 COPY --from=build --chown=10001:10001 /workspace/packages/database/migrations /app/packages/database/migrations
