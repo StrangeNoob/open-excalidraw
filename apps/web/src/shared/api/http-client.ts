@@ -31,7 +31,7 @@ export class HttpApiClient {
 
   constructor({
     baseUrl = "/api",
-    fetch = globalThis.fetch,
+    fetch = globalThis.fetch.bind(globalThis),
   }: HttpApiClientOptions = {}) {
     this.#baseUrl = baseUrl.replace(/\/$/, "");
     this.#fetch = fetch;

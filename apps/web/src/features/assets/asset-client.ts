@@ -33,7 +33,7 @@ export class AssetClient {
 
   constructor({
     baseUrl = "/api/v1",
-    fetch = globalThis.fetch,
+    fetch = globalThis.fetch.bind(globalThis),
     sha256 = digestSha256,
   }: AssetClientOptions = {}) {
     this.#baseUrl = baseUrl.replace(/\/$/, "");

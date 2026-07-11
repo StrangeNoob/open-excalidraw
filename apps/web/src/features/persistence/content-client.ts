@@ -51,7 +51,7 @@ export class ContentClient {
 
   constructor({
     baseUrl = "/api/v1",
-    fetch = globalThis.fetch,
+    fetch = globalThis.fetch.bind(globalThis),
   }: ContentClientOptions = {}) {
     this.#baseUrl = baseUrl.replace(/\/$/, "");
     this.#fetch = fetch;
