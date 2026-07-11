@@ -1,5 +1,6 @@
 import type { Pool, PoolClient, QueryResultRow } from "pg";
 
+import { insertAuditEvent } from "../audit.js";
 import type {
   ContentAccess,
   ContentRepository,
@@ -56,7 +57,18 @@ export class PostgresContentRepository implements ContentRepository {
         input.actorUserId,
       );
       if (!drawing) return { status: "not-found" };
-      if (drawing.role === "viewer") return { status: "forbidden" };
+      if (drawing.role === "viewer") {
+        if (input.auditRequestId) {
+          await insertAuditEvent(client, {
+            actorUserId: input.actorUserId,
+            drawingId: input.drawingId,
+            eventType: "content.write_rejected",
+            requestId: input.auditRequestId,
+            metadata: { action: "save", role: "viewer" },
+          });
+        }
+        return { status: "forbidden" };
+      }
 
       const prior = await client.query<MutationRow>(
         `SELECT payload_hash, resulting_revision, created_at
@@ -181,6 +193,7 @@ export class PostgresContentRepository implements ContentRepository {
     drawingId: string;
     actorUserId: string;
     revision: bigint;
+    auditRequestId?: string;
   }): Promise<RestoreRevisionResult> {
     return transaction(this.pool, async (client) => {
       const drawing = await lockAccessible(
@@ -189,7 +202,18 @@ export class PostgresContentRepository implements ContentRepository {
         input.actorUserId,
       );
       if (!drawing) return { status: "not-found" };
-      if (drawing.role === "viewer") return { status: "forbidden" };
+      if (drawing.role === "viewer") {
+        if (input.auditRequestId) {
+          await insertAuditEvent(client, {
+            actorUserId: input.actorUserId,
+            drawingId: input.drawingId,
+            eventType: "content.write_rejected",
+            requestId: input.auditRequestId,
+            metadata: { action: "restore", role: "viewer" },
+          });
+        }
+        return { status: "forbidden" };
+      }
       const target = await client.query<{
         scene: StoredContent["scene"];
         scene_format_version: number;
@@ -259,6 +283,18 @@ export class PostgresContentRepository implements ContentRepository {
       const savedAt = updated.rows[0]?.updated_at;
       if (!savedAt)
         throw new Error("Locked drawing disappeared during restore");
+      if (input.auditRequestId) {
+        await insertAuditEvent(client, {
+          actorUserId: input.actorUserId,
+          drawingId: input.drawingId,
+          eventType: "revision.restored",
+          requestId: input.auditRequestId,
+          metadata: {
+            restoredFromRevision: input.revision.toString(),
+            resultingRevision: nextRevision.toString(),
+          },
+        });
+      }
       return { status: "restored", revision: nextRevision, savedAt };
     });
   }

@@ -26,6 +26,7 @@ export interface SaveContentInput {
   sceneBytes: number;
   assetIds: string[];
   checkpointIntervalMs: number;
+  auditRequestId?: string;
 }
 
 export type SaveContentResult =
@@ -61,6 +62,7 @@ export interface ContentRepository {
     drawingId: string;
     actorUserId: string;
     revision: bigint;
+    auditRequestId?: string;
   }): Promise<RestoreRevisionResult>;
 }
 

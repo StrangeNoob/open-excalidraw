@@ -69,6 +69,7 @@ export class SharingService {
     actorUserId: string,
     drawingId: string,
     input: { email: string; role: MemberRole },
+    auditRequestId?: string,
   ): Promise<CreateInvitationResponse> {
     const token = randomBytes(32).toString("base64url");
     const result = await this.#repository.createShare({
@@ -78,10 +79,18 @@ export class SharingService {
       role: input.role,
       tokenHash: tokenHash(token),
       expiresAt: new Date(Date.now() + this.#invitationLifetimeMs),
+      ...(auditRequestId ? { auditRequestId } : {}),
     });
     if (result.status === "not-found") throw notFound();
     if (result.status === "forbidden") throw forbidden();
     if (result.status === "membership") {
+      if (result.member.role !== "owner") {
+        this.#membershipEvents?.roleChanged(
+          drawingId,
+          result.member.userId,
+          result.member.role,
+        );
+      }
       return createInvitationResponseSchema.parse({
         membership: toMember(result.member),
         deliveryStatus: "not-needed",
@@ -127,12 +136,14 @@ export class SharingService {
     drawingId: string,
     memberUserId: string,
     role: MemberRole,
+    auditRequestId?: string,
   ) {
     const result = await this.#repository.updateMember({
       drawingId,
       actorUserId,
       memberUserId,
       role,
+      ...(auditRequestId ? { auditRequestId } : {}),
     });
     this.#handleMutationResult(result, "updated");
     this.#membershipEvents?.roleChanged(drawingId, memberUserId, role);
@@ -142,11 +153,13 @@ export class SharingService {
     actorUserId: string,
     drawingId: string,
     memberUserId: string,
+    auditRequestId?: string,
   ) {
     const result = await this.#repository.removeMember({
       drawingId,
       actorUserId,
       memberUserId,
+      ...(auditRequestId ? { auditRequestId } : {}),
     });
     this.#handleMutationResult(result, "removed");
     this.#membershipEvents?.revoked(drawingId, memberUserId);
@@ -156,11 +169,13 @@ export class SharingService {
     actorUserId: string,
     drawingId: string,
     invitationId: string,
+    auditRequestId?: string,
   ) {
     const result = await this.#repository.revokeInvitation({
       drawingId,
       actorUserId,
       invitationId,
+      ...(auditRequestId ? { auditRequestId } : {}),
     });
     this.#handleMutationResult(result, "revoked");
   }
@@ -174,13 +189,18 @@ export class SharingService {
     };
   }
 
-  public async accept(identity: RequestIdentity, token: string) {
+  public async accept(
+    identity: RequestIdentity,
+    token: string,
+    auditRequestId?: string,
+  ) {
     const result = await this.#repository.accept({
       tokenHash: tokenHash(token),
       userId: identity.userId,
       email: normalizeEmail(identity.email),
       emailVerified: identity.emailVerified,
       requireVerifiedEmail: this.#requireVerifiedEmail,
+      ...(auditRequestId ? { auditRequestId } : {}),
     });
     switch (result.status) {
       case "accepted":

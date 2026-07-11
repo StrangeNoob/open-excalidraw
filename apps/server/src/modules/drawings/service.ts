@@ -78,11 +78,16 @@ export class DrawingService {
     return toDrawingSummary(result.drawing);
   }
 
-  public async delete(userId: string, drawingId: string): Promise<void> {
+  public async delete(
+    userId: string,
+    drawingId: string,
+    auditRequestId?: string,
+  ): Promise<void> {
     await this.requireAccess(userId, drawingId, "delete");
     const result = await this.repository.softDelete({
       drawingId,
       ownerUserId: userId,
+      ...(auditRequestId ? { auditRequestId } : {}),
     });
     if (result === "not-found") {
       throw notFound();
@@ -112,6 +117,7 @@ export class DrawingService {
     userId: string,
     drawingId: string,
     newOwnerUserId: string,
+    auditRequestId?: string,
   ): Promise<DrawingSummary> {
     await this.requireAccess(userId, drawingId, "transfer-ownership");
     if (userId === newOwnerUserId) {
@@ -126,6 +132,7 @@ export class DrawingService {
       drawingId,
       currentOwnerUserId: userId,
       newOwnerUserId,
+      ...(auditRequestId ? { auditRequestId } : {}),
     });
     if (result.status === "not-found") {
       throw notFound();

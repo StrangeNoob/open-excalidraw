@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 import express, {
@@ -6,14 +5,20 @@ import express, {
   type Express,
   type RequestHandler,
 } from "express";
+import helmet from "helmet";
+
+import { safeRequestId } from "./http/request-context.js";
+import { requireSameOrigin } from "./http/same-origin.js";
 
 export interface CreateAppOptions {
+  allowedOrigins?: readonly string[];
   readiness?: () => Promise<void>;
   routers?: readonly RequestHandler[];
   staticDirectory?: string;
 }
 
 export const createApp = ({
+  allowedOrigins = [],
   readiness,
   routers = [],
   staticDirectory,
@@ -21,12 +26,41 @@ export const createApp = ({
   const app = express();
 
   app.disable("x-powered-by");
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          baseUri: ["'self'"],
+          childSrc: ["'self'", "blob:"],
+          connectSrc: ["'self'", "ws:", "wss:"],
+          defaultSrc: ["'self'"],
+          fontSrc: ["'self'", "data:"],
+          formAction: ["'self'"],
+          frameAncestors: ["'self'"],
+          imgSrc: ["'self'", "blob:", "data:"],
+          objectSrc: ["'none'"],
+          scriptSrc: ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          workerSrc: ["'self'", "blob:"],
+        },
+      },
+      crossOriginEmbedderPolicy: false,
+      strictTransportSecurity: false,
+    }),
+  );
+  app.use((request, response, next) => {
+    const requestId = safeRequestId(request.get("x-request-id"));
+    response.locals.requestId = requestId;
+    response.set("x-request-id", requestId);
+    next();
+  });
   app.use((request, _response, next) => {
     if (!request.headers["x-real-ip"] && request.socket.remoteAddress) {
       request.headers["x-real-ip"] = request.socket.remoteAddress;
     }
     next();
   });
+  app.use(requireSameOrigin(allowedOrigins));
   app.use(express.json({ limit: "10mb" }));
   app.get("/health/live", (_request, response) => {
     response.status(200).json({ status: "ok" });
@@ -42,19 +76,14 @@ export const createApp = ({
 
   routers.forEach((router) => app.use(router));
 
-  app.use("/api", (request, response) => {
-    const requestId =
-      request.get("x-request-id")?.slice(0, 128) || randomUUID();
-    response
-      .status(404)
-      .set("x-request-id", requestId)
-      .type("application/problem+json")
-      .json({
-        code: "NOT_FOUND",
-        status: 404,
-        title: "API route not found",
-        requestId,
-      });
+  app.use("/api", (_request, response) => {
+    const requestId = response.locals.requestId as string;
+    response.status(404).type("application/problem+json").json({
+      code: "NOT_FOUND",
+      status: 404,
+      title: "API route not found",
+      requestId,
+    });
   });
 
   if (staticDirectory) {
@@ -70,23 +99,18 @@ export const createApp = ({
 
   const errorHandler: ErrorRequestHandler = (
     _error,
-    request,
+    _request,
     response,
     _next,
   ) => {
     void _next;
-    const requestId =
-      request.get("x-request-id")?.slice(0, 128) || randomUUID();
-    response
-      .status(500)
-      .set("x-request-id", requestId)
-      .type("application/problem+json")
-      .json({
-        code: "INTERNAL_ERROR",
-        status: 500,
-        title: "The request could not be completed",
-        requestId,
-      });
+    const requestId = response.locals.requestId as string;
+    response.status(500).type("application/problem+json").json({
+      code: "INTERNAL_ERROR",
+      status: 500,
+      title: "The request could not be completed",
+      requestId,
+    });
   };
   app.use(errorHandler);
 

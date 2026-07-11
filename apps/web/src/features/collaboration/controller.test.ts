@@ -368,6 +368,81 @@ describe("CollaborationController", () => {
     expect(fixture.transport.emitted.at(-1)?.type).toBe("presence.update");
   });
 
+  it("pauses local and periodic writes around a restore boundary and resumes after failure", async () => {
+    const fixture = setup();
+    await waitFor(() => expect(fixture.controller.state.status).toBe("ready"));
+    fixture.transport.emitted.length = 0;
+    fixture.controller.onChange([element(2)]);
+
+    await fixture.controller.pauseWrites();
+    const mutation = [...fixture.outbox.records.values()][0]!;
+    expect(fixture.transport.emitted.at(-1)).toMatchObject({
+      mutationId: mutation.mutationId,
+      type: "scene.mutate",
+    });
+
+    fixture.controller.onChange([element(3)]);
+    await vi.advanceTimersByTimeAsync(21_000);
+    expect(
+      fixture.transport.emitted.filter(({ type }) => type === "scene.mutate"),
+    ).toHaveLength(1);
+
+    fixture.transport.server({
+      mutationId: mutation.mutationId,
+      revision: "2",
+      status: "duplicate",
+      type: "scene.ack",
+    });
+    await waitFor(() => expect(fixture.outbox.records.size).toBe(0));
+    await fixture.controller.resumeWrites();
+    fixture.controller.onChange([element(3)]);
+    await fixture.controller.flush();
+    expect(
+      fixture.transport.emitted.filter(({ type }) => type === "scene.mutate"),
+    ).toHaveLength(2);
+  });
+
+  it("suppresses full-scene writes while a requested resync is joining", async () => {
+    const fixture = setup();
+    await waitFor(() => expect(fixture.controller.state.status).toBe("ready"));
+    fixture.transport.emitted.length = 0;
+
+    fixture.transport.server({
+      reason: "revision-restored",
+      revision: "2",
+      type: "room.resyncRequired",
+    });
+    await waitFor(() =>
+      expect(fixture.controller.state.status).toBe("joining"),
+    );
+    await vi.advanceTimersByTimeAsync(21_000);
+
+    expect(
+      fixture.transport.emitted.filter(({ type }) => type === "scene.mutate"),
+    ).toEqual([]);
+  });
+
+  it("clears write authority on the actual membership-revoked protocol code", async () => {
+    const fixture = setup();
+    await waitFor(() => expect(fixture.controller.state.status).toBe("ready"));
+    fixture.transport.emitted.length = 0;
+
+    fixture.transport.server({
+      code: "SOCKET_MEMBERSHIP_REVOKED",
+      message: "Drawing access was revoked",
+      requestId: "revoked-request",
+      retryable: false,
+      type: "protocol.error",
+    });
+    await waitFor(() => expect(fixture.controller.state.role).toBeNull());
+    fixture.controller.onChange([element(2)]);
+    await vi.advanceTimersByTimeAsync(21_000);
+
+    expect(
+      fixture.transport.emitted.filter(({ type }) => type.startsWith("scene.")),
+    ).toEqual([]);
+  });
+
   it("rebases persisted pending elements before reconnect resubmission", async () => {
     const outbox = new MemoryOutbox();
     const pending: CloudOutboxRecord = {

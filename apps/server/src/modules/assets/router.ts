@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { pipeline } from "node:stream/promises";
 
 import express, {
@@ -7,6 +6,8 @@ import express, {
   type Response,
   type Router,
 } from "express";
+
+import { requestIdFor } from "../../http/request-context.js";
 
 import { AssetError, assetError } from "./errors.js";
 import { ASSET_CHECKSUM_HEADER, DEFAULT_MAX_ASSET_BYTES } from "./service.js";
@@ -88,8 +89,7 @@ export function createAssetRouter(options: CreateAssetRouterOptions): Router {
       error,
       options.service.maxAssetBytes,
     );
-    const requestId =
-      request.get("x-request-id")?.slice(0, 128) || randomUUID();
+    const requestId = requestIdFor(request, response);
     response.set("x-request-id", requestId);
     if (normalized.status === 401) {
       response.set("www-authenticate", "Session");

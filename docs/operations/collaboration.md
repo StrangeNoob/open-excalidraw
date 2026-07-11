@@ -16,6 +16,9 @@ claims are rejected.
    snapshot. It then emits `room.ready` and joins the Socket.IO drawing room.
 4. A revision mismatch emits `room.resyncRequired` before the authoritative
    `room.ready` snapshot. The snapshot never comes from another browser.
+   A successful revision restore emits the same resync instruction to every
+   connected member so their next snapshot comes from the restored canonical
+   PostgreSQL revision.
 5. Every later preview, mutation, and presence event revalidates the session.
    Mutation and preview services additionally recheck live membership.
 6. Disconnect removes the connection from the room registry and presence

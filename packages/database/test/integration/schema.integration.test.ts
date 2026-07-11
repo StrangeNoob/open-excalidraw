@@ -99,6 +99,7 @@ describe("initial PostgreSQL migration", () => {
     expect(first.applied.map(({ name }) => name)).toEqual([
       "0001_initial.sql",
       "0002_mutation_noop.sql",
+      "0003_asset_cleanup_state.sql",
     ]);
     expect(second.alreadyApplied).toEqual(first.applied);
     expect(record.rows).toEqual(first.applied);

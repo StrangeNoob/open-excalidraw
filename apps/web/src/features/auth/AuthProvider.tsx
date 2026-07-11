@@ -36,7 +36,9 @@ export interface AuthContextValue {
   capabilities: AuthCapabilities;
   logout(): Promise<void>;
   refresh(): Promise<SessionResponse>;
+  requestPasswordReset(email: string, redirectTo: string): Promise<void>;
   resendVerification(email: string, callbackURL: string): Promise<void>;
+  resetPassword(newPassword: string, token: string): Promise<void>;
   signIn(input: EmailSignInInput): Promise<SessionResponse>;
   signUp(input: EmailSignUpInput): Promise<SessionResponse>;
   startOAuth(provider: OAuthProvider, returnPath: string): Promise<void>;
@@ -152,8 +154,12 @@ export const AuthProvider = ({
       capabilities: session.capabilities,
       logout,
       refresh,
+      requestPasswordReset: (email, redirectTo) =>
+        client.requestPasswordReset(email, redirectTo),
       resendVerification: (email, callbackURL) =>
         client.resendVerification(email, callbackURL),
+      resetPassword: (newPassword, token) =>
+        client.resetPassword(newPassword, token),
       signIn,
       signUp,
       startOAuth: (provider, returnPath) =>

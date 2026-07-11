@@ -83,6 +83,21 @@ describe("collaboration socket gateway", () => {
       ),
     );
     expect(fixture.mutate).not.toHaveBeenCalled();
+    expect(fixture.securityAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "scene.mutate",
+        actorUserId: VIEWER_ID,
+        drawingId: DRAWING_ID,
+      }),
+    );
+
+    viewer.clientEmit("scene.preview", previewEvent());
+    await vi.waitFor(() =>
+      expect(fixture.securityAudit).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "scene.preview" }),
+      ),
+    );
+    expect(fixture.preview.latest(viewer.id)).toBeNull();
 
     editor.clientEmit(
       "scene.mutate",
@@ -174,6 +189,26 @@ describe("collaboration socket gateway", () => {
       snapshot: fixture.snapshot.snapshot,
       type: "room.ready",
     });
+  });
+
+  it("requests a canonical resync for every socket after a revision restore", async () => {
+    const fixture = createFixture();
+    fixture.roles.set(roleKey(EDITOR_ID), "editor");
+    fixture.roles.set(roleKey(VIEWER_ID), "viewer");
+    const editor = fixture.connect("restore-editor", EDITOR_ID);
+    const viewer = fixture.connect("restore-viewer", VIEWER_ID);
+    await join(editor);
+    await join(viewer);
+
+    fixture.rooms.requestResync(DRAWING_ID, 12n, "revision-restored");
+
+    const expected = {
+      reason: "revision-restored",
+      revision: "12",
+      type: "room.resyncRequired",
+    };
+    expect(editor.events("room.resyncRequired")).toContainEqual(expected);
+    expect(viewer.events("room.resyncRequired")).toContainEqual(expected);
   });
 
   it("expires silent presence and disconnects the stale socket", async () => {
@@ -272,6 +307,7 @@ function createFixture(
   const presence = new FakePresenceService();
   const preview = new FakePreviewService();
   const sessionActive = vi.fn().mockResolvedValue(true);
+  const securityAudit = vi.fn().mockResolvedValue(undefined);
   const snapshot: GatewaySnapshot = {
     assetManifest: [],
     drawingId: DRAWING_ID,
@@ -311,6 +347,7 @@ function createFixture(
     presenceSweepIntervalMs: overrides.presenceSweepIntervalMs,
     previewService: preview,
     roomRegistry: rooms,
+    securityAudit,
     sessionValidityResolver: { isSessionActive: sessionActive },
     snapshotProvider: {
       loadSnapshot: (drawingId, userId) => {
@@ -336,6 +373,7 @@ function createFixture(
     preview,
     roles,
     rooms,
+    securityAudit,
     server,
     sessionActive,
     snapshot,
@@ -475,6 +513,21 @@ class FakeRoomRegistry {
       }
     }
     return revoked;
+  }
+
+  requestResync(
+    drawingId: string,
+    revision: bigint,
+    reason: "revision-restored",
+  ) {
+    const event: GatewayRoomEvent = {
+      drawingId,
+      reason,
+      revision,
+      type: "resync-requested",
+    };
+    for (const listener of this.#listeners) listener(event);
+    return event;
   }
 
   subscribe(listener: (event: GatewayRoomEvent) => void) {

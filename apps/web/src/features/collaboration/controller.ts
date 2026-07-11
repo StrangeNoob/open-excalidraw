@@ -108,6 +108,9 @@ export class CollaborationController {
   #eventChain = Promise.resolve();
   #started = false;
   #disposed = false;
+  #writesPaused = false;
+  #resyncing = false;
+  #writeEpoch = 0;
 
   constructor(options: CollaborationControllerOptions) {
     this.#drawingId = options.drawingId;
@@ -191,7 +194,7 @@ export class CollaborationController {
     appState?: AppState,
     files?: BinaryFiles,
   ): void {
-    if (!this.#canEdit()) return;
+    if (!this.#canEdit() || this.#writesSuspended()) return;
     if (files) this.#latestFiles = { ...files };
     const changed = this.#versions.takeLocalChanges(elements);
     const nextSharedSceneState = appState
@@ -226,6 +229,28 @@ export class CollaborationController {
 
   flush(): Promise<void> {
     return this.#flushDurable(false);
+  }
+
+  async pauseWrites(): Promise<void> {
+    if (this.#writesPaused) return;
+    this.#writesPaused = true;
+    this.#writeEpoch += 1;
+    this.#clearWriteTimers();
+    await this.#flushDurable(false, true, false, true);
+  }
+
+  async resumeWrites(): Promise<void> {
+    if (!this.#writesPaused) return;
+    this.#writesPaused = false;
+    if (this.#resyncing || !this.#started) return;
+    const pending = await this.#outbox.list(this.#userId, this.#drawingId);
+    if (pending.length > 0 && this.#state.status === "ready") {
+      this.#join();
+      return;
+    }
+    if (this.#dirty.size > 0 || this.#dirtySharedSceneState) {
+      this.#scheduleDurable();
+    }
   }
 
   #handlers(): RealtimeTransportHandlers {
@@ -288,6 +313,9 @@ export class CollaborationController {
         await this.#roleChanged(event.role);
         return;
       case "room.resyncRequired":
+        this.#resyncing = true;
+        this.#writeEpoch += 1;
+        this.#clearWriteTimers();
         this.#remotePreviews.clear();
         await this.#applyCanonicalWithOwned();
         this.#join();
@@ -299,8 +327,15 @@ export class CollaborationController {
           requestId: event.requestId,
           retryable: event.retryable,
         };
+        const membershipRevoked = problem.code === "SOCKET_MEMBERSHIP_REVOKED";
+        if (membershipRevoked) {
+          this.#writeEpoch += 1;
+          this.#clearWriteTimers();
+          this.#preview.clear();
+        }
         this.#setState({
           error: problem,
+          ...(membershipRevoked ? { role: null } : {}),
           status: isEventLocalProblem(problem) ? this.#state.status : "error",
         });
         return;
@@ -309,6 +344,7 @@ export class CollaborationController {
   }
 
   async #ready(event: RoomReadyEvent) {
+    this.#resyncing = false;
     this.#remotePreviews.clear();
     this.#canonicalElements = [...event.snapshot.elements];
     this.#canonicalSharedSceneState = normalizeSharedSceneState(
@@ -362,11 +398,17 @@ export class CollaborationController {
     });
     this.#transport.emit(this.#lastPresence);
 
-    if (canWrite(event.role)) {
+    if (!this.#writesPaused && canWrite(event.role)) {
       for (const record of rebased) {
         await this.#uploadRecordAssets(record);
         this.#transport.emit(toMutationEvent(record));
       }
+    }
+    if (
+      !this.#writesPaused &&
+      (this.#dirty.size > 0 || this.#dirtySharedSceneState)
+    ) {
+      this.#scheduleDurable();
     }
   }
 
@@ -533,9 +575,13 @@ export class CollaborationController {
     full: boolean,
     allowEmit = true,
     forcePersist = false,
+    allowSuspended = false,
   ): Promise<void> {
+    const writeEpoch = this.#writeEpoch;
     if (
-      (!this.#canEdit() && !forcePersist) ||
+      ((!this.#canEdit() || this.#writesSuspended()) &&
+        !forcePersist &&
+        !allowSuspended) ||
       (!full && this.#dirty.size === 0 && !this.#dirtySharedSceneState)
     ) {
       return;
@@ -550,6 +596,7 @@ export class CollaborationController {
     const pendingSharedSceneState = full
       ? await this.#ownedSharedSceneState()
       : this.#dirtySharedSceneState;
+    if (!allowSuspended && writeEpoch !== this.#writeEpoch) return;
     if (elements.length === 0 && !pendingSharedSceneState) return;
     const mutationId = this.#createId();
     const files = filesForElements(elements, this.#latestFiles);
@@ -588,7 +635,7 @@ export class CollaborationController {
     if (this.#dirty.size === 0 && !this.#dirtySharedSceneState) {
       this.#durableFirstDirtyAt = null;
     }
-    if (allowEmit && this.#canWrite()) {
+    if (allowEmit && this.#canWrite(allowSuspended)) {
       await this.#uploadRecordAssets(record);
       this.#transport.emit(toMutationEvent(record));
     }
@@ -641,12 +688,20 @@ export class CollaborationController {
     }
   }
 
-  #canWrite() {
-    return this.#state.status === "ready" && canWrite(this.#state.role);
+  #canWrite(allowSuspended = false) {
+    return (
+      (allowSuspended || !this.#writesSuspended()) &&
+      this.#state.status === "ready" &&
+      canWrite(this.#state.role)
+    );
   }
 
   #canEdit() {
     return canWrite(this.#state.role);
+  }
+
+  #writesSuspended() {
+    return this.#writesPaused || this.#resyncing;
   }
 
   async #uploadRecordAssets(record: CloudOutboxRecord) {

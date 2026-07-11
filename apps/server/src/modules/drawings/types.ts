@@ -52,6 +52,7 @@ export interface DrawingRepository {
   softDelete(input: {
     drawingId: string;
     ownerUserId: string;
+    auditRequestId?: string;
   }): Promise<DeleteDrawingResult>;
   leave(input: {
     drawingId: string;
@@ -61,6 +62,7 @@ export interface DrawingRepository {
     drawingId: string;
     currentOwnerUserId: string;
     newOwnerUserId: string;
+    auditRequestId?: string;
   }): Promise<TransferOwnershipResult>;
 }
 

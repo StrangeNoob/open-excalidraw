@@ -119,7 +119,12 @@ export const roomResyncRequiredEventSchema = z
   .object({
     type: z.literal("room.resyncRequired"),
     revision: revisionSchema,
-    reason: z.enum(["revision-gap", "stale-preview", "server-restart"]),
+    reason: z.enum([
+      "revision-gap",
+      "revision-restored",
+      "stale-preview",
+      "server-restart",
+    ]),
   })
   .strict();
 

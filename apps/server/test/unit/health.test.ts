@@ -13,6 +13,70 @@ describe("health endpoint", () => {
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ status: "ok" });
+    expect(response.headers["x-content-type-options"]).toBe("nosniff");
+    expect(response.headers["x-frame-options"]).toBe("SAMEORIGIN");
+    expect(response.headers["content-security-policy"]).toContain(
+      "worker-src 'self' blob:",
+    );
+    expect(response.headers["x-request-id"]).toMatch(/^[A-Za-z0-9-]+$/);
+  });
+
+  it("preserves a safe caller request ID on success and errors", async () => {
+    const app = createApp();
+
+    await request(app)
+      .get("/health/live")
+      .set("x-request-id", "edge:request-123")
+      .expect("x-request-id", "edge:request-123")
+      .expect(200);
+    const missing = await request(app)
+      .get("/api/v1/missing")
+      .set("x-request-id", "edge:request-456")
+      .expect("x-request-id", "edge:request-456")
+      .expect(404);
+    expect(missing.body.requestId).toBe("edge:request-456");
+
+    const rejectedId = await request(app)
+      .get("/api/v1/missing")
+      .set("x-request-id", "not a safe request id")
+      .expect(404);
+    expect(rejectedId.headers["x-request-id"]).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f-]{27}$/,
+    );
+    expect(rejectedId.body.requestId).toBe(rejectedId.headers["x-request-id"]);
+  });
+
+  it("rejects unsafe browser requests from untrusted origins", async () => {
+    const router = Router()
+      .post("/api/v1/change", (_request, response) =>
+        response.status(204).end(),
+      )
+      .get("/api/auth/callback/provider", (_request, response) =>
+        response.status(204).end(),
+      );
+    const app = createApp({
+      allowedOrigins: ["https://draw.example.test"],
+      routers: [router],
+    });
+
+    await request(app)
+      .post("/api/v1/change")
+      .set("origin", "https://draw.example.test")
+      .expect(204);
+    await request(app).post("/api/v1/change").expect(204);
+    const rejected = await request(app)
+      .post("/api/v1/change")
+      .set("origin", "https://evil.example.test")
+      .expect(403);
+    expect(rejected.body).toMatchObject({ code: "ORIGIN_NOT_ALLOWED" });
+    await request(app)
+      .post("/api/v1/change")
+      .set("sec-fetch-site", "cross-site")
+      .expect(403);
+    await request(app)
+      .get("/api/auth/callback/provider")
+      .set("origin", "https://accounts.example.test")
+      .expect(204);
   });
 
   it("reports readiness failures without changing liveness", async () => {

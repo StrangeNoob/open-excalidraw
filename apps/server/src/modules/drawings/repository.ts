@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Pool, PoolClient, QueryResultRow } from "pg";
 
+import { insertAuditEvent } from "../audit.js";
 import type {
   AccessibleDrawing,
   DrawingRepository,
@@ -170,9 +171,29 @@ export class PostgresDrawingRepository implements DrawingRepository {
     return drawing ? { status: "updated", drawing } : { status: "not-found" };
   }
 
-  public async softDelete(input: { drawingId: string; ownerUserId: string }) {
-    const result = await this.pool.query(
-      `
+  public async softDelete(input: {
+    drawingId: string;
+    ownerUserId: string;
+    auditRequestId?: string;
+  }) {
+    const result = input.auditRequestId
+      ? await this.pool.query(
+          `WITH deleted AS (
+             UPDATE drawings
+             SET deleted_at = now(), updated_at = now(),
+                 metadata_revision = metadata_revision + 1
+             WHERE id = $1 AND owner_user_id = $2 AND deleted_at IS NULL
+             RETURNING id
+           )
+           INSERT INTO audit_events
+             (actor_user_id, drawing_id, event_type, request_id, metadata)
+           SELECT $2, deleted.id, 'drawing.deleted', $3, '{}'::jsonb
+           FROM deleted
+           RETURNING id`,
+          [input.drawingId, input.ownerUserId, input.auditRequestId],
+        )
+      : await this.pool.query(
+          `
         UPDATE drawings
         SET
           deleted_at = now(),
@@ -180,8 +201,8 @@ export class PostgresDrawingRepository implements DrawingRepository {
           metadata_revision = metadata_revision + 1
         WHERE id = $1 AND owner_user_id = $2 AND deleted_at IS NULL
       `,
-      [input.drawingId, input.ownerUserId],
-    );
+          [input.drawingId, input.ownerUserId],
+        );
     return result.rowCount === 1 ? "deleted" : "not-found";
   }
 
@@ -216,6 +237,7 @@ export class PostgresDrawingRepository implements DrawingRepository {
     drawingId: string;
     currentOwnerUserId: string;
     newOwnerUserId: string;
+    auditRequestId?: string;
   }): Promise<TransferOwnershipResult> {
     const client = await this.pool.connect();
     try {
@@ -269,6 +291,15 @@ export class PostgresDrawingRepository implements DrawingRepository {
       );
       if (!drawing) {
         throw new Error("Transferred drawing could not be reloaded");
+      }
+      if (input.auditRequestId) {
+        await insertAuditEvent(client, {
+          actorUserId: input.currentOwnerUserId,
+          drawingId: input.drawingId,
+          eventType: "drawing.ownership_transferred",
+          requestId: input.auditRequestId,
+          metadata: { newOwnerUserId: input.newOwnerUserId },
+        });
       }
       await client.query("COMMIT");
       return { status: "transferred", drawing };

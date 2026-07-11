@@ -41,6 +41,7 @@ export const drawingAssets = pgTable(
       .notNull(),
     lastReferencedAt: timestamp("last_referenced_at", { withTimezone: true }),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    storageDeletedAt: timestamp("storage_deleted_at", { withTimezone: true }),
   },
   (table) => [
     uniqueIndex("drawing_assets_storage_key_unique").on(table.storageKey),
@@ -55,6 +56,11 @@ export const drawingAssets = pgTable(
       table.lastReferencedAt,
       table.createdAt,
     ),
+    index("drawing_assets_pending_storage_cleanup_idx")
+      .on(table.deletedAt, table.id)
+      .where(
+        sql`${table.deletedAt} is not null and ${table.storageDeletedAt} is null`,
+      ),
     check("drawing_assets_file_id_not_empty", sql`length(${table.fileId}) > 0`),
     check(
       "drawing_assets_mime_type_not_empty",

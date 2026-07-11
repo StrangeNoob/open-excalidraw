@@ -53,8 +53,17 @@ import {
   type AutosaveState,
   type LoadedContent,
 } from "../persistence";
+import {
+  RevisionClient,
+  RevisionHistoryDialog,
+  type RevisionSource,
+  type RestoreResponse,
+} from "../revisions";
+import { SharingClient, SharingDialog, type SharingSource } from "../sharing";
 
 import { DrawingMetadataClient, type DrawingMetadataSource } from "./api";
+import { effectiveWorkspaceRole, isMembershipRevoked } from "./access-state";
+import { restoreWithRealtimeBoundary } from "./restore-boundary";
 
 import "./workspace.css";
 
@@ -78,6 +87,8 @@ export interface DrawingWorkspaceDependencies {
   hydrate?: typeof hydrateAssets;
   metadata?: DrawingMetadataSource;
   recovery?: RecoverySource;
+  revisions?: RevisionSource;
+  sharing?: SharingSource;
 }
 
 export interface DrawingPageProps {
@@ -133,6 +144,8 @@ export const DrawingPage = ({
     content: new ContentClient(),
     metadata: new DrawingMetadataClient(),
     recovery: new CloudRecoveryRepository(),
+    revisions: new RevisionClient(),
+    sharing: new SharingClient(),
   }));
 
   const resolved = useMemo(
@@ -148,6 +161,8 @@ export const DrawingPage = ({
       Host: dependencies?.host ?? ExcalidrawHost,
       metadata: dependencies?.metadata ?? ownedDefaults.metadata,
       recovery: dependencies?.recovery ?? ownedDefaults.recovery,
+      revisions: dependencies?.revisions ?? ownedDefaults.revisions,
+      sharing: dependencies?.sharing ?? ownedDefaults.sharing,
     }),
     [dependencies, ownedDefaults],
   );
@@ -163,10 +178,14 @@ export const DrawingPage = ({
   const collaborationControllerRef = useRef<CollaborationController | null>(
     null,
   );
+  const collaborationOutboxRef = useRef<CloudOutboxDb | null>(null);
   const pendingRealtimeChangeRef = useRef<PendingRealtimeChange | null>(null);
   const [collaboration, setCollaboration] = useState<CollaborationState>(
     EMPTY_COLLABORATION_STATE,
   );
+  const [sharingOpen, setSharingOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [restoringRevision, setRestoringRevision] = useState(false);
   const [editorApi, setEditorApi] = useState<ExcalidrawImperativeAPI | null>(
     null,
   );
@@ -195,6 +214,7 @@ export const DrawingPage = ({
         setConflictLoadError(null);
         setEditorApi(null);
         setAssetFailures(new Map());
+        setRestoringRevision(false);
       }
     });
 
@@ -267,6 +287,7 @@ export const DrawingPage = ({
     }
 
     const outbox = new CloudOutboxDb();
+    collaborationOutboxRef.current = outbox;
     const uploads = new AssetUploadManager({ client: resolved.assets });
     const realtime = new CollaborationController({
       drawingId,
@@ -299,6 +320,9 @@ export const DrawingPage = ({
       unsubscribe();
       if (collaborationControllerRef.current === realtime) {
         collaborationControllerRef.current = null;
+      }
+      if (collaborationOutboxRef.current === outbox) {
+        collaborationOutboxRef.current = null;
       }
       setCollaboration(EMPTY_COLLABORATION_STATE);
       void realtime
@@ -380,7 +404,12 @@ export const DrawingPage = ({
       if (!controller || !workspace) {
         return;
       }
-      const effectiveRole = collaboration.role ?? workspace.drawing.role;
+      const effectiveRole = effectiveWorkspaceRole(
+        workspace.drawing.role,
+        collaboration.role,
+        collaboration.error?.code,
+      );
+      if (!effectiveRole) return;
       const capabilities = getDrawingCapabilities(effectiveRole);
       if (!capabilities.editScene || !capabilities.uploadAssets) {
         return;
@@ -416,6 +445,7 @@ export const DrawingPage = ({
     },
     [
       collaboration.role,
+      collaboration.error?.code,
       collaborationEnabled,
       controller,
       drawingId,
@@ -452,6 +482,35 @@ export const DrawingPage = ({
     [controller, drawingId, editorApi, userId],
   );
 
+  const restoreRevision = useCallback(
+    async (
+      revision: string,
+      revisionSource: RevisionSource,
+    ): Promise<RestoreResponse> => {
+      const realtime = collaborationControllerRef.current;
+      const outbox = collaborationOutboxRef.current;
+      setRestoringRevision(true);
+      try {
+        const restored = await restoreWithRealtimeBoundary({
+          autosave: controller,
+          drawingId,
+          outbox,
+          realtime,
+          restore: () => revisionSource.restore(drawingId, revision),
+          userId,
+        });
+        if (realtime && collaborationControllerRef.current === realtime) {
+          collaborationControllerRef.current = null;
+        }
+        return restored;
+      } catch (caught) {
+        setRestoringRevision(false);
+        throw caught;
+      }
+    },
+    [controller, drawingId, userId],
+  );
+
   if (workspaceLoadError) {
     return (
       <main className="drawing-workspace drawing-workspace--centered">
@@ -477,8 +536,13 @@ export const DrawingPage = ({
     );
   }
 
-  const effectiveRole = collaboration.role ?? workspace.drawing.role;
-  const capabilities = getDrawingCapabilities(effectiveRole);
+  const accessRevoked = isMembershipRevoked(collaboration.error?.code);
+  const effectiveRole = effectiveWorkspaceRole(
+    workspace.drawing.role,
+    collaboration.role,
+    collaboration.error?.code,
+  );
+  const capabilities = getDrawingCapabilities(effectiveRole ?? "viewer");
   const conflictSnapshot = autosave.conflict?.local;
   const actionableSnapshot = conflictSnapshot;
   const WorkspaceHost = resolved.Host;
@@ -488,15 +552,33 @@ export const DrawingPage = ({
       <header className="workspace-header">
         <div>
           <h1>{workspace.drawing.title}</h1>
-          <span className="workspace-role">{effectiveRole}</span>
+          <span className="workspace-role">
+            {effectiveRole ?? "access revoked"}
+          </span>
         </div>
-        <span
-          aria-live="polite"
-          className="workspace-save-status"
-          role="status"
-        >
-          {saveStatusLabel(connectivity, capabilities.editScene, autosave)}
-        </span>
+        <div className="workspace-header-actions">
+          <span
+            aria-live="polite"
+            className="workspace-save-status"
+            role="status"
+          >
+            {saveStatusLabel(
+              connectivity,
+              capabilities.editScene,
+              autosave,
+              collaborationEnabled ? collaboration : null,
+              restoringRevision,
+            )}
+          </span>
+          <button onClick={() => setHistoryOpen(true)} type="button">
+            History
+          </button>
+          {capabilities.manageSharing ? (
+            <button onClick={() => setSharingOpen(true)} type="button">
+              Share
+            </button>
+          ) : null}
+        </div>
       </header>
 
       {!capabilities.editScene ? (
@@ -573,18 +655,72 @@ export const DrawingPage = ({
         </p>
       ) : null}
 
+      {collaborationEnabled &&
+      (collaboration.status === "reconnecting" || collaboration.error) ? (
+        <section
+          className="workspace-collaboration-warning"
+          role={collaboration.error ? "alert" : "status"}
+        >
+          <strong>
+            {isAccessChange(collaboration.error?.code)
+              ? "Your collaboration access changed."
+              : "Live collaboration was interrupted."}
+          </strong>
+          <span>
+            {collaboration.error?.message ??
+              "Your changes remain in local recovery while we reconnect."}
+          </span>
+          {editorApi ? (
+            <button
+              onClick={() =>
+                exportSnapshot(
+                  workspace.drawing.title,
+                  currentSnapshot(editorApi),
+                  "local-recovery",
+                )
+              }
+              type="button"
+            >
+              Export local drawing
+            </button>
+          ) : null}
+          {accessRevoked ? <a href="/app">Back to dashboard</a> : null}
+        </section>
+      ) : null}
+
       <div className="workspace-editor">
         <WorkspaceHost
           key={drawingId}
           initialData={workspace.initialData}
           isCollaborating={collaboration.status === "ready"}
           onApiChange={setEditorApi}
-          onChange={capabilities.editScene ? onChange : undefined}
+          onChange={
+            capabilities.editScene && !restoringRevision ? onChange : undefined
+          }
           onPointerUpdate={onPointerUpdate}
-          readOnly={!capabilities.editScene}
+          readOnly={!capabilities.editScene || restoringRevision}
           title={workspace.drawing.title}
         />
       </div>
+
+      <SharingDialog
+        client={resolved.sharing}
+        drawingId={drawingId}
+        onClose={() => setSharingOpen(false)}
+        open={sharingOpen && capabilities.manageSharing}
+      />
+      <RevisionHistoryDialog
+        canRestore={capabilities.editScene && !restoringRevision}
+        client={resolved.revisions}
+        drawingId={drawingId}
+        onClose={() => setHistoryOpen(false)}
+        onRestore={restoreRevision}
+        onRestored={() => {
+          setHistoryOpen(false);
+          setLoadGeneration((generation) => generation + 1);
+        }}
+        open={historyOpen}
+      />
     </main>
   );
 };
@@ -593,12 +729,34 @@ const saveStatusLabel = (
   connectivity: "online" | "offline",
   canEdit: boolean,
   autosave: AutosaveState,
+  collaboration: CollaborationState | null,
+  restoringRevision: boolean,
 ): string => {
+  if (restoringRevision) {
+    return "Restoring revision…";
+  }
   if (!canEdit) {
     return "View only";
   }
   if (connectivity === "offline") {
     return "Offline — changes are kept in local recovery";
+  }
+  if (collaboration) {
+    switch (collaboration.status) {
+      case "ready":
+        return `Live · ${collaboration.collaborators.size} collaborator${
+          collaboration.collaborators.size === 1 ? "" : "s"
+        }`;
+      case "connecting":
+      case "joining":
+        return "Connecting to collaboration…";
+      case "reconnecting":
+        return "Reconnecting — changes kept locally";
+      case "error":
+        return "Collaboration needs attention";
+      default:
+        break;
+    }
   }
   switch (autosave.status) {
     case "dirty":
@@ -617,6 +775,25 @@ const saveStatusLabel = (
       return "Ready";
   }
 };
+
+const currentSnapshot = (
+  editorApi: ExcalidrawImperativeAPI,
+): AutosaveSnapshot => {
+  const elements = editorApi.getSceneElementsIncludingDeleted();
+  return {
+    files: editorApi.getFiles(),
+    request: projectSaveRequest(
+      elements,
+      editorApi.getAppState(),
+      collectAssetReferences(elements),
+    ),
+  };
+};
+
+const isAccessChange = (code: string | undefined) =>
+  code === "FORBIDDEN" ||
+  code === "SOCKET_EVENT_FORBIDDEN" ||
+  isMembershipRevoked(code);
 
 const exportSnapshot = (
   title: string,

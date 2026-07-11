@@ -16,6 +16,13 @@ See the
 [collaboration runbook](docs/operations/collaboration.md) documents the realtime
 protocol, permission enforcement, monitoring, and scaling boundary.
 
+Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Report
+security issues privately using [SECURITY.md](SECURITY.md).
+
+This is an independent community project and is not affiliated with or endorsed
+by the Excalidraw project. The editor dependency's license notice is preserved
+in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## Run with Docker Compose
 
 ```bash
@@ -30,7 +37,7 @@ owners can copy invitation links for manual delivery. Email verification and
 ordinary reset-email delivery require SMTP; a loopback-only operator recovery
 flow is documented for SMTP-disabled installations.
 See the
-[deployment draft](docs/operations/deployment-draft.md) for HTTPS and managed
+[deployment runbook](docs/operations/deployment.md) for HTTPS and managed
 database options.
 
 ## Local development

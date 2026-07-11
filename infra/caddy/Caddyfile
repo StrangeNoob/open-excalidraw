@@ -3,6 +3,8 @@
 
 	header {
 		-Server
+		Content-Security-Policy "default-src 'self'; base-uri 'self'; child-src 'self' blob:; connect-src 'self' ws: wss:; font-src 'self' data:; form-action 'self'; frame-ancestors 'self'; img-src 'self' blob: data:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:"
+		Strict-Transport-Security "max-age=31536000"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		X-Frame-Options "SAMEORIGIN"
@@ -10,6 +12,14 @@
 
 	reverse_proxy app:3000 {
 		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+		header_up X-Real-IP {remote_host}
+
+		transport http {
+			dial_timeout 5s
+			response_header_timeout 30s
+			# Node's default idle keep-alive timeout is five seconds.
+			keepalive 4s
+		}
 	}
 }
-

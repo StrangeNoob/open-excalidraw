@@ -1,0 +1,20 @@
+.invitation-page {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  min-height: 100%;
+  padding: 1rem;
+}
+
+.invitation-card {
+  border: 1px solid #dddde5;
+  border-radius: 0.85rem;
+  max-width: 32rem;
+  padding: 1.5rem;
+  width: 100%;
+}
+
+.invitation-actions {
+  display: flex;
+  gap: 0.5rem;
+}

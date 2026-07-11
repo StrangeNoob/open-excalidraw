@@ -1,5 +1,6 @@
 import type { Pool, PoolClient, QueryResultRow } from "pg";
 
+import { insertAuditEvent } from "../audit.js";
 import type {
   CreateShareResult,
   InvitationRecord,
@@ -73,6 +74,7 @@ export class PostgresSharingRepository implements SharingRepository {
     role: "editor" | "viewer";
     tokenHash: Buffer;
     expiresAt: Date;
+    auditRequestId?: string;
   }): Promise<CreateShareResult> {
     return transaction(this.pool, async (client) => {
       const access = await lockDrawingAccess(
@@ -82,7 +84,10 @@ export class PostgresSharingRepository implements SharingRepository {
         "update",
       );
       if (access === "not-found") return { status: "not-found" };
-      if (access === "member") return { status: "forbidden" };
+      if (access === "member") {
+        await auditRejected(client, input, "invite");
+        return { status: "forbidden" };
+      }
 
       const found = await client.query<{
         id: string;
@@ -103,6 +108,15 @@ export class PostgresSharingRepository implements SharingRepository {
           [input.drawingId, input.email],
         );
         if (existingUser.id === input.actorUserId) {
+          if (input.auditRequestId) {
+            await insertAuditEvent(client, {
+              actorUserId: input.actorUserId,
+              drawingId: input.drawingId,
+              eventType: "sharing.member_upserted",
+              requestId: input.auditRequestId,
+              metadata: { targetUserId: existingUser.id, role: "owner" },
+            });
+          }
           return {
             status: "membership",
             member: {
@@ -133,6 +147,15 @@ export class PostgresSharingRepository implements SharingRepository {
         );
         const member = inserted.rows[0];
         if (!member) throw new Error("Membership upsert returned no row");
+        if (input.auditRequestId) {
+          await insertAuditEvent(client, {
+            actorUserId: input.actorUserId,
+            drawingId: input.drawingId,
+            eventType: "sharing.member_upserted",
+            requestId: input.auditRequestId,
+            metadata: { targetUserId: existingUser.id, role: input.role },
+          });
+        }
         return { status: "membership", member: mapMember(member) };
       }
 
@@ -166,6 +189,15 @@ export class PostgresSharingRepository implements SharingRepository {
       );
       const invitation = inserted.rows[0];
       if (!invitation) throw new Error("Invitation insert returned no row");
+      if (input.auditRequestId) {
+        await insertAuditEvent(client, {
+          actorUserId: input.actorUserId,
+          drawingId: input.drawingId,
+          eventType: "sharing.invitation_created",
+          requestId: input.auditRequestId,
+          metadata: { invitationId: invitation.id, role: input.role },
+        });
+      }
       return { status: "invitation", invitation: mapInvitation(invitation) };
     });
   }
@@ -185,6 +217,7 @@ export class PostgresSharingRepository implements SharingRepository {
     actorUserId: string;
     memberUserId: string;
     role: "editor" | "viewer";
+    auditRequestId?: string;
   }) {
     return transaction(this.pool, async (client) => {
       const access = await lockDrawingAccess(
@@ -194,13 +227,26 @@ export class PostgresSharingRepository implements SharingRepository {
         "update",
       );
       if (access === "not-found") return "not-found";
-      if (access === "member") return "forbidden";
+      if (access === "member") {
+        await auditRejected(client, input, "update-member");
+        return "forbidden";
+      }
       const result = await client.query(
         `UPDATE drawing_members SET role = $3
          WHERE drawing_id = $1 AND user_id = $2`,
         [input.drawingId, input.memberUserId, input.role],
       );
-      return result.rowCount === 1 ? "updated" : "not-found";
+      if (result.rowCount !== 1) return "not-found";
+      if (input.auditRequestId) {
+        await insertAuditEvent(client, {
+          actorUserId: input.actorUserId,
+          drawingId: input.drawingId,
+          eventType: "sharing.member_role_changed",
+          requestId: input.auditRequestId,
+          metadata: { targetUserId: input.memberUserId, role: input.role },
+        });
+      }
+      return "updated";
     });
   }
 
@@ -208,6 +254,7 @@ export class PostgresSharingRepository implements SharingRepository {
     drawingId: string;
     actorUserId: string;
     memberUserId: string;
+    auditRequestId?: string;
   }) {
     return transaction(this.pool, async (client) => {
       const access = await lockDrawingAccess(
@@ -217,12 +264,25 @@ export class PostgresSharingRepository implements SharingRepository {
         "update",
       );
       if (access === "not-found") return "not-found";
-      if (access === "member") return "forbidden";
+      if (access === "member") {
+        await auditRejected(client, input, "remove-member");
+        return "forbidden";
+      }
       const result = await client.query(
         `DELETE FROM drawing_members WHERE drawing_id = $1 AND user_id = $2`,
         [input.drawingId, input.memberUserId],
       );
-      return result.rowCount === 1 ? "removed" : "not-found";
+      if (result.rowCount !== 1) return "not-found";
+      if (input.auditRequestId) {
+        await insertAuditEvent(client, {
+          actorUserId: input.actorUserId,
+          drawingId: input.drawingId,
+          eventType: "sharing.member_removed",
+          requestId: input.auditRequestId,
+          metadata: { targetUserId: input.memberUserId },
+        });
+      }
+      return "removed";
     });
   }
 
@@ -230,6 +290,7 @@ export class PostgresSharingRepository implements SharingRepository {
     drawingId: string;
     actorUserId: string;
     invitationId: string;
+    auditRequestId?: string;
   }) {
     return transaction(this.pool, async (client) => {
       const access = await lockDrawingAccess(
@@ -239,14 +300,27 @@ export class PostgresSharingRepository implements SharingRepository {
         "update",
       );
       if (access === "not-found") return "not-found";
-      if (access === "member") return "forbidden";
+      if (access === "member") {
+        await auditRejected(client, input, "revoke-invitation");
+        return "forbidden";
+      }
       const result = await client.query(
         `UPDATE drawing_invitations SET revoked_at = now()
          WHERE id = $2 AND drawing_id = $1
            AND accepted_at IS NULL AND revoked_at IS NULL`,
         [input.drawingId, input.invitationId],
       );
-      return result.rowCount === 1 ? "revoked" : "not-found";
+      if (result.rowCount !== 1) return "not-found";
+      if (input.auditRequestId) {
+        await insertAuditEvent(client, {
+          actorUserId: input.actorUserId,
+          drawingId: input.drawingId,
+          eventType: "sharing.invitation_revoked",
+          requestId: input.auditRequestId,
+          metadata: { invitationId: input.invitationId },
+        });
+      }
+      return "revoked";
     });
   }
 
@@ -264,6 +338,7 @@ export class PostgresSharingRepository implements SharingRepository {
     email: string;
     emailVerified: boolean;
     requireVerifiedEmail: boolean;
+    auditRequestId?: string;
   }) {
     const located = await this.pool.query<{ drawing_id: string }>(
       `SELECT drawing_id FROM drawing_invitations WHERE token_hash = $1`,
@@ -287,9 +362,27 @@ export class PostgresSharingRepository implements SharingRepository {
       if (
         invitation.invitee_email.toLowerCase() !== input.email.toLowerCase()
       ) {
+        if (input.auditRequestId) {
+          await insertAuditEvent(client, {
+            actorUserId: input.userId,
+            drawingId: invitation.drawing_id,
+            eventType: "sharing.invitation_accept_rejected",
+            requestId: input.auditRequestId,
+            metadata: { reason: "email-mismatch" },
+          });
+        }
         return { status: "email-mismatch" as const };
       }
       if (input.requireVerifiedEmail && !input.emailVerified) {
+        if (input.auditRequestId) {
+          await insertAuditEvent(client, {
+            actorUserId: input.userId,
+            drawingId: invitation.drawing_id,
+            eventType: "sharing.invitation_accept_rejected",
+            requestId: input.auditRequestId,
+            metadata: { reason: "verification-required" },
+          });
+        }
         return { status: "verification-required" as const };
       }
       if (drawing.owner_user_id !== input.userId) {
@@ -322,9 +415,37 @@ export class PostgresSharingRepository implements SharingRepository {
       const accepted = member.rows[0];
       if (!accepted)
         throw new Error("Accepted invitation member could not be loaded");
+      if (input.auditRequestId) {
+        await insertAuditEvent(client, {
+          actorUserId: input.userId,
+          drawingId: invitation.drawing_id,
+          eventType: "sharing.invitation_accepted",
+          requestId: input.auditRequestId,
+          metadata: { invitationId: invitation.id, role: invitation.role },
+        });
+      }
       return { status: "accepted" as const, member: mapMember(accepted) };
     });
   }
+}
+
+async function auditRejected(
+  client: PoolClient,
+  input: {
+    actorUserId: string;
+    drawingId: string;
+    auditRequestId?: string;
+  },
+  action: string,
+) {
+  if (!input.auditRequestId) return;
+  await insertAuditEvent(client, {
+    actorUserId: input.actorUserId,
+    drawingId: input.drawingId,
+    eventType: "sharing.write_rejected",
+    requestId: input.auditRequestId,
+    metadata: { action, reason: "owner-required" },
+  });
 }
 
 const INVITATION_SELECT = `

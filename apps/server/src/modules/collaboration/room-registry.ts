@@ -7,6 +7,12 @@ import {
 
 export type RoomRegistryEvent =
   | {
+      type: "resync-requested";
+      drawingId: string;
+      revision: bigint;
+      reason: "revision-restored";
+    }
+  | {
       type: "role-changed";
       drawingId: string;
       userId: string;
@@ -100,6 +106,21 @@ export class RoomRegistry {
   public subscribe(listener: RoomRegistryListener): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
+  }
+
+  public requestResync(
+    drawingId: string,
+    revision: bigint,
+    reason: "revision-restored",
+  ) {
+    const event = {
+      type: "resync-requested" as const,
+      drawingId,
+      revision,
+      reason,
+    };
+    this.#notify(event);
+    return event;
   }
 
   #matching(drawingId: string, userId: string) {

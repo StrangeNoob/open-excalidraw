@@ -21,7 +21,9 @@ export interface EmailSignUpInput extends EmailSignInInput {
 
 export interface AuthClient {
   getSession(): Promise<SessionResponse>;
+  requestPasswordReset(email: string, redirectTo: string): Promise<void>;
   resendVerification(email: string, callbackURL: string): Promise<void>;
+  resetPassword(newPassword: string, token: string): Promise<void>;
   signIn(input: EmailSignInInput): Promise<void>;
   signOut(): Promise<void>;
   signUp(input: EmailSignUpInput): Promise<void>;
@@ -59,12 +61,26 @@ export class CookieAuthClient implements AuthClient {
     );
   }
 
+  async requestPasswordReset(email: string, redirectTo: string): Promise<void> {
+    await this.#api.request("/auth/request-password-reset", {
+      body: JSON.stringify({ email, redirectTo }),
+      method: "POST",
+    });
+  }
+
   async resendVerification(email: string, callbackURL: string): Promise<void> {
     await this.#api.request("/auth/send-verification-email", {
       body: JSON.stringify({
         callbackURL: getSafeReturnPath(callbackURL),
         email,
       }),
+      method: "POST",
+    });
+  }
+
+  async resetPassword(newPassword: string, token: string): Promise<void> {
+    await this.#api.request("/auth/reset-password", {
+      body: JSON.stringify({ newPassword, token }),
       method: "POST",
     });
   }

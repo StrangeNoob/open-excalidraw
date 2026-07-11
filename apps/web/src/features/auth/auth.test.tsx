@@ -18,7 +18,12 @@ import {
   type EmailSignUpInput,
   type OAuthProvider,
 } from "./auth-client";
-import { LoginPage, SignUpPage } from "./AuthPages";
+import {
+  ForgotPasswordPage,
+  LoginPage,
+  ResetPasswordPage,
+  SignUpPage,
+} from "./AuthPages";
 import { AuthProvider, useAuth } from "./AuthProvider";
 import { registerProtectedStatePurge } from "./protected-state";
 import { getSafeReturnPath } from "./return-path";
@@ -47,8 +52,12 @@ const signedInSession: SessionResponse = {
 
 class FakeAuthClient implements AuthClient {
   readonly getSession = vi.fn<() => Promise<SessionResponse>>();
+  readonly requestPasswordReset =
+    vi.fn<(email: string, redirectTo: string) => Promise<void>>();
   readonly resendVerification =
     vi.fn<(email: string, callbackURL: string) => Promise<void>>();
+  readonly resetPassword =
+    vi.fn<(newPassword: string, token: string) => Promise<void>>();
   readonly signIn = vi.fn<(input: EmailSignInInput) => Promise<void>>();
   readonly signOut = vi.fn<() => Promise<void>>();
   readonly signUp = vi.fn<(input: EmailSignUpInput) => Promise<void>>();
@@ -80,6 +89,25 @@ const renderAuthRoute = (
             />
             <Route element={<p>Dashboard destination</p>} path="/app" />
           </Routes>
+        </MemoryRouter>
+      </AuthProvider>
+    </QueryClientProvider>,
+  );
+};
+
+const renderPasswordRoute = (
+  path: string,
+  client: FakeAuthClient,
+  page: "forgot" | "reset",
+) => {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider client={client}>
+        <MemoryRouter initialEntries={[path]}>
+          {page === "forgot" ? <ForgotPasswordPage /> : <ResetPasswordPage />}
         </MemoryRouter>
       </AuthProvider>
     </QueryClientProvider>,
@@ -273,6 +301,50 @@ describe("auth pages", () => {
       screen.getByText("A new verification link has been requested."),
     ).toBeInTheDocument();
   });
+
+  it("requests a non-enumerating password reset", async () => {
+    const user = userEvent.setup();
+    const client = new FakeAuthClient();
+    client.getSession.mockResolvedValue(anonymousSession);
+    client.requestPasswordReset.mockResolvedValue();
+    renderPasswordRoute("/forgot-password", client, "forgot");
+
+    await user.type(screen.getByLabelText("Email"), "ada@example.com");
+    await user.click(screen.getByRole("button", { name: "Request reset" }));
+
+    expect(
+      await screen.findByText(/if an account exists/i),
+    ).toBeInTheDocument();
+    expect(client.requestPasswordReset).toHaveBeenCalledWith(
+      "ada@example.com",
+      "/reset-password",
+    );
+  });
+
+  it("validates and consumes a password-reset token", async () => {
+    const user = userEvent.setup();
+    const client = new FakeAuthClient();
+    client.getSession.mockResolvedValue(anonymousSession);
+    client.resetPassword.mockResolvedValue();
+    renderPasswordRoute(
+      "/reset-password?token=one-time-token",
+      client,
+      "reset",
+    );
+
+    await user.type(screen.getByLabelText("New password"), "new-password-123");
+    await user.type(
+      screen.getByLabelText("Confirm password"),
+      "new-password-123",
+    );
+    await user.click(screen.getByRole("button", { name: "Update password" }));
+
+    expect(await screen.findByText(/password updated/i)).toBeInTheDocument();
+    expect(client.resetPassword).toHaveBeenCalledWith(
+      "new-password-123",
+      "one-time-token",
+    );
+  });
 });
 
 describe("cookie auth state", () => {
@@ -361,6 +433,7 @@ describe("cookie auth state", () => {
     });
 
     await client.getSession();
+    await client.requestPasswordReset("ada@example.com", "/reset-password");
     await client.signIn({ email: "ada@example.com", password: "password-1" });
     await client.signUp({
       callbackURL: "https://attacker.example/steal",
@@ -369,6 +442,7 @@ describe("cookie auth state", () => {
       password: "password-1",
     });
     await client.startOAuth("github", "/invite/token");
+    await client.resetPassword("new-password-123", "reset-token");
     await client.signOut();
 
     expect(storageWrite).not.toHaveBeenCalled();

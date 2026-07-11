@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto";
-
 import {
   createInvitationRequestSchema,
   updateMemberRoleRequestSchema,
@@ -7,6 +5,8 @@ import {
 } from "@open-excalidraw/contracts";
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
+
+import { requestIdFor } from "../../http/request-context.js";
 
 import type { IdentityService, RequestIdentity } from "../auth/identity.js";
 import { SharingDomainError } from "./errors.js";
@@ -42,12 +42,13 @@ export function createSharingRouter(input: {
         request,
         response,
         input.identity,
-        async (identity) => ({
+        async (identity, requestId) => ({
           status: 201,
           body: await input.service.invite(
             identity.userId,
             drawingId(request),
             createInvitationRequestSchema.parse(request.body),
+            requestId,
           ),
         }),
       );
@@ -61,13 +62,14 @@ export function createSharingRouter(input: {
         request,
         response,
         input.identity,
-        async (identity) => {
+        async (identity, requestId) => {
           const body = updateMemberRoleRequestSchema.parse(request.body);
           await input.service.updateMember(
             identity.userId,
             drawingId(request),
             uuidSchema.parse(request.params.userId),
             body.role,
+            requestId,
           );
           return { status: 204 };
         },
@@ -82,11 +84,12 @@ export function createSharingRouter(input: {
         request,
         response,
         input.identity,
-        async (identity) => {
+        async (identity, requestId) => {
           await input.service.removeMember(
             identity.userId,
             drawingId(request),
             uuidSchema.parse(request.params.userId),
+            requestId,
           );
           return { status: 204 };
         },
@@ -101,11 +104,12 @@ export function createSharingRouter(input: {
         request,
         response,
         input.identity,
-        async (identity) => {
+        async (identity, requestId) => {
           await input.service.revokeInvitation(
             identity.userId,
             drawingId(request),
             uuidSchema.parse(request.params.invitationId),
+            requestId,
           );
           return { status: 204 };
         },
@@ -127,9 +131,9 @@ export function createSharingRouter(input: {
         request,
         response,
         input.identity,
-        async (identity) => ({
+        async (identity, requestId) => ({
           status: 200,
-          body: await input.service.accept(identity, token(request)),
+          body: await input.service.accept(identity, token(request), requestId),
         }),
       );
     },
@@ -146,7 +150,10 @@ async function authenticated(
   request: Request,
   response: Response,
   identityService: IdentityService,
-  action: (identity: RequestIdentity) => Promise<RouteResult>,
+  action: (
+    identity: RequestIdentity,
+    requestId: string,
+  ) => Promise<RouteResult>,
 ) {
   await route(request, response, async () => {
     const identity = await identityService.resolve(request.headers);
@@ -157,7 +164,7 @@ async function authenticated(
         "Authentication is required",
       );
     }
-    return action(identity);
+    return action(identity, requestIdFor(request, response));
   });
 }
 
@@ -166,7 +173,7 @@ async function route(
   response: Response,
   action: () => Promise<RouteResult>,
 ) {
-  const requestId = requestIdFor(request);
+  const requestId = requestIdFor(request, response);
   try {
     const result = await action();
     response.setHeader("x-request-id", requestId);
@@ -205,9 +212,4 @@ function drawingId(request: Request) {
 
 function token(request: Request) {
   return invitationTokenSchema.parse(request.params.token);
-}
-
-function requestIdFor(request: Request) {
-  const supplied = request.header("x-request-id")?.trim();
-  return supplied && supplied.length <= 128 ? supplied : randomUUID();
 }

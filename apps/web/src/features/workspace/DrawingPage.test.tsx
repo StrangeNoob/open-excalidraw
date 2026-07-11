@@ -19,6 +19,8 @@ import {
 } from "../persistence";
 
 import { DrawingPage, type DrawingWorkspaceDependencies } from "./DrawingPage";
+import { effectiveWorkspaceRole } from "./access-state";
+import { restoreWithRealtimeBoundary } from "./restore-boundary";
 
 const DRAWING_A = "00000000-0000-4000-8000-000000000001";
 const DRAWING_B = "00000000-0000-4000-8000-000000000002";
@@ -184,6 +186,38 @@ describe("DrawingPage", () => {
     apiAddFiles.mockReset();
     apiUpdateScene.mockReset();
   });
+
+  it("does not fall back to a stale workspace role after membership revocation", () => {
+    expect(
+      effectiveWorkspaceRole("editor", null, "SOCKET_MEMBERSHIP_REVOKED"),
+    ).toBeNull();
+    expect(effectiveWorkspaceRole("editor", null, undefined)).toBe("editor");
+  });
+
+  it.each([
+    ["owner", true],
+    ["editor", false],
+    ["viewer", false],
+  ] as const)(
+    "exposes sharing controls for the %s role: %s",
+    async (role, canShare) => {
+      const fixture = createDependencies({ role });
+      render(
+        <DrawingPage
+          collaborationEnabled={false}
+          dependencies={fixture.dependencies}
+          drawingId={DRAWING_A}
+          userId={USER}
+        />,
+      );
+
+      await screen.findByRole("heading", { name: "Architecture" });
+      expect(screen.queryByRole("button", { name: "Share" }) !== null).toBe(
+        canShare,
+      );
+      expect(screen.getByRole("button", { name: "History" })).toBeVisible();
+    },
+  );
 
   it("loads canonical content, ignores the initial editor event, then uploads before an ETag save", async () => {
     const user = userEvent.setup();
@@ -420,5 +454,75 @@ describe("DrawingPage", () => {
       expect(fixture.sources.content.save).toHaveBeenCalledTimes(2),
     );
     expect(await screen.findByText("Saved")).toBeVisible();
+  });
+
+  it("pauses and drains realtime before REST restore and stops it after success", async () => {
+    const order: string[] = [];
+    const realtime = {
+      pauseWrites: vi.fn(() => {
+        order.push("pause");
+        return Promise.resolve();
+      }),
+      resumeWrites: vi.fn(() => Promise.resolve()),
+      stop: vi.fn(() => {
+        order.push("stop");
+        return Promise.resolve();
+      }),
+    };
+    const restored = await restoreWithRealtimeBoundary({
+      autosave: {
+        flush: vi.fn(() => {
+          order.push("autosave-flush");
+          return Promise.resolve();
+        }),
+      },
+      drawingId: DRAWING_A,
+      outbox: {
+        list: vi.fn(() => {
+          order.push("drain");
+          return Promise.resolve([]);
+        }),
+      },
+      realtime,
+      restore: vi.fn(() => {
+        order.push("restore");
+        return Promise.resolve({
+          revision: "8",
+          savedAt: "2026-07-11T00:02:00.000Z",
+        });
+      }),
+      userId: USER,
+    });
+
+    expect(restored.revision).toBe("8");
+    expect(order).toEqual([
+      "autosave-flush",
+      "pause",
+      "drain",
+      "restore",
+      "stop",
+    ]);
+    expect(realtime.resumeWrites).not.toHaveBeenCalled();
+  });
+
+  it("resumes realtime cleanly when REST restore fails", async () => {
+    const realtime = {
+      pauseWrites: vi.fn(() => Promise.resolve()),
+      resumeWrites: vi.fn(() => Promise.resolve()),
+      stop: vi.fn(() => Promise.resolve()),
+    };
+
+    await expect(
+      restoreWithRealtimeBoundary({
+        autosave: null,
+        drawingId: DRAWING_A,
+        outbox: { list: () => Promise.resolve([]) },
+        realtime,
+        restore: () => Promise.reject(new Error("restore failed")),
+        userId: USER,
+      }),
+    ).rejects.toThrow("restore failed");
+    expect(realtime.resumeWrites).toHaveBeenCalledOnce();
+    expect(realtime.stop).not.toHaveBeenCalled();
   });
 });

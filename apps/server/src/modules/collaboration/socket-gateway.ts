@@ -98,6 +98,12 @@ export interface GatewayPresenceService {
 
 export type GatewayRoomEvent =
   | {
+      type: "resync-requested";
+      drawingId: string;
+      revision: bigint;
+      reason: "revision-restored";
+    }
+  | {
       type: "role-changed";
       connectionId: string;
       drawingId: string;
@@ -127,6 +133,11 @@ export interface GatewayRoomRegistry {
     role: SocketAuthorizationBinding["role"],
   ): readonly GatewayRoomEvent[];
   revoke(drawingId: string, userId: string): readonly GatewayRoomEvent[];
+  requestResync(
+    drawingId: string,
+    revision: bigint,
+    reason: "revision-restored",
+  ): GatewayRoomEvent;
   subscribe(listener: (event: GatewayRoomEvent) => void): () => void;
 }
 
@@ -155,6 +166,12 @@ export interface CollaborationGatewayOptions {
   roomRegistry: GatewayRoomRegistry;
   sessionValidityResolver: SocketSessionValidityResolver;
   snapshotProvider: CollaborationSnapshotProvider;
+  securityAudit?: (event: {
+    action: "scene.mutate" | "scene.preview";
+    actorUserId: string;
+    drawingId: string;
+    requestId: string;
+  }) => Promise<void>;
   maxQueuedEvents?: number;
   maxProtocolViolations?: number;
   presenceSweepIntervalMs?: number;
@@ -203,6 +220,14 @@ export function attachCollaborationGateway(
   };
 
   const unsubscribeRoomEvents = options.roomRegistry.subscribe((event) => {
+    if (event.type === "resync-requested") {
+      io.to(roomName(event.drawingId)).emit("room.resyncRequired", {
+        type: "room.resyncRequired",
+        reason: event.reason,
+        revision: event.revision.toString(),
+      });
+      return;
+    }
     const socket = sockets.get(event.connectionId);
     if (!socket) {
       return;
@@ -288,17 +313,36 @@ export function attachCollaborationGateway(
     });
     queues.set(socket.id, queue);
 
-    const handleError = (caught: unknown) => {
+    const handleError = async (
+      caught: unknown,
+      auditAction?: "scene.mutate" | "scene.preview",
+    ) => {
       if (disposed) {
         return;
       }
       const protocol = toProtocolError(caught);
+      const requestId = randomUUID();
       emitProtocolError(
         socket,
         protocol.code,
         protocol.message,
         protocol.retryable,
+        requestId,
       );
+
+      if (protocol.code === "SOCKET_EVENT_FORBIDDEN" && auditAction) {
+        const binding = options.roomRegistry.getBinding(socket.id);
+        if (binding) {
+          await options
+            .securityAudit?.({
+              action: auditAction,
+              actorUserId: binding.userId,
+              drawingId: binding.drawingId,
+              requestId,
+            })
+            .catch(() => undefined);
+        }
+      }
 
       if (protocol.disconnect) {
         queue.close();
@@ -314,12 +358,15 @@ export function attachCollaborationGateway(
       }
     };
 
-    const enqueue = (task: () => Promise<void>) => {
+    const enqueue = (
+      task: () => Promise<void>,
+      auditAction?: "scene.mutate" | "scene.preview",
+    ) => {
       queue.enqueue(async () => {
         try {
           await task();
         } catch (caught) {
-          handleError(caught);
+          await handleError(caught, auditAction);
         }
       });
     };
@@ -425,7 +472,7 @@ export function attachCollaborationGateway(
         socket
           .to(roomName(relay.drawingId))
           .volatile.emit(relay.event.type, relay.event);
-      });
+      }, "scene.preview");
     });
 
     socket.on("scene.mutate", (raw: unknown) => {
@@ -448,7 +495,7 @@ export function attachCollaborationGateway(
           return;
         }
         emitServerEvent(socket, outcome.event);
-      });
+      }, "scene.mutate");
     });
 
     socket.on("presence.update", (raw: unknown) => {
@@ -663,12 +710,13 @@ function emitProtocolError(
   code: string,
   message: string,
   retryable: boolean,
+  requestId = randomUUID(),
 ): void {
   emitServerEvent(socket, {
     type: "protocol.error",
     code: code.slice(0, 128) || "PROTOCOL_ERROR",
     message: message.slice(0, 1_024) || "Collaboration request failed",
-    requestId: randomUUID(),
+    requestId,
     retryable,
   });
 }

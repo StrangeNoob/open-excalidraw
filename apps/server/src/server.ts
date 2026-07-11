@@ -47,9 +47,12 @@ import {
   PostgresSharingRepository,
   SharingService,
 } from "./modules/sharing/index.js";
+import { MaintenanceJobs } from "./jobs/index.js";
+import { insertAuditEvent } from "./modules/audit.js";
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const baseUrl = process.env.APP_BASE_URL ?? "http://localhost:3000";
+const allowedBrowserOrigins = browserAllowedOrigins(baseUrl);
 const secret = requiredEnvironment("BETTER_AUTH_SECRET");
 const smtpEnabled = Boolean(process.env.SMTP_HOST?.trim());
 const adminResetToken = process.env.ADMIN_RESET_TOKEN?.trim();
@@ -70,6 +73,7 @@ const auth = createOpenExcalidrawAuth({
   secret,
   smtpEnabled,
   manualResetLinks,
+  trustedOrigins: allowedBrowserOrigins,
   ...(google ? { google } : {}),
   ...(github ? { github } : {}),
 });
@@ -77,10 +81,16 @@ const identity = createIdentityService(auth);
 const drawingService = new DrawingService(
   new PostgresDrawingRepository(database.pool),
 );
+const roomRegistry = new RoomRegistry();
 const contentService = new ContentService(
   new PostgresContentRepository(database.pool),
+  undefined,
+  {
+    restored: (drawingId, revision) => {
+      roomRegistry.requestResync(drawingId, revision, "revision-restored");
+    },
+  },
 );
-const roomRegistry = new RoomRegistry();
 const sharingService = new SharingService({
   repository: new PostgresSharingRepository(database.pool),
   mailer,
@@ -104,6 +114,68 @@ const storage = new LocalObjectStorage({
   rootDirectory:
     process.env.STORAGE_LOCAL_PATH ?? join(process.cwd(), "uploads"),
 });
+const maintenanceJobs = new MaintenanceJobs(database.pool, storage);
+const maintenanceIntervalMs = positiveEnvironmentInteger(
+  "MAINTENANCE_INTERVAL_MS",
+  6 * 60 * 60 * 1_000,
+);
+let maintenanceInFlight: Promise<void> | null = null;
+let maintenanceAbortController: AbortController | null = null;
+let maintenanceStopping = false;
+const runMaintenance = (): Promise<void> => {
+  if (maintenanceStopping) return Promise.resolve();
+  if (maintenanceInFlight) return maintenanceInFlight;
+  const abortController = new AbortController();
+  maintenanceAbortController = abortController;
+  maintenanceInFlight = (async () => {
+    const startedAt = Date.now();
+    try {
+      const result = await maintenanceJobs.run(abortController.signal);
+      const hasFailures = result.failures.length > 0;
+      operationalLog(
+        hasFailures ? "error" : "info",
+        hasFailures ? "maintenance.partial_failure" : "maintenance.complete",
+        {
+          auditEventsDeleted: result.auditEventsDeleted,
+          drawingsPurged: result.drawingsPurged,
+          expiredInvitationsDeleted: result.expiredInvitationsDeleted,
+          expiredSessionsDeleted: result.expiredSessionsDeleted,
+          expiredVerificationsDeleted: result.expiredVerificationsDeleted,
+          failures: result.failures.map(({ errorType, id, stage }) => ({
+            errorType,
+            id,
+            stage,
+          })),
+          latencyMs: Date.now() - startedAt,
+          mutationsDeleted: result.mutationsDeleted,
+          orphanAssetsDeleted: result.orphanAssetsDeleted,
+          revisionsPruned: result.revisionsPruned,
+        },
+      );
+    } catch (error) {
+      if (abortController.signal.aborted && isAbortError(error)) {
+        operationalLog("info", "maintenance.cancelled", {
+          latencyMs: Date.now() - startedAt,
+        });
+      } else {
+        operationalLog("error", "maintenance.failed", {
+          errorType: safeErrorType(error),
+          latencyMs: Date.now() - startedAt,
+        });
+      }
+    } finally {
+      if (maintenanceAbortController === abortController) {
+        maintenanceAbortController = null;
+      }
+      maintenanceInFlight = null;
+    }
+  })();
+  return maintenanceInFlight;
+};
+const maintenanceTimer = setInterval(() => {
+  void runMaintenance();
+}, maintenanceIntervalMs);
+maintenanceTimer.unref();
 const assetService = new AssetService({
   repository: new DrizzleAssetRepository(database.db),
   storage,
@@ -168,6 +240,7 @@ const staticDirectory =
     ? productionStaticDirectory()
     : undefined);
 const app = createApp({
+  allowedOrigins: allowedBrowserOrigins,
   readiness: async () => {
     await database.pool.query("SELECT 1");
   },
@@ -201,22 +274,40 @@ const collaborationGateway = attachCollaborationGateway(io, {
   identityService: identity,
   membershipResolver,
   mutationService,
-  originPolicy: new StrictOriginPolicy(socketAllowedOrigins(baseUrl)),
+  originPolicy: new StrictOriginPolicy(allowedBrowserOrigins),
   presenceService,
   previewService,
   roomRegistry,
+  securityAudit: (event) =>
+    insertAuditEvent(database.pool, {
+      actorUserId: event.actorUserId,
+      drawingId: event.drawingId,
+      eventType: "collaboration.write_rejected",
+      requestId: event.requestId,
+      metadata: { action: event.action, reason: "role-forbidden" },
+    }),
   sessionValidityResolver,
   snapshotProvider: collaborationRepository,
 });
 
 server.listen(port, () => {
-  process.stdout.write(`Open Excalidraw server listening on ${port}\n`);
+  operationalLog("info", "server.listening", { port });
+  void runMaintenance();
 });
 
+let shutdownStarted = false;
 const shutdown = () => {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+  maintenanceStopping = true;
+  clearInterval(maintenanceTimer);
+  maintenanceAbortController?.abort();
   collaborationGateway.close();
   void io.close(() => {
-    void database.close().finally(() => process.exit(0));
+    void (maintenanceInFlight ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(() => database.close())
+      .finally(() => process.exit(0));
   });
 };
 
@@ -231,7 +322,46 @@ function requiredEnvironment(name: string): string {
   return value;
 }
 
-function socketAllowedOrigins(publicBaseUrl: string): string[] {
+function positiveEnvironmentInteger(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  if (!/^[1-9]\d*$/.test(raw)) {
+    throw new Error(`${name} must be a positive base-10 integer`);
+  }
+  const value = Number(raw);
+  // Node timers overflow above a signed 32-bit millisecond delay and are
+  // otherwise clamped to 1 ms, which would turn a typo into a tight loop.
+  if (!Number.isSafeInteger(value) || value > 2_147_483_647) {
+    throw new Error(`${name} must not exceed 2147483647 milliseconds`);
+  }
+  return value;
+}
+
+function operationalLog(
+  level: "info" | "error",
+  event: string,
+  details: Record<string, unknown>,
+) {
+  process.stdout.write(
+    `${JSON.stringify({ level, event, time: new Date().toISOString(), ...details })}\n`,
+  );
+}
+
+function safeErrorType(error: unknown): string {
+  if (
+    error instanceof Error &&
+    /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(error.name)
+  ) {
+    return error.name;
+  }
+  return "UnknownError";
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+function browserAllowedOrigins(publicBaseUrl: string): string[] {
   const configured = (process.env.SOCKET_ALLOWED_ORIGINS ?? "")
     .split(",")
     .map((origin) => origin.trim())

@@ -3,9 +3,10 @@ import {
   updateDrawingRequestSchema,
   uuidSchema,
 } from "@open-excalidraw/contracts";
-import { randomUUID } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
+
+import { requestIdFor } from "../../http/request-context.js";
 
 import type { IdentityService } from "../auth/identity.js";
 import { DrawingDomainError } from "./errors.js";
@@ -59,10 +60,15 @@ export function createDrawingRouter(input: CreateDrawingRouterInput): Router {
   });
 
   router.delete("/api/v1/drawings/:drawingId", async (request, response) => {
-    await handle(request, response, input.identity, async (userId) => {
-      await input.service.delete(userId, drawingId(request));
-      return { status: 204 };
-    });
+    await handle(
+      request,
+      response,
+      input.identity,
+      async (userId, requestId) => {
+        await input.service.delete(userId, drawingId(request), requestId);
+        return { status: 204 };
+      },
+    );
   });
 
   router.delete(
@@ -78,17 +84,23 @@ export function createDrawingRouter(input: CreateDrawingRouterInput): Router {
   router.post(
     "/api/v1/drawings/:drawingId/transfer-ownership",
     async (request, response) => {
-      await handle(request, response, input.identity, async (userId) => {
-        const body = transferOwnershipSchema.parse(request.body);
-        return {
-          status: 200,
-          body: await input.service.transferOwnership(
-            userId,
-            drawingId(request),
-            body.newOwnerUserId,
-          ),
-        };
-      });
+      await handle(
+        request,
+        response,
+        input.identity,
+        async (userId, requestId) => {
+          const body = transferOwnershipSchema.parse(request.body);
+          return {
+            status: 200,
+            body: await input.service.transferOwnership(
+              userId,
+              drawingId(request),
+              body.newOwnerUserId,
+              requestId,
+            ),
+          };
+        },
+      );
     },
   );
 
@@ -104,9 +116,9 @@ async function handle(
   request: Request,
   response: Response,
   identityService: IdentityService,
-  action: (userId: string) => Promise<RouteResult>,
+  action: (userId: string, requestId: string) => Promise<RouteResult>,
 ): Promise<void> {
-  const requestId = requestIdFor(request);
+  const requestId = requestIdFor(request, response);
   try {
     const identity = await identityService.resolve(request.headers);
     if (!identity) {
@@ -116,7 +128,7 @@ async function handle(
         "Authentication is required",
       );
     }
-    const result = await action(identity.userId);
+    const result = await action(identity.userId, requestId);
     response.setHeader("x-request-id", requestId);
     if (result.body === undefined) {
       response.sendStatus(result.status);
@@ -151,9 +163,4 @@ async function handle(
 
 function drawingId(request: Request): string {
   return uuidSchema.parse(request.params.drawingId);
-}
-
-function requestIdFor(request: Request): string {
-  const supplied = request.header("x-request-id")?.trim();
-  return supplied && supplied.length <= 128 ? supplied : randomUUID();
 }

@@ -16,6 +16,7 @@ import {
 
 const databaseUrl = process.env.DATABASE_TEST_URL;
 const describeDatabase = databaseUrl ? describe : describe.skip;
+const SHARE_REQUEST_ID = `sharing-invite-${randomUUID()}`;
 
 describeDatabase("sharing and invitation lifecycle", () => {
   const database = createDatabase(databaseUrl ?? "postgresql://unused");
@@ -66,6 +67,10 @@ describeDatabase("sharing and invitation lifecycle", () => {
   });
 
   afterAll(async () => {
+    await database.pool.query(
+      `DELETE FROM audit_events WHERE request_id = $1`,
+      [SHARE_REQUEST_ID],
+    );
     await database.pool.query(`DELETE FROM drawings WHERE id = $1`, [
       drawingId,
     ]);
@@ -76,10 +81,15 @@ describeDatabase("sharing and invitation lifecycle", () => {
   });
 
   it("grants existing users immediately without creating an invitation", async () => {
-    const result = await service.invite(ownerId, drawingId, {
-      email: "Existing@Example.Test",
-      role: "editor",
-    });
+    const result = await service.invite(
+      ownerId,
+      drawingId,
+      {
+        email: "Existing@Example.Test",
+        role: "editor",
+      },
+      SHARE_REQUEST_ID,
+    );
     expect(result).toMatchObject({
       deliveryStatus: "not-needed",
       membership: { userId: existingId, role: "editor" },
@@ -91,6 +101,18 @@ describeDatabase("sharing and invitation lifecycle", () => {
       [drawingId],
     );
     expect(count.rows[0]?.count).toBe("0");
+    const audit = await database.pool.query<{
+      event_type: string;
+      metadata: Record<string, string>;
+    }>(`SELECT event_type, metadata FROM audit_events WHERE request_id = $1`, [
+      SHARE_REQUEST_ID,
+    ]);
+    expect(audit.rows).toEqual([
+      {
+        event_type: "sharing.member_upserted",
+        metadata: { role: "editor", targetUserId: existingId },
+      },
+    ]);
   });
 
   it("returns 403 to known members while concealing the drawing from outsiders", async () => {

@@ -9,7 +9,14 @@ import {
 } from "react-router-dom";
 import { lazy, Suspense } from "react";
 
-import { AuthProvider, LoginPage, SignUpPage, useAuth } from "../features/auth";
+import {
+  AuthProvider,
+  ForgotPasswordPage,
+  LoginPage,
+  ResetPasswordPage,
+  SignUpPage,
+  useAuth,
+} from "../features/auth";
 
 const DashboardPage = lazy(() =>
   import("../features/dashboard").then((module) => ({
@@ -29,6 +36,11 @@ const DrawingPage = lazy(() =>
 const AuthenticatedGuestMigrationPrompt = lazy(() =>
   import("../features/guest/components").then((module) => ({
     default: module.AuthenticatedGuestMigrationPrompt,
+  })),
+);
+const InvitationPage = lazy(() =>
+  import("../features/sharing").then((module) => ({
+    default: module.InvitationPage,
   })),
 );
 
@@ -139,6 +151,22 @@ export const appRoutes: RouteObject[] = [
       {
         path: "/signup",
         element: <SignUpPage />,
+      },
+      {
+        path: "/forgot-password",
+        element: <ForgotPasswordPage />,
+      },
+      {
+        path: "/reset-password",
+        element: <ResetPasswordPage />,
+      },
+      {
+        path: "/invite/:token",
+        element: (
+          <Suspense fallback={<p aria-live="polite">Loading invitation…</p>}>
+            <InvitationPage />
+          </Suspense>
+        ),
       },
       {
         path: "/app",

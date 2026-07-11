@@ -49,6 +49,7 @@ export interface SharingRepository {
     role: MemberRole;
     tokenHash: Buffer;
     expiresAt: Date;
+    auditRequestId?: string;
   }): Promise<CreateShareResult>;
   updateInvitationDelivery(
     invitationId: string,
@@ -59,16 +60,19 @@ export interface SharingRepository {
     actorUserId: string;
     memberUserId: string;
     role: MemberRole;
+    auditRequestId?: string;
   }): Promise<"updated" | "not-found" | "forbidden">;
   removeMember(input: {
     drawingId: string;
     actorUserId: string;
     memberUserId: string;
+    auditRequestId?: string;
   }): Promise<"removed" | "not-found" | "forbidden">;
   revokeInvitation(input: {
     drawingId: string;
     actorUserId: string;
     invitationId: string;
+    auditRequestId?: string;
   }): Promise<"revoked" | "not-found" | "forbidden">;
   inspect(tokenHash: Buffer): Promise<InvitationRecord | null>;
   accept(input: {
@@ -77,6 +81,7 @@ export interface SharingRepository {
     email: string;
     emailVerified: boolean;
     requireVerifiedEmail: boolean;
+    auditRequestId?: string;
   }): Promise<
     | { status: "accepted"; member: MemberRecord }
     | {

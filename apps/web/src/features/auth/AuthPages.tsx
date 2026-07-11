@@ -306,6 +306,11 @@ const AuthPage = ({ mode }: { mode: AuthPageMode }) => {
             {isSignUp ? "Sign in" : "Create an account"}
           </Link>
         </p>
+        {!isSignUp ? (
+          <p>
+            <Link to="/forgot-password">Forgot your password?</Link>
+          </p>
+        ) : null}
       </section>
     </main>
   );
@@ -313,3 +318,151 @@ const AuthPage = ({ mode }: { mode: AuthPageMode }) => {
 
 export const LoginPage = () => <AuthPage mode="login" />;
 export const SignUpPage = () => <AuthPage mode="signup" />;
+
+export const ForgotPasswordPage = () => {
+  const auth = useAuth();
+  const [email, setEmail] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [sent, setSent] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!EMAIL_PATTERN.test(email.trim())) {
+      setError("Enter a valid email address.");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      await auth.requestPasswordReset(email.trim(), "/reset-password");
+      setSent(true);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Could not request a password reset.",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <main className="auth-page">
+      <section aria-labelledby="reset-request-title" className="auth-card">
+        <Link className="auth-brand" to="/">
+          Open Excalidraw
+        </Link>
+        <h1 id="reset-request-title">Reset your password</h1>
+        {sent ? (
+          <p role="status">
+            If an account exists, reset instructions are available by email or
+            from your self-hosted administrator.
+          </p>
+        ) : (
+          <form noValidate onSubmit={(event) => void submit(event)}>
+            <label>
+              Email
+              <input
+                autoComplete="email"
+                onChange={(event) => setEmail(event.target.value)}
+                type="email"
+                value={email}
+              />
+            </label>
+            {error ? <p role="alert">{error}</p> : null}
+            <button disabled={submitting} type="submit">
+              {submitting ? "Requesting…" : "Request reset"}
+            </button>
+          </form>
+        )}
+        <Link to="/login">Back to sign in</Link>
+      </section>
+    </main>
+  );
+};
+
+export const ResetPasswordPage = () => {
+  const auth = useAuth();
+  const [searchParams] = useSearchParams();
+  const token = searchParams.get("token") ?? "";
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [complete, setComplete] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!token) {
+      setError("This password-reset link is invalid or expired.");
+      return;
+    }
+    if (password.length < MINIMUM_PASSWORD_LENGTH) {
+      setError(
+        `Password must be at least ${MINIMUM_PASSWORD_LENGTH} characters.`,
+      );
+      return;
+    }
+    if (password !== confirmation) {
+      setError("Passwords do not match.");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      await auth.resetPassword(password, token);
+      setComplete(true);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Could not reset the password.",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <main className="auth-page">
+      <section aria-labelledby="reset-password-title" className="auth-card">
+        <Link className="auth-brand" to="/">
+          Open Excalidraw
+        </Link>
+        <h1 id="reset-password-title">Choose a new password</h1>
+        {complete ? (
+          <p role="status">
+            Password updated. <Link to="/login">Sign in</Link>.
+          </p>
+        ) : (
+          <form noValidate onSubmit={(event) => void submit(event)}>
+            <label>
+              New password
+              <input
+                autoComplete="new-password"
+                onChange={(event) => setPassword(event.target.value)}
+                type="password"
+                value={password}
+              />
+            </label>
+            <label>
+              Confirm password
+              <input
+                autoComplete="new-password"
+                onChange={(event) => setConfirmation(event.target.value)}
+                type="password"
+                value={confirmation}
+              />
+            </label>
+            {error ? <p role="alert">{error}</p> : null}
+            <button disabled={submitting} type="submit">
+              {submitting ? "Updating…" : "Update password"}
+            </button>
+          </form>
+        )}
+      </section>
+    </main>
+  );
+};

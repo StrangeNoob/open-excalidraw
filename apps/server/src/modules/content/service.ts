@@ -21,6 +21,9 @@ export class ContentService {
   public constructor(
     private readonly repository: ContentRepository,
     private readonly checkpointIntervalMs = DEFAULT_CHECKPOINT_INTERVAL_MS,
+    private readonly events?: {
+      restored(drawingId: string, revision: bigint): void;
+    },
   ) {
     if (
       !Number.isSafeInteger(checkpointIntervalMs) ||
@@ -47,6 +50,7 @@ export class ContentService {
     expectedRevision: bigint,
     mutationId: string,
     body: unknown,
+    auditRequestId?: string,
   ): Promise<{ revision: string; savedAt: string }> {
     const prepared = prepareSave(body);
     const result = await this.repository.save({
@@ -59,6 +63,7 @@ export class ContentService {
       sceneBytes: prepared.sceneBytes,
       assetIds: prepared.assetIds,
       checkpointIntervalMs: this.checkpointIntervalMs,
+      ...(auditRequestId ? { auditRequestId } : {}),
     });
     switch (result.status) {
       case "saved":
@@ -101,14 +106,21 @@ export class ContentService {
     return { revisions: revisions.map(toRevisionResponse) };
   }
 
-  public async restore(userId: string, drawingId: string, revision: bigint) {
+  public async restore(
+    userId: string,
+    drawingId: string,
+    revision: bigint,
+    auditRequestId?: string,
+  ) {
     const result = await this.repository.restore({
       drawingId,
       actorUserId: userId,
       revision,
+      ...(auditRequestId ? { auditRequestId } : {}),
     });
     switch (result.status) {
       case "restored":
+        this.events?.restored(drawingId, result.revision);
         return {
           revision: result.revision.toString(),
           savedAt: result.savedAt.toISOString(),

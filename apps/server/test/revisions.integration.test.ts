@@ -9,14 +9,17 @@ import {
 
 const databaseUrl = process.env.DATABASE_TEST_URL;
 const describeDatabase = databaseUrl ? describe : describe.skip;
+const RESTORE_REQUEST_ID = `revision-restore-${randomUUID()}`;
 
 describeDatabase("revision checkpoints", () => {
   const database = createDatabase(databaseUrl ?? "postgresql://unused");
   const ownerId = randomUUID();
   const drawingId = randomUUID();
+  const restoredEvent = vi.fn();
   const service = new ContentService(
     new PostgresContentRepository(database.pool),
     60_000,
+    { restored: restoredEvent },
   );
 
   beforeAll(async () => {
@@ -48,6 +51,10 @@ describeDatabase("revision checkpoints", () => {
   });
 
   afterAll(async () => {
+    await database.pool.query(
+      `DELETE FROM audit_events WHERE request_id = $1`,
+      [RESTORE_REQUEST_ID],
+    );
     await database.pool.query(`DELETE FROM drawings WHERE id = $1`, [
       drawingId,
     ]);
@@ -76,8 +83,14 @@ describeDatabase("revision checkpoints", () => {
       [drawingId],
     );
 
-    const restored = await service.restore(ownerId, drawingId, 1n);
+    const restored = await service.restore(
+      ownerId,
+      drawingId,
+      1n,
+      RESTORE_REQUEST_ID,
+    );
     expect(restored.revision).toBe("3");
+    expect(restoredEvent).toHaveBeenCalledWith(drawingId, 3n);
     const current = await service.load(ownerId, drawingId);
     expect(current.revision).toBe("3");
     expect(current.scene.elements[0]).toMatchObject({
@@ -104,6 +117,18 @@ describeDatabase("revision checkpoints", () => {
     expect(preservation.rows[0]?.last_referenced_at.getTime()).toBeGreaterThan(
       staleReferenceTime.getTime(),
     );
+    const audit = await database.pool.query<{
+      event_type: string;
+      metadata: Record<string, string>;
+    }>(`SELECT event_type, metadata FROM audit_events WHERE request_id = $1`, [
+      RESTORE_REQUEST_ID,
+    ]);
+    expect(audit.rows).toEqual([
+      {
+        event_type: "revision.restored",
+        metadata: { restoredFromRevision: "1", resultingRevision: "3" },
+      },
+    ]);
   });
 });
 

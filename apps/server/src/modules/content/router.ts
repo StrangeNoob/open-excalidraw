@@ -1,8 +1,8 @@
-import { randomUUID } from "node:crypto";
-
 import { revisionSchema, uuidSchema } from "@open-excalidraw/contracts";
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
+
+import { requestIdFor } from "../../http/request-context.js";
 
 import type { IdentityService } from "../auth/identity.js";
 import { ContentDomainError } from "./errors.js";
@@ -29,16 +29,22 @@ export function createContentRouter(input: {
   router.put(
     "/api/v1/drawings/:drawingId/content",
     async (request, response) => {
-      await handle(request, response, input.identity, async (userId) => {
-        const body = await input.service.save(
-          userId,
-          drawingId(request),
-          parseIfMatch(request),
-          parseIdempotencyKey(request),
-          request.body,
-        );
-        return { status: 200, body, etag: body.revision };
-      });
+      await handle(
+        request,
+        response,
+        input.identity,
+        async (userId, requestId) => {
+          const body = await input.service.save(
+            userId,
+            drawingId(request),
+            parseIfMatch(request),
+            parseIdempotencyKey(request),
+            request.body,
+            requestId,
+          );
+          return { status: 200, body, etag: body.revision };
+        },
+      );
     },
   );
 
@@ -55,14 +61,20 @@ export function createContentRouter(input: {
   router.post(
     "/api/v1/drawings/:drawingId/revisions/:revision/restore",
     async (request, response) => {
-      await handle(request, response, input.identity, async (userId) => {
-        const body = await input.service.restore(
-          userId,
-          drawingId(request),
-          parseRevision(request.params.revision),
-        );
-        return { status: 200, body, etag: body.revision };
-      });
+      await handle(
+        request,
+        response,
+        input.identity,
+        async (userId, requestId) => {
+          const body = await input.service.restore(
+            userId,
+            drawingId(request),
+            parseRevision(request.params.revision),
+            requestId,
+          );
+          return { status: 200, body, etag: body.revision };
+        },
+      );
     },
   );
   return router;
@@ -78,9 +90,9 @@ async function handle(
   request: Request,
   response: Response,
   identityService: IdentityService,
-  action: (userId: string) => Promise<Result>,
+  action: (userId: string, requestId: string) => Promise<Result>,
 ) {
-  const requestId = requestIdFor(request);
+  const requestId = requestIdFor(request, response);
   try {
     const identity = await identityService.resolve(request.headers);
     if (!identity) {
@@ -90,7 +102,7 @@ async function handle(
         "Authentication is required",
       );
     }
-    const result = await action(identity.userId);
+    const result = await action(identity.userId, requestId);
     response.setHeader("x-request-id", requestId);
     response.setHeader("cache-control", "no-store");
     if (result.etag) response.setHeader("etag", `"${result.etag}"`);
@@ -168,9 +180,4 @@ function parseIdempotencyKey(request: Request) {
     );
   }
   return uuidSchema.parse(value);
-}
-
-function requestIdFor(request: Request) {
-  const supplied = request.header("x-request-id")?.trim();
-  return supplied && supplied.length <= 128 ? supplied : randomUUID();
 }

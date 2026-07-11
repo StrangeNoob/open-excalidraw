@@ -123,6 +123,7 @@ describe("Wave 2 platform flow", () => {
         }),
       );
       const app = createApp({
+        allowedOrigins: [BASE_URL],
         readiness: async () => {
           await database.pool.query("SELECT 1");
         },

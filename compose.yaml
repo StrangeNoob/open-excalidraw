@@ -4,6 +4,7 @@ services:
   postgres:
     image: postgres:17.6-alpine
     restart: unless-stopped
+    stop_grace_period: 60s
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-open_excalidraw}
       POSTGRES_USER: ${POSTGRES_USER:-open_excalidraw}
@@ -28,6 +29,7 @@ services:
       context: .
       dockerfile: apps/server/Dockerfile
     restart: unless-stopped
+    stop_grace_period: 30s
     init: true
     depends_on:
       postgres:
@@ -36,11 +38,13 @@ services:
       NODE_ENV: production
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
       APP_PORT: 3000
+      SOCKET_ALLOWED_ORIGINS: ${SOCKET_ALLOWED_ORIGINS:-}
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?Set BETTER_AUTH_SECRET in .env}
       ADMIN_RESET_TOKEN: ${ADMIN_RESET_TOKEN:-}
       DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-open_excalidraw}:${POSTGRES_PASSWORD:-}@postgres:5432/${POSTGRES_DB:-open_excalidraw}}
       STORAGE_DRIVER: local
       STORAGE_LOCAL_PATH: /data/assets
+      MAINTENANCE_INTERVAL_MS: ${MAINTENANCE_INTERVAL_MS:-21600000}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
@@ -82,6 +86,7 @@ services:
     image: caddy:2.10.2-alpine
     profiles: [https]
     restart: unless-stopped
+    stop_grace_period: 10s
     depends_on:
       app:
         condition: service_healthy
@@ -97,6 +102,20 @@ services:
       - caddy-config:/config
     networks:
       - edge
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:2019/config/",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     read_only: true
     tmpfs:
       - /tmp:size=32m,mode=1777
