@@ -1,13 +1,12 @@
-import "dotenv/config";
-
 import { existsSync } from "node:fs";
 import { createServer } from "node:http";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createDatabase } from "@open-excalidraw/database";
 import { DisabledMailer, SmtpMailer, type Mailer } from "@open-excalidraw/mail";
 import { LocalObjectStorage } from "@open-excalidraw/storage";
+import { config as loadDotenv } from "dotenv";
 import { Router } from "express";
 import { Server as SocketIoServer } from "socket.io";
 
@@ -49,6 +48,8 @@ import {
 } from "./modules/sharing/index.js";
 import { MaintenanceJobs } from "./jobs/index.js";
 import { insertAuditEvent } from "./modules/audit.js";
+
+loadEnvironmentFile();
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const baseUrl = process.env.APP_BASE_URL ?? "http://localhost:3000";
@@ -320,6 +321,15 @@ function requiredEnvironment(name: string): string {
     throw new Error(`${name} is required`);
   }
   return value;
+}
+
+function loadEnvironmentFile(): void {
+  const candidates = [
+    resolve(process.cwd(), ".env"),
+    resolve(process.cwd(), "../../.env"),
+  ];
+  const path = candidates.find((candidate) => existsSync(candidate));
+  if (path) loadDotenv({ path, quiet: true });
 }
 
 function positiveEnvironmentInteger(name: string, fallback: number): number {
