@@ -14,6 +14,33 @@ Compose profile that terminates HTTPS and proxies both HTTP and Socket.IO.
 Do not publish PostgreSQL. The default Compose file places it on an internal
 network and exposes only the application loopback port.
 
+## Prebuilt images
+
+Multi-architecture (linux/amd64, linux/arm64) images are published to GitHub
+Container Registry on every `main` push and on `v*` release tags:
+
+```text
+ghcr.io/strangenoob/open-excalidraw:<tag>
+```
+
+Tags: `latest` tracks `main`, `v*` release tags publish their version, and
+every build is also addressable as `sha-<commit>` for immutable pins. To
+deploy without building locally, set the image in `.env` and start Compose
+without `--build`:
+
+```dotenv
+OPEN_EXCALIDRAW_IMAGE=ghcr.io/strangenoob/open-excalidraw:latest
+```
+
+The image is self-contained: it serves the web UI, REST API, and Socket.IO
+from port 3000, and its entrypoint applies database migrations before start.
+On Kubernetes, run it as a single-replica Deployment (the collaboration
+registry is in-process; see the [collaboration runbook](collaboration.md)
+before scaling out), provide `DATABASE_URL`, `BETTER_AUTH_SECRET`,
+`APP_BASE_URL`, and either SMTP or `ADMIN_RESET_TOKEN`, mount a persistent
+volume at the `STORAGE_LOCAL_PATH` asset path, and probe `/health/live` and
+`/health/ready`.
+
 ## Configure
 
 Clone a tagged release, copy `.env.example` to `.env`, set mode `0600`, and

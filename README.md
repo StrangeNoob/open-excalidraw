@@ -32,6 +32,11 @@ cp .env.example .env
 docker compose up --build -d
 ```
 
+Prebuilt multi-architecture images are published to
+`ghcr.io/strangenoob/open-excalidraw` on every `main` push and release tag;
+set `OPEN_EXCALIDRAW_IMAGE` in `.env` to deploy without building locally. See
+the deployment runbook for details.
+
 The application binds to `127.0.0.1:3000` by default. PostgreSQL and binary
 asset storage use private named volumes. SMTP is optional: when it is absent,
 owners can copy invitation links for manual delivery. Email verification and
