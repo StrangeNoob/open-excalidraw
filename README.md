@@ -46,12 +46,17 @@ Node.js 22.12 or newer, pnpm 10.11.1, and PostgreSQL 17 are recommended.
 
 ```bash
 pnpm install
+createdb -h localhost -p 5432 open_excalidraw
 DATABASE_URL=postgresql://localhost/open_excalidraw pnpm --filter @open-excalidraw/database db:migrate
 DATABASE_URL=postgresql://localhost/open_excalidraw \
 BETTER_AUTH_SECRET=replace-with-at-least-32-random-characters \
 ADMIN_RESET_TOKEN=replace-with-another-32-random-characters \
 pnpm dev
 ```
+
+`db:migrate` creates and updates tables inside an existing PostgreSQL database;
+it does not create the database itself. If `createdb` reports that the database
+already exists, continue with the migration command.
 
 ## Workspace commands
 
