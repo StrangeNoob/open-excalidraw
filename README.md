@@ -20,7 +20,8 @@ Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Report
 security issues privately using [SECURITY.md](SECURITY.md).
 
 This is an independent community project and is not affiliated with or endorsed
-by the Excalidraw project. The editor dependency's license notice is preserved
+by the Excalidraw project. Open Excalidraw is released under the
+[MIT License](LICENSE). The editor dependency's license notice is preserved
 in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Run with Docker Compose
