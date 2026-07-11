@@ -2,10 +2,14 @@ import { randomUUID } from "node:crypto";
 
 import type { Role } from "@open-excalidraw/contracts";
 
-import { MinimumIntervalRateLimiter, type Clock } from "./core/index.js";
+import {
+  MinimumIntervalRateLimiter,
+  TokenBucketRateLimiter,
+  type Clock,
+} from "./core/index.js";
 import { ReconciliationLimitError } from "./core/reconcile.js";
 import { MutationService } from "./mutation-service.js";
-import { PresenceService } from "./presence-service.js";
+import { PresenceRateLimitError, PresenceService } from "./presence-service.js";
 import { PreviewService } from "./preview-service.js";
 import { RoomRegistry } from "./room-registry.js";
 import type {
@@ -140,6 +144,45 @@ describe("collaboration ephemeral services", () => {
       }),
     ]);
     expect(service.roster(drawingId)).toEqual([]);
+  });
+
+  it("keeps rate-limited connections alive for the heartbeat sweep", async () => {
+    const clock = new MutableClock();
+    const service = new PresenceService({
+      sessionValidityResolver: activeSessions,
+      membershipResolver: roleResolver("editor"),
+      rateLimiter: new TokenBucketRateLimiter({
+        capacity: 1,
+        refillTokensPerSecond: 0.000001,
+        clock,
+      }),
+      clock,
+      heartbeatTimeoutMs: 1_000,
+      idleAfterMs: 10_000,
+      awayAfterMs: 50_000,
+    });
+    const editor = binding("editor");
+    await service.join(editor, { name: "Editor", image: null });
+
+    const update = () =>
+      service.update(editor, { type: "presence.update", idleState: "active" });
+    // Exhaust the one-token bucket so every later update is rejected.
+    await update();
+    await expect(update()).rejects.toBeInstanceOf(PresenceRateLimitError);
+
+    // Stay chatty-but-rate-limited past the heartbeat timeout: the sweep
+    // must not expire a connection the limiter has just heard from.
+    clock.advance(900);
+    await expect(update()).rejects.toBeInstanceOf(PresenceRateLimitError);
+    clock.advance(900);
+    expect(service.sweep().filter(({ kind }) => kind === "left")).toEqual([]);
+    expect(service.roster(drawingId)).toHaveLength(1);
+
+    // Gone silent: past the timeout with no traffic at all, it expires.
+    clock.advance(1_100);
+    expect(service.sweep()).toContainEqual(
+      expect.objectContaining({ kind: "left" }),
+    );
   });
 
   it("updates roles and removes revoked bindings before notifying subscribers", () => {

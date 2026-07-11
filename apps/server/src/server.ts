@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { CONTRACT_LIMITS } from "@open-excalidraw/contracts";
 import { createDatabase } from "@open-excalidraw/database";
 import { DisabledMailer, SmtpMailer, type Mailer } from "@open-excalidraw/mail";
 import { LocalObjectStorage } from "@open-excalidraw/storage";
@@ -268,6 +269,9 @@ const app = createApp({
 const port = Number.parseInt(process.env.APP_PORT ?? "3000", 10);
 const server = createServer(app);
 const io = new SocketIoServer(server, {
+  // Socket.IO's default 1 MiB cap is below the contract scene/patch limits,
+  // which would silently drop large full-scene resyncs.
+  maxHttpBufferSize: CONTRACT_LIMITS.sceneBytes + 2 * 1024 * 1024,
   path: "/socket.io",
   serveClient: false,
 });

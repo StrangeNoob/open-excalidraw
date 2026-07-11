@@ -115,6 +115,19 @@ export class PresenceService {
     const parsed = presenceUpdateEventSchema.parse(event);
     const role = await this.#authorize(binding);
     if (!this.#rateLimiter.tryConsume(binding.connectionId)) {
+      // A rate-limited connection is demonstrably alive; refresh its
+      // heartbeat so the sweep cannot expire it for being too chatty.
+      const existing = this.#participants.get(binding.connectionId);
+      if (
+        existing &&
+        existing.drawingId === binding.drawingId &&
+        existing.userId === binding.userId
+      ) {
+        this.#participants.set(binding.connectionId, {
+          ...existing,
+          lastHeartbeatAt: this.#clock.now(),
+        });
+      }
       throw new PresenceRateLimitError();
     }
     const existing = this.#requireParticipant(binding);

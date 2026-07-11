@@ -33,6 +33,7 @@ import {
 import { CloudOutboxDb } from "../connectivity/storage/cloudOutboxDb";
 import {
   CollaborationController,
+  isEventLocalProblem,
   SocketIoTransport,
   type CollaborationState,
 } from "../collaboration";
@@ -656,7 +657,8 @@ export const DrawingPage = ({
       ) : null}
 
       {collaborationEnabled &&
-      (collaboration.status === "reconnecting" || collaboration.error) ? (
+      (collaboration.status === "reconnecting" ||
+        (collaboration.error && !isEventLocalProblem(collaboration.error))) ? (
         <section
           className="workspace-collaboration-warning"
           role={collaboration.error ? "alert" : "status"}

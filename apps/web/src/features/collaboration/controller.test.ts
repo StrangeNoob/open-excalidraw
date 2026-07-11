@@ -75,12 +75,14 @@ class MemoryOutbox implements CollaborationOutbox {
 class FakeTransport implements RealtimeTransport {
   handlers: RealtimeTransportHandlers | null = null;
   readonly emitted: ClientRealtimeEvent[] = [];
+  connectCalls = 0;
 
   setHandlers(handlers: RealtimeTransportHandlers | null) {
     this.handlers = handlers;
   }
 
   connect() {
+    this.connectCalls += 1;
     this.handlers?.onConnect();
   }
 
@@ -96,8 +98,8 @@ class FakeTransport implements RealtimeTransport {
     this.handlers?.onServerEvent(event);
   }
 
-  serverDisconnect() {
-    this.handlers?.onDisconnect("transport close");
+  serverDisconnect(reason = "transport close") {
+    this.handlers?.onDisconnect(reason);
   }
 
   presence(event: PresenceBroadcast) {
@@ -364,8 +366,128 @@ describe("CollaborationController", () => {
         event.type.startsWith("scene."),
       ),
     ).toEqual([]);
-    fixture.controller.publishPresence({ idleState: "active" });
+    fixture.controller.publishPresence({
+      idleState: "active",
+      pointer: { tool: "pointer", x: 4, y: 8 },
+    });
     expect(fixture.transport.emitted.at(-1)?.type).toBe("presence.update");
+  });
+
+  it("drops presence payloads identical to the last published state", async () => {
+    const fixture = setup();
+    await waitFor(() => expect(fixture.controller.state.status).toBe("ready"));
+    fixture.transport.emitted.length = 0;
+
+    fixture.controller.publishPresence({
+      idleState: "active",
+      selectedElementIds: { element: true },
+    });
+    fixture.controller.publishPresence({
+      idleState: "active",
+      selectedElementIds: { element: true },
+    });
+    fixture.controller.publishPresence({
+      idleState: "active",
+      selectedElementIds: { element: true },
+    });
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(
+      fixture.transport.emitted.filter(
+        ({ type }) => type === "presence.update",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("throttles pointer presence and emits the trailing update", async () => {
+    const fixture = setup();
+    await waitFor(() => expect(fixture.controller.state.status).toBe("ready"));
+    fixture.transport.emitted.length = 0;
+
+    for (let step = 1; step <= 30; step += 1) {
+      fixture.controller.publishPresence({
+        idleState: "active",
+        pointer: { tool: "pointer", x: step, y: step },
+      });
+    }
+    await vi.advanceTimersByTimeAsync(500);
+
+    const presence = fixture.transport.emitted.filter(
+      (
+        event,
+      ): event is Extract<ClientRealtimeEvent, { type: "presence.update" }> =>
+        event.type === "presence.update",
+    );
+    expect(presence.length).toBeLessThanOrEqual(3);
+    expect(presence.at(-1)?.pointer).toMatchObject({ x: 30, y: 30 });
+  });
+
+  it("reconnects and rejoins after a server-initiated disconnect", async () => {
+    const fixture = setup();
+    await waitFor(() => expect(fixture.controller.state.status).toBe("ready"));
+    const joinsBefore = fixture.transport.emitted.filter(
+      ({ type }) => type === "room.join",
+    ).length;
+
+    fixture.transport.serverDisconnect("io server disconnect");
+    await waitFor(() =>
+      expect(fixture.controller.state.status).toBe("reconnecting"),
+    );
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    await waitFor(() =>
+      expect(
+        fixture.transport.emitted.filter(({ type }) => type === "room.join"),
+      ).toHaveLength(joinsBefore + 1),
+    );
+    expect(fixture.transport.connectCalls).toBe(2);
+    fixture.transport.server(ready("1"));
+    await waitFor(() => expect(fixture.controller.state.status).toBe("ready"));
+  });
+
+  it("does not reconnect after a membership revocation disconnect", async () => {
+    const fixture = setup();
+    await waitFor(() => expect(fixture.controller.state.status).toBe("ready"));
+
+    fixture.transport.server({
+      code: "SOCKET_MEMBERSHIP_REVOKED",
+      message: "Drawing access was revoked",
+      requestId: "revoked",
+      retryable: false,
+      type: "protocol.error",
+    });
+    await waitFor(() => expect(fixture.controller.state.role).toBeNull());
+    fixture.transport.serverDisconnect("io server disconnect");
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(fixture.transport.connectCalls).toBe(1);
+  });
+
+  it("clears event-local errors once traffic succeeds again", async () => {
+    const fixture = setup();
+    await waitFor(() => expect(fixture.controller.state.status).toBe("ready"));
+    fixture.transport.server({
+      code: "PRESENCE_RATE_LIMITED",
+      message: "Presence update rate exceeded",
+      requestId: "request",
+      retryable: true,
+      type: "protocol.error",
+    });
+    await waitFor(() =>
+      expect(fixture.controller.state.error?.code).toBe(
+        "PRESENCE_RATE_LIMITED",
+      ),
+    );
+
+    fixture.transport.server({
+      elements: [element(2)],
+      mutationId: "00000000-0000-4000-8000-000000000098",
+      revision: "2",
+      type: "scene.committed",
+    });
+
+    await waitFor(() => expect(fixture.controller.state.error).toBeNull());
+    expect(fixture.controller.state.revision).toBe("2");
   });
 
   it("pauses local and periodic writes around a restore boundary and resumes after failure", async () => {

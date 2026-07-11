@@ -26,6 +26,7 @@ import { ElementVersionFilter } from "./version-filter";
 
 type SceneMutateEvent = Extract<ClientRealtimeEvent, { type: "scene.mutate" }>;
 type SharedSceneState = NonNullable<SceneMutateEvent["sharedSceneState"]>;
+type PresenceEvent = Extract<ClientRealtimeEvent, { type: "presence.update" }>;
 
 export interface CollaborationOutbox {
   list(userId: string, drawingId: string): Promise<CloudOutboxRecord[]>;
@@ -50,7 +51,9 @@ export interface CollaborationControllerOptions {
   now?: () => number;
   outbox: CollaborationOutbox;
   presenceHeartbeatMs?: number;
+  presenceThrottleMs?: number;
   previewThrottleMs?: number;
+  reconnectDelayMs?: number;
   transport: RealtimeTransport;
   uploadAssets?: (
     drawingId: string,
@@ -79,6 +82,8 @@ export class CollaborationController {
   readonly #uploadAssets?: CollaborationControllerOptions["uploadAssets"];
   readonly #now: () => number;
   readonly #previewThrottleMs: number;
+  readonly #presenceThrottleMs: number;
+  readonly #reconnectDelayMs: number;
   readonly #durableDebounceMs: number;
   readonly #durableMaxWaitMs: number;
   readonly #fullResyncMs: number;
@@ -93,15 +98,19 @@ export class CollaborationController {
   #dirtySharedSceneState: SharedSceneState | null = null;
   #observedSharedSceneState = "{}";
   #latestFiles: BinaryFiles = {};
-  #lastPresence: Extract<ClientRealtimeEvent, { type: "presence.update" }> = {
+  #lastPresence: PresenceEvent = {
     idleState: "active",
     type: "presence.update",
   };
+  #pendingPresence: PresenceEvent | null = null;
   #state: CollaborationState = INITIAL_STATE;
   #generation = 0;
   #lastPreviewAt: number | null = null;
+  #lastPresenceAt: number | null = null;
   #durableFirstDirtyAt: number | null = null;
   #previewTimer: ReturnType<typeof setTimeout> | null = null;
+  #presenceTimer: ReturnType<typeof setTimeout> | null = null;
+  #reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   #durableTimer: ReturnType<typeof setTimeout> | null = null;
   #fullResyncTimer: ReturnType<typeof setInterval> | null = null;
   #presenceHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -123,6 +132,8 @@ export class CollaborationController {
     this.#uploadAssets = options.uploadAssets;
     this.#now = options.now ?? (() => Date.now());
     this.#previewThrottleMs = options.previewThrottleMs ?? 100;
+    this.#presenceThrottleMs = options.presenceThrottleMs ?? 100;
+    this.#reconnectDelayMs = options.reconnectDelayMs ?? 2_000;
     this.#durableDebounceMs = options.durableDebounceMs ?? 1_000;
     this.#durableMaxWaitMs = options.durableMaxWaitMs ?? 5_000;
     this.#fullResyncMs = options.fullResyncMs ?? 20_000;
@@ -216,15 +227,15 @@ export class CollaborationController {
     this.#scheduleDurable();
   }
 
-  publishPresence(
-    event: Omit<
-      Extract<ClientRealtimeEvent, { type: "presence.update" }>,
-      "type"
-    >,
-  ): void {
+  publishPresence(event: Omit<PresenceEvent, "type">): void {
     if (this.#state.status !== "ready") return;
-    this.#lastPresence = { type: "presence.update", ...event };
-    this.#transport.emit(this.#lastPresence);
+    const next: PresenceEvent = { type: "presence.update", ...event };
+    // Excalidraw fires onChange when a remote presence update is applied, so
+    // without this dedupe two clients echo presence back and forth forever.
+    const current = this.#pendingPresence ?? this.#lastPresence;
+    if (JSON.stringify(next) === JSON.stringify(current)) return;
+    this.#pendingPresence = next;
+    this.#emitOrSchedulePresence();
   }
 
   flush(): Promise<void> {
@@ -256,13 +267,14 @@ export class CollaborationController {
   #handlers(): RealtimeTransportHandlers {
     return {
       onConnect: () => this.#enqueue(() => this.#join()),
-      onDisconnect: () =>
+      onDisconnect: (reason) =>
         this.#enqueue(async () => {
           if (this.#disposed) return;
           this.#setState({ status: "reconnecting" });
           await this.#flushDurable(false, false, true);
           this.#remotePreviews.clear();
           await this.#applyCanonicalWithOwned();
+          this.#scheduleReconnect(reason);
         }),
       onError: (error) => this.#setState({ error, status: "error" }),
       onPresence: (event) => this.#receivePresence(event),
@@ -281,6 +293,23 @@ export class CollaborationController {
           status: "error",
         });
       });
+  }
+
+  /**
+   * Socket.IO clients never auto-reconnect after a server-initiated
+   * disconnect (backpressure, presence sweep), so the controller must, or a
+   * kicked editor stays on "reconnecting" forever with a growing outbox.
+   */
+  #scheduleReconnect(reason: string) {
+    if (reason !== "io server disconnect") return;
+    if (this.#state.error?.code === "SOCKET_MEMBERSHIP_REVOKED") return;
+    if (this.#reconnectTimer) return;
+    this.#reconnectTimer = setTimeout(() => {
+      this.#reconnectTimer = null;
+      if (!this.#disposed && this.#started) {
+        this.#transport.connect();
+      }
+    }, this.#reconnectDelayMs);
   }
 
   #join() {
@@ -430,7 +459,10 @@ export class CollaborationController {
     if (event.sharedSceneState) {
       this.#canonicalSharedSceneState = event.sharedSceneState;
     }
-    this.#setState({ revision: event.revision });
+    this.#setState({
+      error: this.#withoutTransientError(),
+      revision: event.revision,
+    });
     await this.#applyCanonicalWithOwned(event.sharedSceneState);
   }
 
@@ -454,7 +486,17 @@ export class CollaborationController {
       }
     }
     await this.#outbox.remove(this.#userId, this.#drawingId, mutationId);
-    if (comparison > 0) this.#setState({ revision });
+    this.#setState({
+      error: this.#withoutTransientError(),
+      ...(comparison > 0 ? { revision } : {}),
+    });
+  }
+
+  /** Event-local warnings (rate limits) clear once traffic succeeds again. */
+  #withoutTransientError(): RealtimeProblem | null {
+    return this.#state.error && isEventLocalProblem(this.#state.error)
+      ? null
+      : this.#state.error;
   }
 
   async #roleChanged(role: Role) {
@@ -523,6 +565,32 @@ export class CollaborationController {
       collaborators,
       elements: restored,
     });
+  }
+
+  /** Keeps sustained presence below the server's 15-per-second budget. */
+  #emitOrSchedulePresence() {
+    const elapsed =
+      this.#lastPresenceAt === null
+        ? this.#presenceThrottleMs
+        : this.#now() - this.#lastPresenceAt;
+    if (elapsed >= this.#presenceThrottleMs) {
+      this.#flushPresence();
+      return;
+    }
+    if (!this.#presenceTimer) {
+      this.#presenceTimer = setTimeout(() => {
+        this.#presenceTimer = null;
+        this.#flushPresence();
+      }, this.#presenceThrottleMs - elapsed);
+    }
+  }
+
+  #flushPresence() {
+    if (this.#state.status !== "ready" || !this.#pendingPresence) return;
+    this.#lastPresence = this.#pendingPresence;
+    this.#pendingPresence = null;
+    this.#lastPresenceAt = this.#now();
+    this.#transport.emit(this.#lastPresence);
   }
 
   #emitOrSchedulePreview() {
@@ -720,10 +788,14 @@ export class CollaborationController {
 
   #clearTimers() {
     this.#clearWriteTimers();
+    if (this.#presenceTimer) clearTimeout(this.#presenceTimer);
+    if (this.#reconnectTimer) clearTimeout(this.#reconnectTimer);
     if (this.#fullResyncTimer) clearInterval(this.#fullResyncTimer);
     if (this.#presenceHeartbeatTimer) {
       clearInterval(this.#presenceHeartbeatTimer);
     }
+    this.#presenceTimer = null;
+    this.#reconnectTimer = null;
     this.#fullResyncTimer = null;
     this.#presenceHeartbeatTimer = null;
   }
@@ -826,7 +898,8 @@ const sameElementGeneration = (
   left.versionNonce === right.versionNonce &&
   left.isDeleted === right.isDeleted;
 
-const isEventLocalProblem = (problem: RealtimeProblem) =>
+/** True for warnings scoped to one rejected event, not the connection. */
+export const isEventLocalProblem = (problem: RealtimeProblem) =>
   problem.retryable ||
   problem.code.includes("RATE_LIMIT") ||
   problem.code.startsWith("PREVIEW_") ||
