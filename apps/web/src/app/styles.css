@@ -1,7 +1,67 @@
+/*
+ * Sketchbook design tokens: ink on dot-grid paper, one violet accent,
+ * hand-drawn wobble borders. Chrome only — nothing here may restyle the
+ * Excalidraw island (see the guard at the bottom).
+ */
 :root {
-  color: #1b1b1f;
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  color-scheme: light dark;
+
+  --paper: #faf9f3;
+  --card: #ffffff;
+  --dot: rgb(30 29 42 / 9%);
+  --ink: #1e1d2a;
+  --ink-soft: #5d5b6e;
+  --line: rgb(30 29 42 / 32%);
+  --accent: #6965db;
+  --accent-contrast: #ffffff;
+  --accent-ink: #4a46c6;
+  --accent-wash: #ecebfb;
+  --highlight-wash: #fff1a8;
+  --highlight-ink: #6b5500;
+  --green-wash: #d3f9d8;
+  --green-ink: #2b8a3e;
+  --blue-wash: #d0ebff;
+  --blue-ink: #1971c2;
+  --danger-ink: #c92a2a;
+  --danger-wash: #ffe3e3;
+  --shadow: rgb(30 29 42 / 85%);
+  --backdrop: rgb(30 29 42 / 45%);
+
+  --font-hand: "Gochi Hand", "Comic Sans MS", "Segoe Print", cursive;
+  --font-body: "Nunito Variable", "Nunito", ui-rounded, system-ui, sans-serif;
+
+  /* Oversized radii clamp proportionally, giving each box a hand-drawn wobble. */
+  --wobble: 255px 15px 225px 15px / 15px 225px 15px 255px;
+  --wobble-alt: 15px 225px 15px 255px / 255px 15px 225px 15px;
+
+  color: var(--ink);
+  font-family: var(--font-body);
   font-synthesis: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #17171f;
+    --card: #21212c;
+    --dot: rgb(235 234 245 / 7%);
+    --ink: #eceaf4;
+    --ink-soft: #a3a1b5;
+    --line: rgb(235 234 245 / 32%);
+    --accent: #6965db;
+    --accent-contrast: #ffffff;
+    --accent-ink: #a5a2f6;
+    --accent-wash: rgb(105 101 219 / 20%);
+    --highlight-wash: rgb(255 212 59 / 16%);
+    --highlight-ink: #ffd43b;
+    --green-wash: rgb(43 138 62 / 22%);
+    --green-ink: #69db7c;
+    --blue-wash: rgb(25 113 194 / 22%);
+    --blue-ink: #74c0fc;
+    --danger-ink: #ff8787;
+    --danger-wash: rgb(201 42 42 / 20%);
+    --shadow: rgb(0 0 0 / 70%);
+    --backdrop: rgb(0 0 0 / 60%);
+  }
 }
 
 * {
@@ -15,10 +75,218 @@ body,
   margin: 0;
 }
 
+body {
+  background-color: var(--paper);
+  background-image: radial-gradient(var(--dot) 1px, transparent 1.4px);
+  background-size: 22px 22px;
+}
+
+a {
+  color: var(--accent-ink);
+  text-decoration: underline wavy 1px;
+  text-underline-offset: 4px;
+}
+
+:focus-visible {
+  outline: 2px dashed var(--accent);
+  outline-offset: 2px;
+}
+
 .app-shell {
   align-items: center;
   display: flex;
   flex-direction: column;
   height: 100%;
   justify-content: center;
+}
+
+/*
+ * Shared sketch primitives. Every selector below targets chrome containers
+ * that can never contain the Excalidraw canvas.
+ */
+.auth-page h1,
+.auth-page h2,
+.auth-brand,
+.dashboard-page h1,
+.dashboard-page h2,
+.dashboard-eyebrow,
+.drawing-card h3,
+.workspace-header h1,
+.workspace-message h1,
+.workspace-modal h2,
+.workspace-modal h3,
+.invitation-card h1,
+.invitation-card h2,
+.guest-canvas-header strong,
+.migration-prompt strong {
+  font-family: var(--font-hand);
+  font-weight: 400;
+  letter-spacing: 0.015em;
+}
+
+.auth-card button,
+.dashboard-page button,
+.guest-canvas-error button,
+.workspace-header button,
+.workspace-message button,
+.workspace-modal button,
+.workspace-save-error button,
+.workspace-collaboration-warning button,
+.drawing-workspace [aria-label="Save conflict"] button,
+.invitation-card button,
+.migration-prompt button {
+  background: var(--card);
+  border: 1.5px solid var(--ink);
+  border-radius: var(--wobble);
+  box-shadow: 2px 2px 0 var(--shadow);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  min-height: 2.4rem;
+  padding: 0.4rem 0.9rem;
+  transition:
+    transform 80ms ease,
+    box-shadow 80ms ease;
+}
+
+.auth-card button:hover:not(:disabled),
+.dashboard-page button:hover:not(:disabled),
+.guest-canvas-error button:hover:not(:disabled),
+.workspace-header button:hover:not(:disabled),
+.workspace-message button:hover:not(:disabled),
+.workspace-modal button:hover:not(:disabled),
+.workspace-save-error button:hover:not(:disabled),
+.workspace-collaboration-warning button:hover:not(:disabled),
+.drawing-workspace [aria-label="Save conflict"] button:hover:not(:disabled),
+.invitation-card button:hover:not(:disabled),
+.migration-prompt button:hover:not(:disabled) {
+  box-shadow: 3px 3px 0 var(--shadow);
+  transform: translate(-1px, -1px);
+}
+
+.auth-card button:active:not(:disabled),
+.dashboard-page button:active:not(:disabled),
+.guest-canvas-error button:active:not(:disabled),
+.workspace-header button:active:not(:disabled),
+.workspace-message button:active:not(:disabled),
+.workspace-modal button:active:not(:disabled),
+.workspace-save-error button:active:not(:disabled),
+.workspace-collaboration-warning button:active:not(:disabled),
+.drawing-workspace [aria-label="Save conflict"] button:active:not(:disabled),
+.invitation-card button:active:not(:disabled),
+.migration-prompt button:active:not(:disabled) {
+  box-shadow: 0 0 0 var(--shadow);
+  transform: translate(2px, 2px);
+}
+
+.auth-card button:disabled,
+.dashboard-page button:disabled,
+.workspace-header button:disabled,
+.workspace-modal button:disabled,
+.workspace-save-error button:disabled,
+.workspace-collaboration-warning button:disabled,
+.drawing-workspace [aria-label="Save conflict"] button:disabled,
+.invitation-card button:disabled,
+.migration-prompt button:disabled {
+  box-shadow: none;
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.auth-card button[type="submit"],
+.create-drawing button[type="submit"],
+.invitation-card button,
+.migration-prompt button {
+  background: var(--accent);
+  border-color: var(--ink);
+  color: var(--accent-contrast);
+}
+
+.auth-card input,
+.dashboard-page input,
+.workspace-modal input,
+.workspace-modal select {
+  background: var(--card);
+  border: 1.5px solid var(--line);
+  border-radius: var(--wobble-alt);
+  color: var(--ink);
+  font: inherit;
+  min-height: 2.4rem;
+  padding: 0.45rem 0.7rem;
+}
+
+.auth-card input:focus,
+.dashboard-page input:focus,
+.workspace-modal input:focus,
+.workspace-modal select:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.auth-card label,
+.dashboard-page label,
+.workspace-modal label {
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.auth-card [role="alert"],
+.dashboard-page [role="alert"],
+.workspace-modal [role="alert"],
+.invitation-card [role="alert"],
+.migration-prompt [role="alert"] {
+  color: var(--danger-ink);
+}
+
+.migration-prompt {
+  align-items: center;
+  background: var(--accent-wash);
+  border: 1.5px solid var(--accent-ink);
+  border-radius: var(--wobble);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  margin: 1rem auto 0;
+  max-width: 78rem;
+  padding: 0.75rem 1rem;
+  width: calc(100% - 2rem);
+}
+
+.migration-prompt strong {
+  font-size: 1.15rem;
+}
+
+.migration-prompt p {
+  color: var(--ink-soft);
+  flex: 1;
+  margin: 0;
+  min-width: 12rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/*
+ * Island guard: the Excalidraw editor manages its own typography, links,
+ * and buttons. Undo the few inheritable chrome styles that could reach it.
+ */
+.excalidraw h1,
+.excalidraw h2,
+.excalidraw h3,
+.excalidraw h4,
+.excalidraw strong {
+  font-family: inherit;
+  letter-spacing: normal;
+}
+
+.excalidraw a {
+  text-decoration: none;
 }

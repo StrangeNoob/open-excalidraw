@@ -85,7 +85,11 @@ export const GuestMigrationPrompt = ({
 
   if (status === "error" && !candidate) {
     return (
-      <section aria-label="Local drawing inspection failed" role="alert">
+      <section
+        aria-label="Local drawing inspection failed"
+        className="migration-prompt"
+        role="alert"
+      >
         <strong>Could not check your local drawing.</strong>
         <p>{error?.message}</p>
         <button
@@ -149,7 +153,11 @@ export const GuestMigrationPrompt = ({
   };
 
   return (
-    <section aria-label="Save local drawing" role="dialog">
+    <section
+      aria-label="Save local drawing"
+      className="migration-prompt"
+      role="dialog"
+    >
       <strong>Save “{candidate.title}” to your account?</strong>
       <p>The local copy stays on this device until the cloud save finishes.</p>
       {error ? <p role="alert">{error.message}</p> : null}

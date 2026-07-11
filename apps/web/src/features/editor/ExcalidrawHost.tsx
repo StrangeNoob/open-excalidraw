@@ -1,10 +1,27 @@
-import { CaptureUpdateAction, Excalidraw } from "@excalidraw/excalidraw";
+import { CaptureUpdateAction, Excalidraw, THEME } from "@excalidraw/excalidraw";
 import type {
   ExcalidrawImperativeAPI,
   ExcalidrawInitialDataState,
   ExcalidrawProps,
 } from "@excalidraw/excalidraw/types";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+
+const DARK_SCHEME_QUERY = "(prefers-color-scheme: dark)";
+
+const subscribeToColorScheme = (listener: () => void) => {
+  const media = globalThis.matchMedia?.(DARK_SCHEME_QUERY);
+  media?.addEventListener?.("change", listener);
+  return () => media?.removeEventListener?.("change", listener);
+};
+
+const prefersDarkScheme = () =>
+  globalThis.matchMedia?.(DARK_SCHEME_QUERY).matches ?? false;
+
+/** Keeps the canvas theme aligned with the OS scheme the chrome follows. */
+const useColorSchemeTheme = () =>
+  useSyncExternalStore(subscribeToColorScheme, prefersDarkScheme, () => false)
+    ? THEME.DARK
+    : THEME.LIGHT;
 
 import "./excalidraw-host.css";
 
@@ -34,6 +51,7 @@ export const ExcalidrawHost = ({
   readOnly = false,
   title,
 }: ExcalidrawHostProps) => {
+  const theme = useColorSchemeTheme();
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
   const apiChangeCallbackRef = useRef(onApiChange);
   const previousApiChangeCallbackRef = useRef(onApiChange);
@@ -89,6 +107,7 @@ export const ExcalidrawHost = ({
         name={title}
         onChange={onChange}
         onPointerUpdate={onPointerUpdate}
+        theme={theme}
         viewModeEnabled={readOnly}
       />
     </section>

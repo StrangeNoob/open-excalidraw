@@ -3,6 +3,8 @@ import { createRoot } from "react-dom/client";
 import { RouterProvider } from "react-router-dom";
 
 import "@excalidraw/excalidraw/index.css";
+import "@fontsource/gochi-hand";
+import "@fontsource-variable/nunito";
 
 import { AppProviders, createAppQueryClient } from "./app/providers";
 import { createAppRouter } from "./app/router";

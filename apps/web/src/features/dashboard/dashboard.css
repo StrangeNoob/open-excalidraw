@@ -14,10 +14,17 @@
   justify-content: space-between;
 }
 
+.dashboard-header h1 {
+  font-size: 2.4rem;
+  margin: 0;
+}
+
 .dashboard-eyebrow {
-  color: #6741d9;
-  font-weight: 700;
+  color: var(--accent-ink);
+  font-size: 1.1rem;
   margin-bottom: 0.25rem;
+  rotate: -1deg;
+  width: fit-content;
 }
 
 .create-drawing,
@@ -33,35 +40,48 @@
   gap: 0.35rem;
 }
 
-.create-drawing input,
-.create-drawing button,
-.drawing-card input,
-.drawing-card button,
-.dashboard-error button {
-  border: 1px solid #c9c9d3;
-  border-radius: 0.6rem;
-  font: inherit;
-  min-height: 2.5rem;
-  padding: 0.5rem 0.75rem;
-}
-
 .dashboard-sections {
   display: grid;
   gap: 2.5rem;
   margin-top: 2.5rem;
 }
 
+.dashboard-sections h2 {
+  border-bottom: 1.5px dashed var(--line);
+  font-size: 1.6rem;
+  margin-bottom: 1rem;
+  padding-bottom: 0.35rem;
+}
+
 .drawing-grid {
   display: grid;
-  gap: 1rem;
+  gap: 1.25rem;
   grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
 }
 
 .drawing-card {
-  background: white;
-  border: 1px solid #e3e3eb;
-  border-radius: 0.9rem;
+  background: var(--card);
+  border: 1.5px solid var(--ink);
+  border-radius: var(--wobble);
+  box-shadow: 3px 3px 0 var(--shadow);
   padding: 1rem;
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.drawing-card:nth-child(even) {
+  border-radius: var(--wobble-alt);
+}
+
+.drawing-card:hover {
+  box-shadow: 5px 5px 0 var(--shadow);
+  transform: translate(-1px, -2px) rotate(-0.3deg);
+}
+
+.drawing-card h3 {
+  font-size: 1.35rem;
+  margin: 0;
 }
 
 .drawing-card-heading,
@@ -86,7 +106,7 @@
 }
 
 .drawing-card dl {
-  color: #62626d;
+  color: var(--ink-soft);
   font-size: 0.9rem;
 }
 
@@ -101,38 +121,50 @@
 }
 
 .role-badge {
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 700;
-  padding: 0.25rem 0.55rem;
+  border: 1.5px solid;
+  border-radius: var(--wobble);
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 0.15rem 0.55rem;
+  rotate: -1.5deg;
   text-transform: capitalize;
 }
 
 .role-badge-owner {
-  background: #e5dbff;
-  color: #5f3dc4;
+  background: var(--accent-wash);
+  border-color: var(--accent-ink);
+  color: var(--accent-ink);
 }
 
 .role-badge-editor {
-  background: #d3f9d8;
-  color: #2b8a3e;
+  background: var(--green-wash);
+  border-color: var(--green-ink);
+  color: var(--green-ink);
 }
 
 .role-badge-viewer {
-  background: #e7f5ff;
-  color: #1971c2;
+  background: var(--blue-wash);
+  border-color: var(--blue-ink);
+  color: var(--blue-ink);
 }
 
-.danger-button {
-  color: #c92a2a;
+.dashboard-page .danger-button {
+  color: var(--danger-ink);
 }
 
 .dashboard-empty,
 .dashboard-error,
 .dashboard-notice {
-  background: #f7f7fb;
-  border-radius: 0.75rem;
-  padding: 1rem;
+  border: 1.5px dashed var(--line);
+  border-radius: var(--wobble);
+  color: var(--ink-soft);
+  padding: 1.25rem;
+  text-align: center;
+}
+
+.dashboard-error h2 {
+  border: none;
+  margin-top: 0;
 }
 
 @media (max-width: 42rem) {

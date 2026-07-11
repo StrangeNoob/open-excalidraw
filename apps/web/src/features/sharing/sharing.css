@@ -7,14 +7,33 @@
 }
 
 .invitation-card {
-  border: 1px solid #dddde5;
-  border-radius: 0.85rem;
+  background: var(--card);
+  border: 1.5px solid var(--ink);
+  border-radius: var(--wobble);
+  box-shadow: 5px 5px 0 var(--shadow);
   max-width: 32rem;
-  padding: 1.5rem;
+  padding: 1.5rem 2rem;
   width: 100%;
 }
 
+.invitation-card > a {
+  color: var(--accent-ink);
+  font-family: var(--font-hand);
+  font-size: 1.2rem;
+  text-decoration: none;
+}
+
+.invitation-card h1 {
+  font-size: 2rem;
+  margin: 0.75rem 0 0.5rem;
+}
+
+.invitation-card h2 {
+  font-size: 1.4rem;
+}
+
 .invitation-actions {
+  align-items: center;
   display: flex;
-  gap: 0.5rem;
+  gap: 1rem;
 }
