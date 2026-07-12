@@ -28,6 +28,7 @@ vi.mock("../../editor", () => ({
   }) => (
     <section
       aria-label={`${title} drawing canvas`}
+      data-background={initialData?.appState?.viewBackgroundColor}
       data-elements={initialData?.elements?.length ?? 0}
     >
       {renderTopRightUI?.(false, {} as never)}
@@ -117,6 +118,35 @@ describe("GuestCanvasPage", () => {
       screen.getByRole("button", { name: "Create account" }),
     ).toBeInTheDocument();
   });
+
+  it.each([
+    ["a new guest with no saved scene", undefined, "transparent"],
+    ["Excalidraw's autosaved white default", "#ffffff", "transparent"],
+    ["a background the guest chose", "#ffec99", "#ffec99"],
+  ])(
+    "shows the dotted paper through the canvas for %s",
+    async (_case, saved, expected) => {
+      const repository: GuestCanvasRepository = {
+        loadInitialData: vi.fn().mockResolvedValue({
+          elements: [],
+          ...(saved ? { appState: { viewBackgroundColor: saved } } : {}),
+        }),
+        saveSnapshot: vi.fn().mockResolvedValue({}),
+      };
+
+      render(
+        <MemoryRouter>
+          <GuestCanvasPage repository={repository} title="Local sketch" />
+        </MemoryRouter>,
+      );
+
+      await waitFor(() =>
+        expect(
+          screen.getByRole("region", { name: "Local sketch drawing canvas" }),
+        ).toHaveAttribute("data-background", expected),
+      );
+    },
+  );
 
   it("keeps a new empty canvas mounted when local autosave fails", async () => {
     const repository: GuestCanvasRepository = {
