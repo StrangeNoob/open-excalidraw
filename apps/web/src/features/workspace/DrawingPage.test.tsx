@@ -48,8 +48,14 @@ const appState = {
   viewBackgroundColor: "#ffffff",
 };
 
+/**
+ * Stands in for the real host: it renders the title and the top-right UI the
+ * way Excalidraw does, so tests still see the workspace's own chrome. The
+ * children (MainMenu) need Excalidraw's context and are not rendered here.
+ */
 const TestHost = (props: ExcalidrawHostProps) => {
-  const { initialData, onApiChange, onChange, readOnly } = props;
+  const { initialData, onApiChange, onChange, readOnly, renderTopRightUI } =
+    props;
   const initial = initialData as ExcalidrawInitialDataState;
 
   useEffect(() => {
@@ -67,6 +73,8 @@ const TestHost = (props: ExcalidrawHostProps) => {
 
   return (
     <section data-testid="test-host" data-viewer={String(readOnly)}>
+      <h1>{props.title}</h1>
+      {renderTopRightUI?.(false, {} as never)}
       {onChange ? (
         <button
           onClick={() =>

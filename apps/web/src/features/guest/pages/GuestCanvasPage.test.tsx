@@ -7,19 +7,32 @@ import type { GuestCanvasRepository } from "../hooks";
 import { GuestCanvasPage } from "./GuestCanvasPage";
 
 vi.mock("../../editor", () => ({
+  accountIcon: null,
+  // Excalidraw's Footer needs the editor's context, so the double renders the
+  // status inline while keeping the same accessible role the real one exposes.
+  CanvasStatusFooter: ({ label }: { label: string }) => (
+    <span role="status">{label}</span>
+  ),
   ExcalidrawHost: ({
+    children,
     initialData,
     onChange,
+    renderTopRightUI,
     title,
   }: {
+    children?: React.ReactNode;
     initialData: ExcalidrawInitialDataState | null;
     onChange: ExcalidrawChangeHandler;
+    renderTopRightUI?: (isMobile: boolean, appState: never) => React.ReactNode;
     title: string;
   }) => (
     <section
       aria-label={`${title} drawing canvas`}
+      data-background={initialData?.appState?.viewBackgroundColor}
       data-elements={initialData?.elements?.length ?? 0}
     >
+      {renderTopRightUI?.(false, {} as never)}
+      {children}
       <button
         onClick={() =>
           onChange(
@@ -41,7 +54,37 @@ vi.mock("../../editor", () => ({
       </button>
     </section>
   ),
+  signInIcon: null,
 }));
+
+vi.mock("@excalidraw/excalidraw", () => {
+  const passthrough = ({ children }: { children?: React.ReactNode }) => (
+    <>{children}</>
+  );
+  const MainMenu = Object.assign(passthrough, {
+    DefaultItems: new Proxy({}, { get: () => () => null }),
+    Item: passthrough,
+    ItemLink: passthrough,
+    Separator: () => null,
+  });
+  const Center = Object.assign(passthrough, {
+    Heading: passthrough,
+    Logo: passthrough,
+    Menu: passthrough,
+    MenuItem: passthrough,
+    MenuItemHelp: () => null,
+    MenuItemLoadScene: () => null,
+  });
+  const WelcomeScreen = Object.assign(passthrough, {
+    Center,
+    Hints: {
+      HelpHint: () => null,
+      MenuHint: passthrough,
+      ToolbarHint: passthrough,
+    },
+  });
+  return { Footer: passthrough, MainMenu, WelcomeScreen };
+});
 
 describe("GuestCanvasPage", () => {
   it("waits for IndexedDB-backed initial data before mounting the canvas", async () => {
@@ -64,12 +107,46 @@ describe("GuestCanvasPage", () => {
         }),
       ).toHaveAttribute("data-elements", "0"),
     );
-    expect(screen.getByText("Local only")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute(
-      "href",
-      "/login?returnTo=%2Fapp",
+    // The local-only nature and the account actions now surface through
+    // Excalidraw's own chrome rather than a page header bar.
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Changes stay on this device",
     );
+    expect(screen.getByText(/saved on this device only/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Create account" }),
+    ).toBeInTheDocument();
   });
+
+  it.each([
+    ["a new guest with no saved scene", undefined, "transparent"],
+    ["Excalidraw's autosaved white default", "#ffffff", "transparent"],
+    ["a background the guest chose", "#ffec99", "#ffec99"],
+  ])(
+    "shows the dotted paper through the canvas for %s",
+    async (_case, saved, expected) => {
+      const repository: GuestCanvasRepository = {
+        loadInitialData: vi.fn().mockResolvedValue({
+          elements: [],
+          ...(saved ? { appState: { viewBackgroundColor: saved } } : {}),
+        }),
+        saveSnapshot: vi.fn().mockResolvedValue({}),
+      };
+
+      render(
+        <MemoryRouter>
+          <GuestCanvasPage repository={repository} title="Local sketch" />
+        </MemoryRouter>,
+      );
+
+      await waitFor(() =>
+        expect(
+          screen.getByRole("region", { name: "Local sketch drawing canvas" }),
+        ).toHaveAttribute("data-background", expected),
+      );
+    },
+  );
 
   it("keeps a new empty canvas mounted when local autosave fails", async () => {
     const repository: GuestCanvasRepository = {

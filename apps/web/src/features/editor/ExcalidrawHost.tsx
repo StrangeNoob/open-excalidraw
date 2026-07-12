@@ -4,7 +4,13 @@ import type {
   ExcalidrawInitialDataState,
   ExcalidrawProps,
 } from "@excalidraw/excalidraw/types";
-import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 
 const DARK_SCHEME_QUERY = "(prefers-color-scheme: dark)";
 
@@ -33,22 +39,27 @@ export type ExcalidrawInitialData = ExcalidrawInitialDataState | null;
 export type ExcalidrawInitialDataSource = ExcalidrawProps["initialData"];
 
 export interface ExcalidrawHostProps {
+  /** Excalidraw UI slots: MainMenu, WelcomeScreen, and Footer. */
+  children?: ReactNode;
   initialData?: ExcalidrawInitialDataSource;
   isCollaborating?: boolean;
   onApiChange?: (api: ExcalidrawImperativeAPI | null) => void;
   onChange?: ExcalidrawChangeHandler;
   onPointerUpdate?: ExcalidrawPointerHandler;
   readOnly?: boolean;
+  renderTopRightUI?: ExcalidrawProps["renderTopRightUI"];
   title: string;
 }
 
 export const ExcalidrawHost = ({
+  children,
   initialData,
   isCollaborating = false,
   onApiChange,
   onChange,
   onPointerUpdate,
   readOnly = false,
+  renderTopRightUI,
   title,
 }: ExcalidrawHostProps) => {
   const theme = useColorSchemeTheme();
@@ -107,9 +118,12 @@ export const ExcalidrawHost = ({
         name={title}
         onChange={onChange}
         onPointerUpdate={onPointerUpdate}
+        renderTopRightUI={renderTopRightUI}
         theme={theme}
         viewModeEnabled={readOnly}
-      />
+      >
+        {children}
+      </Excalidraw>
     </section>
   );
 };

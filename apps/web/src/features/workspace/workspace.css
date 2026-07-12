@@ -1,79 +1,46 @@
 /*
- * A column flex layout instead of a fixed-row grid: the banner/message rows
- * between the header and the editor are conditional, so the editor must be
- * the flexible element regardless of how many siblings render.
+ * The editor fills the viewport; status and recovery banners float above the
+ * canvas as overlays so they never take layout height from it.
  */
-.drawing-workspace {
+.workspace-overlays {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  min-height: 0;
+  gap: 0.5rem;
+  left: 50%;
+  max-width: min(46rem, calc(100% - 2rem));
+  pointer-events: none;
+  position: absolute;
+  top: 4.25rem;
+  transform: translateX(-50%);
+  width: 100%;
+  z-index: 5;
 }
 
-.drawing-workspace--centered {
-  align-items: center;
-  justify-content: center;
-  padding: 2rem;
+.workspace-overlays:empty {
+  display: none;
 }
 
-.workspace-header {
-  align-items: center;
-  border-bottom: 1.5px dashed var(--line);
-  display: flex;
-  gap: 1rem;
-  justify-content: space-between;
-  padding: 0.6rem 1rem;
+.workspace-overlays > * {
+  pointer-events: auto;
 }
 
-.workspace-header > div {
-  align-items: baseline;
-  display: flex;
-  gap: 0.65rem;
-  min-width: 0;
-}
-
-.workspace-header h1 {
-  font-size: 1.35rem;
-  margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-header-actions {
-  align-items: center;
-  display: flex;
-  gap: 0.6rem;
-}
-
-.workspace-role {
-  background: var(--accent-wash);
-  border: 1.5px solid var(--accent-ink);
-  border-radius: var(--wobble);
-  color: var(--accent-ink);
-  font-size: 0.72rem;
-  font-weight: 800;
-  padding: 0.12rem 0.5rem;
-  rotate: -1.5deg;
-  text-transform: capitalize;
-}
-
-.workspace-save-status {
-  color: var(--ink-soft);
-  font-size: 0.82rem;
-  text-align: right;
-}
-
-.drawing-workspace > .viewer-banner,
-.drawing-workspace > [aria-label="Save conflict"],
-.workspace-save-error,
 .workspace-conflict-error,
-.workspace-asset-warning,
-.workspace-collaboration-warning {
-  margin: 0.65rem 1rem 0;
+.workspace-asset-warning {
+  background: var(--card);
+  border: 1.5px solid var(--line);
+  border-radius: var(--wobble);
+  margin: 0;
+  padding: 0.5rem 0.9rem;
 }
 
-.drawing-workspace > [aria-label="Save conflict"],
+.viewer-banner,
+.drawing-workspace [aria-label="Save conflict"],
+.workspace-save-error,
+.workspace-collaboration-warning {
+  box-shadow: 3px 3px 0 var(--shadow);
+}
+
+.drawing-workspace [aria-label="Save conflict"],
 .workspace-save-error,
 .workspace-collaboration-warning {
   align-items: center;
@@ -87,7 +54,7 @@
   padding: 0.75rem 1rem;
 }
 
-.drawing-workspace > [aria-label="Save conflict"] p {
+.drawing-workspace [aria-label="Save conflict"] p {
   flex-basis: 100%;
   margin: 0;
 }
@@ -105,12 +72,6 @@
 .workspace-conflict-error {
   color: var(--danger-ink);
   font-size: 0.85rem;
-}
-
-.workspace-editor {
-  flex: 1;
-  min-height: 0;
-  padding-top: 0.65rem;
 }
 
 .workspace-message {

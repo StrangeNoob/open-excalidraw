@@ -1,74 +1,8 @@
-.guest-canvas-page {
-  display: grid;
-  grid-template-rows: auto 1fr auto;
-  height: 100%;
-  min-height: 0;
-  width: 100%;
-}
-
-.guest-canvas-header {
-  align-items: center;
-  border-bottom: 1.5px dashed var(--line);
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1rem;
-  justify-content: space-between;
-  padding: 0.65rem 1rem;
-}
-
-.guest-canvas-header > div,
-.guest-canvas-header nav {
-  align-items: center;
-  display: flex;
-  gap: 0.75rem;
-}
-
-.guest-canvas-header strong {
-  font-size: 1.25rem;
-}
-
-.guest-canvas-header a {
-  color: var(--accent-ink);
-  font-weight: 700;
-}
-
-.local-only-badge {
-  background: var(--highlight-wash);
-  border: 1.5px solid var(--highlight-ink);
-  border-radius: var(--wobble);
-  color: var(--highlight-ink);
-  font-size: 0.75rem;
-  font-weight: 800;
-  padding: 0.2rem 0.6rem;
-  rotate: -1.5deg;
-}
-
-.guest-canvas-editor {
-  min-height: 0;
-}
-
-.guest-canvas-loading,
-.guest-canvas-error {
-  align-self: center;
-  justify-self: center;
-}
-
-.guest-canvas-error {
-  background: var(--card);
-  border: 1.5px solid var(--ink);
-  border-radius: var(--wobble);
-  box-shadow: 4px 4px 0 var(--shadow);
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  max-width: 26rem;
-  padding: 1.25rem 1.5rem;
-}
-
-.guest-save-status {
-  border-top: 1.5px dashed var(--line);
+/*
+ * The guest canvas is edge-to-edge. Its account actions, welcome screen, and
+ * save status all render through Excalidraw's own UI slots, so this file only
+ * styles the pre-canvas loading and failure states.
+ */
+.canvas-page--centered p {
   color: var(--ink-soft);
-  font-size: 0.8rem;
-  padding: 0.35rem 1rem;
-  text-align: right;
 }
