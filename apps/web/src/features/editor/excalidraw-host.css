@@ -1,7 +1,11 @@
+/*
+ * The editor owns the full viewport. All product chrome renders through
+ * Excalidraw's own slots (MainMenu, WelcomeScreen, Footer, renderTopRightUI)
+ * so nothing competes with the canvas for layout height.
+ */
 .excalidraw-host {
   box-sizing: border-box;
   height: 100%;
-  min-height: 360px;
   position: relative;
   width: 100%;
 }
@@ -9,4 +13,152 @@
 .excalidraw-host > .excalidraw {
   height: 100%;
   width: 100%;
+}
+
+/* Canvas pages are edge-to-edge; no page background shows through. */
+.canvas-page,
+.drawing-workspace {
+  height: 100%;
+  min-height: 0;
+  position: relative;
+  width: 100%;
+}
+
+.canvas-page--centered,
+.drawing-workspace--centered {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  padding: 2rem;
+}
+
+/* Adopt the product accent inside Excalidraw's own islands. */
+.excalidraw-host .excalidraw {
+  --color-primary: var(--accent);
+  --color-primary-darker: var(--accent-ink);
+  --color-primary-darkest: var(--accent-ink);
+  --color-primary-light: var(--accent-wash);
+}
+
+.canvas-top-right {
+  align-items: center;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.canvas-action {
+  background: var(--island-bg-color, #fff);
+  border: 1px solid var(--default-border-color, rgb(0 0 0 / 10%));
+  border-radius: var(--border-radius-lg, 0.5rem);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  height: 2.25rem;
+  padding: 0 0.75rem;
+  white-space: nowrap;
+}
+
+.canvas-action:hover {
+  background: var(--button-hover-bg, rgb(0 0 0 / 4%));
+}
+
+.canvas-action--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.canvas-action--primary:hover {
+  background: var(--accent-ink);
+}
+
+.canvas-role {
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.2rem 0.55rem;
+  text-transform: capitalize;
+}
+
+.canvas-role--owner {
+  background: var(--accent-wash);
+  color: var(--accent-ink);
+}
+
+.canvas-role--editor {
+  background: var(--green-wash);
+  color: var(--green-ink);
+}
+
+.canvas-role--viewer {
+  background: var(--blue-wash);
+  color: var(--blue-ink);
+}
+
+.canvas-role--revoked {
+  background: var(--danger-wash);
+  color: var(--danger-ink);
+}
+
+.canvas-footer {
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.canvas-status {
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0 0.5rem;
+  white-space: nowrap;
+}
+
+.canvas-status--muted {
+  color: var(--ink-soft);
+}
+
+.canvas-status--active {
+  color: var(--green-ink);
+}
+
+.canvas-status--warning {
+  color: var(--highlight-ink);
+}
+
+.canvas-status--error {
+  color: var(--danger-ink);
+}
+
+/* Our own wordmark inside Excalidraw's welcome screen. */
+.canvas-wordmark {
+  color: var(--accent-ink);
+  font-family: var(--font-hand);
+  font-size: 2.2rem;
+  letter-spacing: 0.01em;
+}
+
+.canvas-message {
+  background: var(--card);
+  border: 1.5px solid var(--ink);
+  border-radius: var(--wobble);
+  box-shadow: 4px 4px 0 var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 28rem;
+  padding: 1.25rem 1.5rem;
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .canvas-action {
+    font-size: 0.75rem;
+    padding: 0 0.5rem;
+  }
+
+  .canvas-role {
+    display: none;
+  }
 }

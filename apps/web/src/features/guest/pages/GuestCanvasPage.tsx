@@ -1,6 +1,12 @@
-import { Link } from "react-router-dom";
+import { MainMenu, WelcomeScreen } from "@excalidraw/excalidraw";
+import { useNavigate } from "react-router-dom";
 
-import { ExcalidrawHost } from "../../editor";
+import {
+  accountIcon,
+  CanvasStatusFooter,
+  ExcalidrawHost,
+  signInIcon,
+} from "../../editor";
 import {
   DEFAULT_GUEST_DRAWING_ID,
   DEFAULT_GUEST_DRAWING_TITLE,
@@ -10,6 +16,9 @@ import {
   type GuestCanvasRepository,
 } from "../hooks/useGuestCanvas";
 
+const SIGN_IN_PATH = "/login?returnTo=%2Fapp";
+const SIGN_UP_PATH = "/signup?returnTo=%2Fapp";
+
 export interface GuestCanvasPageProps {
   drawingId?: string;
   repository?: GuestCanvasRepository;
@@ -17,12 +26,26 @@ export interface GuestCanvasPageProps {
   title?: string;
 }
 
+const saveStatusLabel = (status: string) => {
+  switch (status) {
+    case "saving":
+      return "Saving locally…";
+    case "saved":
+      return "Saved on this device";
+    case "error":
+      return "Local save failed";
+    default:
+      return "Changes stay on this device";
+  }
+};
+
 export const GuestCanvasPage = ({
   drawingId = DEFAULT_GUEST_DRAWING_ID,
   repository,
   saveDelayMs,
   title = DEFAULT_GUEST_DRAWING_TITLE,
 }: GuestCanvasPageProps) => {
+  const navigate = useNavigate();
   const guest = useGuestCanvas({
     drawingId,
     repository,
@@ -30,47 +53,117 @@ export const GuestCanvasPage = ({
     title,
   });
 
-  return (
-    <main className="guest-canvas-page">
-      <header className="guest-canvas-header">
-        <div>
-          <strong>{title}</strong>
-          <span className="local-only-badge">Local only</span>
-        </div>
-        <nav aria-label="Guest account actions">
-          <Link to="/login?returnTo=%2Fapp">Sign in</Link>
-          <Link to="/signup?returnTo=%2Fapp">Create account</Link>
-        </nav>
-      </header>
+  if (guest.status === "loading") {
+    return (
+      <main className="canvas-page canvas-page--centered">
+        <p aria-live="polite">Loading your local drawing…</p>
+      </main>
+    );
+  }
 
-      {guest.status === "loading" ? (
-        <p aria-live="polite" className="guest-canvas-loading">
-          Loading your local drawing…
-        </p>
-      ) : guest.initialLoadFailed ? (
-        <section className="guest-canvas-error" role="alert">
+  if (guest.initialLoadFailed) {
+    return (
+      <main className="canvas-page canvas-page--centered">
+        <section className="canvas-message" role="alert">
           <strong>Could not open this local drawing.</strong>
           <span>{guest.error?.message}</span>
         </section>
-      ) : (
-        <div className="guest-canvas-editor">
-          <ExcalidrawHost
-            initialData={guest.initialData}
-            onChange={guest.onChange}
-            title={title}
-          />
-        </div>
-      )}
+      </main>
+    );
+  }
 
-      <footer className="guest-save-status" role="status">
-        {guest.status === "saving"
-          ? "Saving locally…"
-          : guest.status === "saved"
-            ? "Saved on this device"
-            : guest.status === "error"
-              ? "Local save failed"
-              : "Changes stay on this device"}
-      </footer>
+  return (
+    <main className="canvas-page">
+      <ExcalidrawHost
+        initialData={guest.initialData}
+        onChange={guest.onChange}
+        renderTopRightUI={() => (
+          <div className="canvas-top-right">
+            <button
+              className="canvas-action"
+              onClick={() => void navigate(SIGN_IN_PATH)}
+              type="button"
+            >
+              Sign in
+            </button>
+            <button
+              className="canvas-action canvas-action--primary"
+              onClick={() => void navigate(SIGN_UP_PATH)}
+              type="button"
+            >
+              Create account
+            </button>
+          </div>
+        )}
+        title={title}
+      >
+        <MainMenu>
+          <MainMenu.Item
+            icon={accountIcon}
+            onSelect={() => void navigate(SIGN_UP_PATH)}
+          >
+            Create account
+          </MainMenu.Item>
+          <MainMenu.Item
+            icon={signInIcon}
+            onSelect={() => void navigate(SIGN_IN_PATH)}
+          >
+            Sign in
+          </MainMenu.Item>
+          <MainMenu.Separator />
+          <MainMenu.DefaultItems.LoadScene />
+          <MainMenu.DefaultItems.SaveAsImage />
+          <MainMenu.DefaultItems.Export />
+          <MainMenu.Separator />
+          <MainMenu.DefaultItems.ChangeCanvasBackground />
+          <MainMenu.DefaultItems.Help />
+          <MainMenu.DefaultItems.ClearCanvas />
+        </MainMenu>
+
+        <WelcomeScreen>
+          <WelcomeScreen.Hints.MenuHint>
+            Export, canvas background, help…
+          </WelcomeScreen.Hints.MenuHint>
+          <WelcomeScreen.Hints.ToolbarHint>
+            Pick a tool & start drawing!
+          </WelcomeScreen.Hints.ToolbarHint>
+          <WelcomeScreen.Hints.HelpHint />
+
+          <WelcomeScreen.Center>
+            <WelcomeScreen.Center.Logo>
+              <span className="canvas-wordmark">Open Excalidraw</span>
+            </WelcomeScreen.Center.Logo>
+            <WelcomeScreen.Center.Heading>
+              This drawing is saved on this device only.
+              <br />
+              Create an account to keep it safe and draw with others.
+            </WelcomeScreen.Center.Heading>
+            <WelcomeScreen.Center.Menu>
+              <WelcomeScreen.Center.MenuItem
+                icon={accountIcon}
+                onSelect={() => void navigate(SIGN_UP_PATH)}
+                shortcut={null}
+              >
+                Create an account
+              </WelcomeScreen.Center.MenuItem>
+              <WelcomeScreen.Center.MenuItem
+                icon={signInIcon}
+                onSelect={() => void navigate(SIGN_IN_PATH)}
+                shortcut={null}
+              >
+                Sign in
+              </WelcomeScreen.Center.MenuItem>
+              <WelcomeScreen.Center.MenuItemLoadScene />
+              <WelcomeScreen.Center.MenuItemHelp />
+            </WelcomeScreen.Center.Menu>
+          </WelcomeScreen.Center>
+        </WelcomeScreen>
+
+        <CanvasStatusFooter
+          label={saveStatusLabel(guest.status)}
+          tone={guest.status === "error" ? "error" : "muted"}
+        />
+      </ExcalidrawHost>
     </main>
   );
 };

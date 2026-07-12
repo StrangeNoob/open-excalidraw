@@ -1,4 +1,4 @@
-import { CaptureUpdateAction } from "@excalidraw/excalidraw";
+import { CaptureUpdateAction, MainMenu } from "@excalidraw/excalidraw";
 import type {
   ExcalidrawImperativeAPI,
   ExcalidrawInitialDataState,
@@ -38,7 +38,11 @@ import {
   type CollaborationState,
 } from "../collaboration";
 import {
+  dashboardIcon,
   ExcalidrawHost,
+  historyIcon,
+  shareIcon,
+  type CanvasStatusTone,
   type ExcalidrawChangeHandler,
   type ExcalidrawHostProps,
 } from "../editor";
@@ -548,162 +552,201 @@ export const DrawingPage = ({
   const actionableSnapshot = conflictSnapshot;
   const WorkspaceHost = resolved.Host;
 
+  const status = saveStatusLabel(
+    connectivity,
+    capabilities.editScene,
+    autosave,
+    collaborationEnabled ? collaboration : null,
+    restoringRevision,
+  );
+
   return (
     <main className="drawing-workspace">
-      <header className="workspace-header">
-        <div>
-          <h1>{workspace.drawing.title}</h1>
-          <span className="workspace-role">
-            {effectiveRole ?? "access revoked"}
-          </span>
-        </div>
-        <div className="workspace-header-actions">
-          <span
-            aria-live="polite"
-            className="workspace-save-status"
-            role="status"
-          >
-            {saveStatusLabel(
-              connectivity,
-              capabilities.editScene,
-              autosave,
-              collaborationEnabled ? collaboration : null,
-              restoringRevision,
-            )}
-          </span>
-          <button onClick={() => setHistoryOpen(true)} type="button">
-            History
-          </button>
-          {capabilities.manageSharing ? (
-            <button onClick={() => setSharingOpen(true)} type="button">
-              Share
-            </button>
-          ) : null}
-        </div>
-      </header>
+      <div className="workspace-overlays">
+        {!capabilities.editScene ? (
+          <ViewerBanner ownerName={workspace.drawing.ownerName} />
+        ) : null}
 
-      {!capabilities.editScene ? (
-        <ViewerBanner ownerName={workspace.drawing.ownerName} />
-      ) : null}
-
-      {autosave.conflict ? (
-        <ConflictRecoveryBanner
-          onCreatePrivateCopy={() => {
-            if (actionableSnapshot) {
-              if (onCreatePrivateCopy) {
-                onCreatePrivateCopy(drawingId, actionableSnapshot);
-              } else {
-                exportSnapshot(
-                  workspace.drawing.title,
-                  actionableSnapshot,
-                  "private-copy",
+        {autosave.conflict ? (
+          <ConflictRecoveryBanner
+            onCreatePrivateCopy={() => {
+              if (actionableSnapshot) {
+                if (onCreatePrivateCopy) {
+                  onCreatePrivateCopy(drawingId, actionableSnapshot);
+                } else {
+                  exportSnapshot(
+                    workspace.drawing.title,
+                    actionableSnapshot,
+                    "private-copy",
+                  );
+                }
+              }
+            }}
+            onExportLocal={() => {
+              if (actionableSnapshot) {
+                if (onExportLocal) {
+                  onExportLocal(drawingId, actionableSnapshot);
+                } else {
+                  exportSnapshot(
+                    workspace.drawing.title,
+                    actionableSnapshot,
+                    "local",
+                  );
+                }
+              }
+            }}
+            onReloadServer={reloadServer}
+            onRetryLoad={async () => {
+              try {
+                await controller?.reloadConflictServer(() =>
+                  resolved.content.load(drawingId),
+                );
+                setConflictLoadError(null);
+              } catch (caught) {
+                setConflictLoadError(
+                  toError(caught, "Could not load the server version."),
                 );
               }
-            }
-          }}
-          onExportLocal={() => {
-            if (actionableSnapshot) {
-              if (onExportLocal) {
-                onExportLocal(drawingId, actionableSnapshot);
-              } else {
-                exportSnapshot(
-                  workspace.drawing.title,
-                  actionableSnapshot,
-                  "local",
-                );
-              }
-            }
-          }}
-          onReloadServer={reloadServer}
-          onRetryLoad={async () => {
-            try {
-              await controller?.reloadConflictServer(() =>
-                resolved.content.load(drawingId),
-              );
-              setConflictLoadError(null);
-            } catch (caught) {
-              setConflictLoadError(
-                toError(caught, "Could not load the server version."),
-              );
-            }
-          }}
-          onRetryLocal={(revision) => controller?.retryLocalAgainst(revision)}
-          server={autosave.conflict.server}
-        />
-      ) : autosave.status === "error" ? (
-        <section className="workspace-save-error" role="alert">
-          <strong>Changes could not be saved.</strong>
-          <span>{autosave.error?.message}</span>
-          <button
-            onClick={() => void controller?.retryTerminal()}
-            type="button"
-          >
-            Retry save
-          </button>
-        </section>
-      ) : null}
-
-      {conflictLoadError ? (
-        <p className="workspace-conflict-error" role="status">
-          {conflictLoadError.message}
-        </p>
-      ) : null}
-
-      {assetFailures.size > 0 ? (
-        <p className="workspace-asset-warning" role="status">
-          {assetFailures.size} drawing asset
-          {assetFailures.size === 1 ? "" : "s"} could not be loaded.
-        </p>
-      ) : null}
-
-      {collaborationEnabled &&
-      (collaboration.status === "reconnecting" ||
-        (collaboration.error && !isEventLocalProblem(collaboration.error))) ? (
-        <section
-          className="workspace-collaboration-warning"
-          role={collaboration.error ? "alert" : "status"}
-        >
-          <strong>
-            {isAccessChange(collaboration.error?.code)
-              ? "Your collaboration access changed."
-              : "Live collaboration was interrupted."}
-          </strong>
-          <span>
-            {collaboration.error?.message ??
-              "Your changes remain in local recovery while we reconnect."}
-          </span>
-          {editorApi ? (
+            }}
+            onRetryLocal={(revision) => controller?.retryLocalAgainst(revision)}
+            server={autosave.conflict.server}
+          />
+        ) : autosave.status === "error" ? (
+          <section className="workspace-save-error" role="alert">
+            <strong>Changes could not be saved.</strong>
+            <span>{autosave.error?.message}</span>
             <button
-              onClick={() =>
-                exportSnapshot(
-                  workspace.drawing.title,
-                  currentSnapshot(editorApi),
-                  "local-recovery",
-                )
-              }
+              onClick={() => void controller?.retryTerminal()}
               type="button"
             >
-              Export local drawing
+              Retry save
             </button>
-          ) : null}
-          {accessRevoked ? <a href="/app">Back to dashboard</a> : null}
-        </section>
-      ) : null}
+          </section>
+        ) : null}
 
-      <div className="workspace-editor">
-        <WorkspaceHost
-          key={drawingId}
-          initialData={workspace.initialData}
-          isCollaborating={collaboration.status === "ready"}
-          onApiChange={setEditorApi}
-          onChange={
-            capabilities.editScene && !restoringRevision ? onChange : undefined
-          }
-          onPointerUpdate={onPointerUpdate}
-          readOnly={!capabilities.editScene || restoringRevision}
-          title={workspace.drawing.title}
-        />
+        {conflictLoadError ? (
+          <p className="workspace-conflict-error" role="status">
+            {conflictLoadError.message}
+          </p>
+        ) : null}
+
+        {assetFailures.size > 0 ? (
+          <p className="workspace-asset-warning" role="status">
+            {assetFailures.size} drawing asset
+            {assetFailures.size === 1 ? "" : "s"} could not be loaded.
+          </p>
+        ) : null}
+
+        {collaborationEnabled &&
+        (collaboration.status === "reconnecting" ||
+          (collaboration.error &&
+            !isEventLocalProblem(collaboration.error))) ? (
+          <section
+            className="workspace-collaboration-warning"
+            role={collaboration.error ? "alert" : "status"}
+          >
+            <strong>
+              {isAccessChange(collaboration.error?.code)
+                ? "Your collaboration access changed."
+                : "Live collaboration was interrupted."}
+            </strong>
+            <span>
+              {collaboration.error?.message ??
+                "Your changes remain in local recovery while we reconnect."}
+            </span>
+            {editorApi ? (
+              <button
+                onClick={() =>
+                  exportSnapshot(
+                    workspace.drawing.title,
+                    currentSnapshot(editorApi),
+                    "local-recovery",
+                  )
+                }
+                type="button"
+              >
+                Export local drawing
+              </button>
+            ) : null}
+            {accessRevoked ? <a href="/app">Back to dashboard</a> : null}
+          </section>
+        ) : null}
       </div>
+
+      <WorkspaceHost
+        key={drawingId}
+        initialData={workspace.initialData}
+        isCollaborating={collaboration.status === "ready"}
+        onApiChange={setEditorApi}
+        onChange={
+          capabilities.editScene && !restoringRevision ? onChange : undefined
+        }
+        onPointerUpdate={onPointerUpdate}
+        readOnly={!capabilities.editScene || restoringRevision}
+        renderTopRightUI={() => (
+          <div className="canvas-top-right">
+            <span
+              aria-live="polite"
+              className={`canvas-status canvas-status--${statusTone(
+                autosave,
+                collaboration,
+                connectivity,
+              )}`}
+              role="status"
+            >
+              {status}
+            </span>
+            <span
+              className={`canvas-role canvas-role--${effectiveRole ?? "revoked"}`}
+            >
+              {effectiveRole ?? "access revoked"}
+            </span>
+            <button
+              className="canvas-action"
+              onClick={() => setHistoryOpen(true)}
+              type="button"
+            >
+              History
+            </button>
+            {capabilities.manageSharing ? (
+              <button
+                className="canvas-action canvas-action--primary"
+                onClick={() => setSharingOpen(true)}
+                type="button"
+              >
+                Share
+              </button>
+            ) : null}
+          </div>
+        )}
+        title={workspace.drawing.title}
+      >
+        <MainMenu>
+          <MainMenu.ItemLink href="/app" icon={dashboardIcon}>
+            Back to dashboard
+          </MainMenu.ItemLink>
+          <MainMenu.Item
+            icon={historyIcon}
+            onSelect={() => setHistoryOpen(true)}
+          >
+            Revision history
+          </MainMenu.Item>
+          {capabilities.manageSharing ? (
+            <MainMenu.Item
+              icon={shareIcon}
+              onSelect={() => setSharingOpen(true)}
+            >
+              Share
+            </MainMenu.Item>
+          ) : null}
+          <MainMenu.Separator />
+          <MainMenu.DefaultItems.SaveAsImage />
+          <MainMenu.DefaultItems.Export />
+          <MainMenu.Separator />
+          <MainMenu.DefaultItems.ChangeCanvasBackground />
+          <MainMenu.DefaultItems.Help />
+        </MainMenu>
+      </WorkspaceHost>
 
       <SharingDialog
         client={resolved.sharing}
@@ -725,6 +768,27 @@ export const DrawingPage = ({
       />
     </main>
   );
+};
+
+const statusTone = (
+  autosave: AutosaveState,
+  collaboration: CollaborationState,
+  connectivity: "online" | "offline",
+): CanvasStatusTone => {
+  if (
+    autosave.status === "error" ||
+    autosave.status === "conflict" ||
+    connectivity === "offline"
+  ) {
+    return "error";
+  }
+  if (
+    autosave.status === "retrying" ||
+    collaboration.status === "reconnecting"
+  ) {
+    return "warning";
+  }
+  return collaboration.status === "ready" ? "active" : "muted";
 };
 
 const saveStatusLabel = (
