@@ -58,13 +58,42 @@
 }
 
 .auth-social {
-  border-top: 1.5px dashed var(--line);
   margin-top: 1.5rem;
-  padding-top: 1.25rem;
-  text-align: center;
 }
 
-.auth-social span {
+/* One continuous rule with the label set into it, rather than a rule
+   followed by a stray word. */
+/* No bottom margin: the column gap already spaces it from the buttons. */
+.auth-divider {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  border-top: 1.5px dashed var(--line);
+  content: "";
+  flex: 1;
+}
+
+.auth-divider span {
   color: var(--ink-soft);
   font-family: var(--font-hand);
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.auth-provider {
+  align-items: center;
+  display: flex;
+  gap: 0.6rem;
+  justify-content: center;
+}
+
+.auth-provider svg {
+  flex: none;
+  height: 1.05rem;
+  width: 1.05rem;
 }

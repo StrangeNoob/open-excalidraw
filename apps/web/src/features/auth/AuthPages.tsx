@@ -8,6 +8,7 @@ import {
 
 import { useAuth } from "./AuthProvider";
 import type { OAuthProvider } from "./auth-client";
+import { githubIcon, googleIcon } from "./provider-icons";
 import { getSafeReturnPath } from "./return-path";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -276,22 +277,28 @@ const AuthPage = ({ mode }: { mode: AuthPageMode }) => {
         {!signupNextStep &&
         (auth.capabilities.google || auth.capabilities.github) ? (
           <div aria-label="Social sign in" className="auth-social">
-            <span>or</span>
+            <p className="auth-divider">
+              <span>or</span>
+            </p>
             {auth.capabilities.google ? (
               <button
+                className="auth-provider"
                 disabled={submitting || auth.status === "loading"}
                 onClick={() => void startOAuth("google")}
                 type="button"
               >
+                {googleIcon}
                 Continue with Google
               </button>
             ) : null}
             {auth.capabilities.github ? (
               <button
+                className="auth-provider"
                 disabled={submitting || auth.status === "loading"}
                 onClick={() => void startOAuth("github")}
                 type="button"
               >
+                {githubIcon}
                 Continue with GitHub
               </button>
             ) : null}
