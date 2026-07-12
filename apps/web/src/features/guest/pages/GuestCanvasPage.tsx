@@ -1,4 +1,5 @@
 import { MainMenu, WelcomeScreen } from "@excalidraw/excalidraw";
+import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 
 import {
@@ -25,6 +26,17 @@ export interface GuestCanvasPageProps {
   saveDelayMs?: number;
   title?: string;
 }
+
+const EXCALIDRAW_DEFAULT_BACKGROUND = "#ffffff";
+
+/**
+ * A transparent scene lets the app's dotted paper show through the canvas, so
+ * the guest page reads like the rest of the product. Excalidraw's own white
+ * default is autosaved before a guest ever opens the background picker, so it
+ * is treated as "unset"; any other colour is a real choice and is kept.
+ */
+const paperBackground = (saved: string | undefined) =>
+  !saved || saved === EXCALIDRAW_DEFAULT_BACKGROUND ? "transparent" : saved;
 
 const saveStatusLabel = (status: string) => {
   switch (status) {
@@ -53,6 +65,19 @@ export const GuestCanvasPage = ({
     title,
   });
 
+  const initialData = useMemo(
+    () => ({
+      ...guest.initialData,
+      appState: {
+        ...guest.initialData?.appState,
+        viewBackgroundColor: paperBackground(
+          guest.initialData?.appState?.viewBackgroundColor,
+        ),
+      },
+    }),
+    [guest.initialData],
+  );
+
   if (guest.status === "loading") {
     return (
       <main className="canvas-page canvas-page--centered">
@@ -75,7 +100,7 @@ export const GuestCanvasPage = ({
   return (
     <main className="canvas-page">
       <ExcalidrawHost
-        initialData={guest.initialData}
+        initialData={initialData}
         onChange={guest.onChange}
         renderTopRightUI={() => (
           <div className="canvas-top-right">
