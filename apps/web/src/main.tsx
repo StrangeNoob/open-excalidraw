@@ -1,3 +1,7 @@
+// Must precede every Excalidraw import so the editor loads fonts from this
+// origin rather than its CDN fallback, which the production CSP blocks.
+import "./app/excalidraw-asset-path";
+
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { RouterProvider } from "react-router-dom";
