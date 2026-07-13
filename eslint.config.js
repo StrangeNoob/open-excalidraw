@@ -42,6 +42,13 @@ export default tseslint.config(
     },
   },
   {
+    // Node scripts that drive a browser: `document` lives inside page.evaluate.
+    files: ["docs/brand/*.mjs"],
+    languageOptions: {
+      globals: { console: "readonly", document: "readonly" },
+    },
+  },
+  {
     files: ["**/*.{test,spec}.{ts,tsx}", "**/test/**", "**/e2e/**"],
     rules: {
       "@typescript-eslint/no-unsafe-assignment": "off",
