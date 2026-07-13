@@ -24,6 +24,7 @@ COPY tsconfig.base.json ./
 COPY apps/server/tsconfig.json apps/server/tsconfig.build.json apps/server/
 COPY apps/server/src apps/server/src
 COPY apps/web/index.html apps/web/tsconfig.json apps/web/vite.config.ts apps/web/
+COPY apps/web/public apps/web/public
 COPY apps/web/src apps/web/src
 COPY packages/contracts/tsconfig.json packages/contracts/
 COPY packages/contracts/src packages/contracts/src
