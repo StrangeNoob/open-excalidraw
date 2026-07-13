@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="256" height="256" role="img" aria-label="Open Excalidraw">
+  <g transform="translate(-1.5 3.5)" fill="#6965db">
+    <g transform="rotate(-18 50 50)">
+      <circle cx="50" cy="11" r="5"></circle>
+      <rect x="46" y="15" width="8" height="7.5" rx="2"></rect>
+      <path d="M30 22 L70 22 Q75 22 75 26.5 Q75 31 70 31 L30 31 Q25 31 25 26.5 Q25 22 30 22 Z"></path>
+      <path fill-rule="evenodd" d="M43 33 L57 33 L60 52 L50 72 L40 52 Z M49 55 L51 55 L50.4 69 L49.6 69 Z M52.6 53 a2.6 2.6 0 1 0 -5.2 0 a2.6 2.6 0 1 0 5.2 0 Z"></path>
+    </g>
+    <path d="M56 71 Q68 81 84 73" fill="none" stroke="#6965db" stroke-width="9.5" stroke-linecap="round" stroke-linejoin="round"></path>
+  </g>
+</svg>

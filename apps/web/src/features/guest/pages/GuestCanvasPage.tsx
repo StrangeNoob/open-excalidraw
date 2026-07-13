@@ -2,6 +2,7 @@ import { MainMenu, WelcomeScreen } from "@excalidraw/excalidraw";
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { BrandMark } from "../../brand";
 import {
   accountIcon,
   CanvasStatusFooter,
@@ -156,7 +157,10 @@ export const GuestCanvasPage = ({
 
           <WelcomeScreen.Center>
             <WelcomeScreen.Center.Logo>
-              <span className="canvas-wordmark">Open Excalidraw</span>
+              <span className="canvas-wordmark">
+                <BrandMark className="canvas-wordmark-mark" size={44} />
+                Open Excalidraw
+              </span>
             </WelcomeScreen.Center.Logo>
             <WelcomeScreen.Center.Heading>
               This drawing is saved on this device only.

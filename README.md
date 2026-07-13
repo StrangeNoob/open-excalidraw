@@ -1,4 +1,12 @@
-# Open Excalidraw
+<p align="center">
+  <picture>
+    <source
+      media="(prefers-color-scheme: dark)"
+      srcset="docs/brand/wordmark-dark.svg"
+    />
+    <img src="docs/brand/wordmark.svg" alt="Open Excalidraw" width="460" />
+  </picture>
+</p>
 
 Open Excalidraw is a self-hostable collaboration and persistence layer built
 around the published `@excalidraw/excalidraw` React package.

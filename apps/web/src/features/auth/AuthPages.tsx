@@ -6,6 +6,7 @@ import {
   type NavigateFunction,
 } from "react-router-dom";
 
+import { BrandMark } from "../brand";
 import { useAuth } from "./AuthProvider";
 import type { OAuthProvider } from "./auth-client";
 import { githubIcon, googleIcon } from "./provider-icons";
@@ -163,6 +164,7 @@ const AuthPage = ({ mode }: { mode: AuthPageMode }) => {
     <main className="auth-page">
       <section aria-labelledby="auth-title" className="auth-card">
         <Link className="auth-brand" to="/">
+          <BrandMark size={26} />
           Open Excalidraw
         </Link>
         <h1 id="auth-title">
@@ -359,6 +361,7 @@ export const ForgotPasswordPage = () => {
     <main className="auth-page">
       <section aria-labelledby="reset-request-title" className="auth-card">
         <Link className="auth-brand" to="/">
+          <BrandMark size={26} />
           Open Excalidraw
         </Link>
         <h1 id="reset-request-title">Reset your password</h1>
@@ -436,6 +439,7 @@ export const ResetPasswordPage = () => {
     <main className="auth-page">
       <section aria-labelledby="reset-password-title" className="auth-card">
         <Link className="auth-brand" to="/">
+          <BrandMark size={26} />
           Open Excalidraw
         </Link>
         <h1 id="reset-password-title">Choose a new password</h1>
