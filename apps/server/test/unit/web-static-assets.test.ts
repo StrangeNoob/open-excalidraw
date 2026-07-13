@@ -13,8 +13,8 @@ const WEB = join(ROOT, "apps/web");
 describe("web static assets", () => {
   it("ships every root-relative asset index.html references", async () => {
     const html = await readFile(join(WEB, "index.html"), "utf8");
-    const referenced = [...html.matchAll(/href="\/([^/"][^"]*)"/g)].map(
-      ([, path]) => path,
+    const referenced = [...html.matchAll(/href="\/([^/"][^"]*)"/g)].flatMap(
+      ([, path]) => path ?? [],
     );
 
     expect(referenced.length).toBeGreaterThan(0);
