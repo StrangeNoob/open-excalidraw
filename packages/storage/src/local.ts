@@ -31,8 +31,13 @@ import type {
   StorageBody,
   StoredObject,
 } from "./types.js";
+import {
+  effectiveByteLimit,
+  normalizeExpectedSha256,
+  validateMaxObjectBytes,
+  validateStorageKey,
+} from "./validate.js";
 
-const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const TEMP_PREFIX = ".open-excalidraw-upload-";
 
 export interface LocalStorageOptions {
@@ -62,16 +67,8 @@ export class LocalObjectStorage implements ObjectStorage {
   readonly #fileMode: number;
 
   public constructor(options: LocalStorageOptions) {
-    if (!Number.isSafeInteger(options.maxObjectBytes ?? 50 * 1024 * 1024)) {
-      throw new RangeError("maxObjectBytes must be a safe integer");
-    }
-
-    if ((options.maxObjectBytes ?? 50 * 1024 * 1024) <= 0) {
-      throw new RangeError("maxObjectBytes must be greater than zero");
-    }
-
     this.#rootDirectory = resolve(options.rootDirectory);
-    this.#maxObjectBytes = options.maxObjectBytes ?? 50 * 1024 * 1024;
+    this.#maxObjectBytes = validateMaxObjectBytes(options.maxObjectBytes);
     this.#fileMode = options.fileMode ?? 0o600;
   }
 
@@ -84,7 +81,7 @@ export class LocalObjectStorage implements ObjectStorage {
 
     try {
       const object = await this.#resolveObject(key, true);
-      const limit = this.#effectiveLimit(options.maxBytes);
+      const limit = effectiveByteLimit(options.maxBytes, this.#maxObjectBytes);
       const expectedSha256 = normalizeExpectedSha256(options.expectedSha256);
       const written = await this.#writeTemporary(object.parent, body, limit);
       temporary = written;
@@ -316,53 +313,6 @@ export class LocalObjectStorage implements ObjectStorage {
     }
     return fileStat;
   }
-
-  #effectiveLimit(requestedLimit?: number): number {
-    if (requestedLimit === undefined) {
-      return this.#maxObjectBytes;
-    }
-    if (!Number.isSafeInteger(requestedLimit) || requestedLimit <= 0) {
-      throw new RangeError("maxBytes must be a positive safe integer");
-    }
-    return Math.min(requestedLimit, this.#maxObjectBytes);
-  }
-}
-
-export function validateStorageKey(key: string): void {
-  if (
-    key.length === 0 ||
-    key.length > 1024 ||
-    key.startsWith("/") ||
-    key.endsWith("/") ||
-    key.includes("\\") ||
-    key.includes("\0")
-  ) {
-    throw new InvalidStorageKeyError();
-  }
-
-  const segments = key.split("/");
-  if (
-    segments.some(
-      (segment) =>
-        segment.length === 0 ||
-        segment === "." ||
-        segment === ".." ||
-        segment.length > 255,
-    )
-  ) {
-    throw new InvalidStorageKeyError();
-  }
-}
-
-function normalizeExpectedSha256(value?: string): string | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  const normalized = value.toLowerCase();
-  if (!SHA256_PATTERN.test(normalized)) {
-    throw new StorageIntegrityError();
-  }
-  return normalized;
 }
 
 async function hashFile(path: string): Promise<string> {

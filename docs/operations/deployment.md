@@ -71,6 +71,27 @@ Provider callback URLs must use the final `APP_BASE_URL`:
 `https://draw.example.com/api/auth/callback/github`. Keep the UI, REST API,
 and collaboration socket on the same canonical origin.
 
+## S3-compatible object storage
+
+Assets default to the local volume at `STORAGE_LOCAL_PATH`. Set
+`STORAGE_DRIVER=s3` to store them in any S3-compatible bucket instead — AWS
+S3, Cloudflare R2, MinIO, Backblaze B2, DigitalOcean Spaces, or Wasabi:
+
+```dotenv
+STORAGE_DRIVER=s3
+S3_BUCKET=open-excalidraw-assets
+S3_REGION=auto                # R2 uses "auto"; AWS needs a real region
+S3_ENDPOINT=                  # omit for AWS; see .env.example for providers
+S3_ACCESS_KEY_ID=...
+S3_SECRET_ACCESS_KEY=...
+S3_FORCE_PATH_STYLE=false     # true for MinIO
+```
+
+With the `s3` driver, `STORAGE_LOCAL_PATH` and the persistent asset volume
+are unused, so the container needs no writable mounts. The deployment must
+still run as a single replica: the collaboration registry is in-process (see
+the [collaboration runbook](collaboration.md)).
+
 ## Start with built-in HTTPS
 
 ```sh
