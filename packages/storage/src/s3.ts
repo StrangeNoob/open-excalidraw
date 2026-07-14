@@ -35,7 +35,11 @@ import {
 
 export interface S3StorageOptions {
   bucket: string;
-  /** Defaults to "auto", the value Cloudflare R2 documents. */
+  /**
+   * Required for AWS S3, where SigV4 signing needs a concrete region.
+   * Defaults to "auto" (the value Cloudflare R2 documents) only when a
+   * custom endpoint is configured.
+   */
   region?: string;
   /** Custom endpoint for S3-compatible providers. Omit for AWS S3. */
   endpoint?: string;
@@ -68,8 +72,14 @@ export class S3ObjectStorage implements ObjectStorage {
   public constructor(options: S3StorageOptions) {
     this.#maxObjectBytes = validateMaxObjectBytes(options.maxObjectBytes);
     this.#bucket = options.bucket;
+    const region = options.region?.trim();
+    if (!region && !options.endpoint) {
+      throw new Error(
+        "region is required when no custom endpoint is configured",
+      );
+    }
     this.#client = new S3Client({
-      region: options.region ?? "auto",
+      region: region || "auto",
       ...(options.endpoint ? { endpoint: options.endpoint } : {}),
       forcePathStyle: options.forcePathStyle ?? false,
       credentials: {

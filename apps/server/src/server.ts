@@ -387,7 +387,7 @@ function createStorage(driver: string): ObjectStorage {
   if (driver === "s3") {
     return new S3ObjectStorage({
       bucket: requiredEnvironment("S3_BUCKET"),
-      region: process.env.S3_REGION?.trim() || "auto",
+      region: process.env.S3_REGION?.trim() || undefined,
       endpoint: process.env.S3_ENDPOINT?.trim() || undefined,
       accessKeyId: requiredEnvironment("S3_ACCESS_KEY_ID"),
       secretAccessKey: requiredEnvironment("S3_SECRET_ACCESS_KEY"),
