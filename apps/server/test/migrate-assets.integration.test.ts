@@ -148,6 +148,20 @@ describe("migrateAssets", () => {
       failed: 0,
     });
 
+    // A dry run after migration previews an accurate skip count.
+    const preview = await migrateAssets({
+      assets: withOrphan,
+      source: local,
+      destination: remote,
+      dryRun: true,
+    });
+    expect(preview).toEqual({
+      copied: 0,
+      skippedIdentical: 3,
+      missingSource: 1,
+      failed: 0,
+    });
+
     // Reverse direction into a fresh local root.
     const restored = await localStorage();
     const reverse = await migrateAssets({

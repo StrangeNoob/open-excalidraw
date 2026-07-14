@@ -114,7 +114,7 @@ const sharingService = new SharingService({
 });
 
 const storage: ObjectStorage = createStorageFromEnvironment(
-  process.env.STORAGE_DRIVER ?? "local",
+  process.env.STORAGE_DRIVER?.trim() || "local",
 );
 const maintenanceJobs = new MaintenanceJobs(database.pool, storage);
 const maintenanceIntervalMs = positiveEnvironmentInteger(

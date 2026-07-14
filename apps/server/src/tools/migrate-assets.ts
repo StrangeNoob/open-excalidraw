@@ -1,3 +1,4 @@
+import type { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
 
 import { Pool } from "pg";
@@ -57,15 +58,21 @@ export async function migrateAssets(
   };
 
   for (const asset of options.assets) {
+    let body: Readable | undefined;
     try {
       if (options.dryRun) {
         await options.source.stat(asset.storageKey);
-        summary.copied += 1;
-        log(`would copy ${asset.storageKey} (${asset.byteSize} bytes)`);
+        if (await identicalAtDestination(options.destination, asset)) {
+          summary.skippedIdentical += 1;
+          log(`would skip ${asset.storageKey} (already at destination)`);
+        } else {
+          summary.copied += 1;
+          log(`would copy ${asset.storageKey} (${asset.byteSize} bytes)`);
+        }
         continue;
       }
 
-      const body = await options.source.get(asset.storageKey);
+      body = await options.source.get(asset.storageKey);
       const result = await options.destination.put(asset.storageKey, body, {
         expectedSha256: asset.sha256,
       });
@@ -77,6 +84,9 @@ export async function migrateAssets(
         log(`skipped ${asset.storageKey} (already at destination)`);
       }
     } catch (error) {
+      // A put that fails before draining the source stream would otherwise
+      // leak its file descriptor or socket for the rest of the run.
+      body?.destroy();
       if (error instanceof StorageNotFoundError) {
         summary.missingSource += 1;
         log(`missing ${asset.storageKey} (not found at source)`);
@@ -89,6 +99,21 @@ export async function migrateAssets(
   }
 
   return summary;
+}
+
+async function identicalAtDestination(
+  destination: ObjectStorage,
+  asset: MigratableAsset,
+): Promise<boolean> {
+  try {
+    const existing = await destination.stat(asset.storageKey);
+    return existing.sha256 === asset.sha256;
+  } catch (error) {
+    if (error instanceof StorageNotFoundError) {
+      return false;
+    }
+    throw error;
+  }
 }
 
 interface AssetRow {

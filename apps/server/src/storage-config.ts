@@ -20,7 +20,8 @@ export function createStorageFromEnvironment(driver: string): ObjectStorage {
   if (driver === "local") {
     return new LocalObjectStorage({
       rootDirectory:
-        process.env.STORAGE_LOCAL_PATH ?? join(process.cwd(), "uploads"),
+        process.env.STORAGE_LOCAL_PATH?.trim() ||
+        join(process.cwd(), "uploads"),
     });
   }
   if (driver === "s3") {
