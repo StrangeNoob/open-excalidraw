@@ -16,6 +16,7 @@ import {
   type AuthClient,
   type EmailSignInInput,
   type EmailSignUpInput,
+  type LinkedAccount,
   type OAuthProvider,
 } from "./auth-client";
 import {
@@ -51,7 +52,14 @@ const signedInSession: SessionResponse = {
 };
 
 class FakeAuthClient implements AuthClient {
+  readonly changePassword =
+    vi.fn<(currentPassword: string, newPassword: string) => Promise<void>>();
   readonly getSession = vi.fn<() => Promise<SessionResponse>>();
+  readonly linkSocial =
+    vi.fn<(provider: OAuthProvider, returnPath: string) => Promise<void>>();
+  readonly listAccounts = vi.fn<() => Promise<LinkedAccount[]>>();
+  readonly setPassword = vi.fn<(newPassword: string) => Promise<void>>();
+  readonly unlinkAccount = vi.fn<(providerId: string) => Promise<void>>();
   readonly requestPasswordReset =
     vi.fn<(email: string, redirectTo: string) => Promise<void>>();
   readonly resendVerification =

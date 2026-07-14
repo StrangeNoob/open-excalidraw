@@ -1,5 +1,6 @@
 import {
   createDrawingRequestSchema,
+  setDrawingTagsRequestSchema,
   updateDrawingRequestSchema,
   uuidSchema,
 } from "@open-excalidraw/contracts";
@@ -57,6 +58,20 @@ export function createDrawingRouter(input: CreateDrawingRouterInput): Router {
         updateDrawingRequestSchema.parse(request.body),
       ),
     }));
+  });
+
+  router.put("/api/v1/drawings/:drawingId/tags", async (request, response) => {
+    await handle(request, response, input.identity, async (userId) => {
+      const body = setDrawingTagsRequestSchema.parse(request.body);
+      return {
+        status: 200,
+        body: await input.service.setTags(
+          userId,
+          drawingId(request),
+          body.tags,
+        ),
+      };
+    });
   });
 
   router.delete("/api/v1/drawings/:drawingId", async (request, response) => {

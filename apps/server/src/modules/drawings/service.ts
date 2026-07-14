@@ -94,6 +94,25 @@ export class DrawingService {
     }
   }
 
+  public async setTags(
+    userId: string,
+    drawingId: string,
+    tags: string[],
+  ): Promise<DrawingSummary> {
+    // Tags are private to the requesting user, so viewers may tag too.
+    await this.requireAccess(userId, drawingId, "read");
+    await this.repository.replaceTags({
+      drawingId,
+      userId,
+      tags: [...new Set(tags)],
+    });
+    const drawing = await this.repository.findAccessible(drawingId, userId);
+    if (!drawing) {
+      throw notFound();
+    }
+    return toDrawingSummary(drawing);
+  }
+
   public async leave(userId: string, drawingId: string): Promise<void> {
     const drawing = await this.requireAccess(userId, drawingId, "read");
     if (drawing.role === "owner") {

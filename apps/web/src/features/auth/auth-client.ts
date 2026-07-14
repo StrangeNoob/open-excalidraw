@@ -19,15 +19,24 @@ export interface EmailSignUpInput extends EmailSignInInput {
   name: string;
 }
 
+export interface LinkedAccount {
+  providerId: string;
+}
+
 export interface AuthClient {
+  changePassword(currentPassword: string, newPassword: string): Promise<void>;
   getSession(): Promise<SessionResponse>;
+  linkSocial(provider: OAuthProvider, returnPath: string): Promise<void>;
+  listAccounts(): Promise<LinkedAccount[]>;
   requestPasswordReset(email: string, redirectTo: string): Promise<void>;
   resendVerification(email: string, callbackURL: string): Promise<void>;
   resetPassword(newPassword: string, token: string): Promise<void>;
+  setPassword(newPassword: string): Promise<void>;
   signIn(input: EmailSignInInput): Promise<void>;
   signOut(): Promise<void>;
   signUp(input: EmailSignUpInput): Promise<void>;
   startOAuth(provider: OAuthProvider, returnPath: string): Promise<void>;
+  unlinkAccount(providerId: string): Promise<void>;
 }
 
 export interface CookieAuthClientOptions {
@@ -40,6 +49,10 @@ const oauthStartResponseSchema = z
     url: z.string().url().optional(),
   })
   .passthrough();
+
+const linkedAccountsSchema = z.array(
+  z.object({ providerId: z.string() }).passthrough(),
+);
 
 export class CookieAuthClient implements AuthClient {
   readonly #api: HttpApiClient;
@@ -104,6 +117,62 @@ export class CookieAuthClient implements AuthClient {
 
   async signOut(): Promise<void> {
     await this.#api.request("/auth/sign-out", { method: "POST" });
+  }
+
+  async changePassword(
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<void> {
+    await this.#api.request("/auth/change-password", {
+      // Sessions cannot be listed or revoked individually in this app, so
+      // revoking the others on every change is the leaked-password recovery.
+      body: JSON.stringify({
+        currentPassword,
+        newPassword,
+        revokeOtherSessions: true,
+      }),
+      method: "POST",
+    });
+  }
+
+  async setPassword(newPassword: string): Promise<void> {
+    await this.#api.request("/v1/me/password", {
+      body: JSON.stringify({ newPassword }),
+      method: "POST",
+    });
+  }
+
+  async listAccounts(): Promise<LinkedAccount[]> {
+    return this.#api.request(
+      "/auth/list-accounts",
+      { method: "GET" },
+      linkedAccountsSchema,
+    );
+  }
+
+  async linkSocial(provider: OAuthProvider, returnPath: string): Promise<void> {
+    const callbackURL = getSafeReturnPath(returnPath);
+    const response = await this.#api.request(
+      "/auth/link-social",
+      {
+        body: JSON.stringify({ callbackURL, provider }),
+        method: "POST",
+      },
+      oauthStartResponseSchema,
+    );
+
+    if (!response.url) {
+      throw new Error("The authentication server did not return an OAuth URL.");
+    }
+
+    this.#navigate(response.url);
+  }
+
+  async unlinkAccount(providerId: string): Promise<void> {
+    await this.#api.request("/auth/unlink-account", {
+      body: JSON.stringify({ providerId }),
+      method: "POST",
+    });
   }
 
   async startOAuth(provider: OAuthProvider, returnPath: string): Promise<void> {

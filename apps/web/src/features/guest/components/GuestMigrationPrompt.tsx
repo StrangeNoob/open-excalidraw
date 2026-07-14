@@ -12,6 +12,26 @@ export interface GuestMigrationPromptProps {
   userId: string;
 }
 
+const DISMISS_KEY_PREFIX = "open-excalidraw:guest-migration-dismissed:";
+
+// localStorage may be unavailable (private browsing, storage policies); the
+// prompt then simply reappears on the next visit.
+const readDismissed = (scope: string): boolean => {
+  try {
+    return localStorage.getItem(DISMISS_KEY_PREFIX + scope) === "1";
+  } catch {
+    return false;
+  }
+};
+
+const writeDismissed = (scope: string): void => {
+  try {
+    localStorage.setItem(DISMISS_KEY_PREFIX + scope, "1");
+  } catch {
+    // Best effort only.
+  }
+};
+
 export const GuestMigrationPrompt = ({
   drawingId,
   onMigrated,
@@ -27,6 +47,7 @@ export const GuestMigrationPrompt = ({
   const [error, setError] = useState<Error | null>(null);
   const [inspectionAttempt, setInspectionAttempt] = useState(0);
   const [inspectedScope, setInspectedScope] = useState<string | null>(null);
+  const [dismissedScope, setDismissedScope] = useState<string | null>(null);
   const scope = `${userId}\u0000${drawingId}`;
   const activeUserIdRef = useRef(userId);
   const activeScopeRef = useRef(scope);
@@ -106,9 +127,19 @@ export const GuestMigrationPrompt = ({
     );
   }
 
-  if (!candidate || candidate.alreadyMigrated) {
+  if (
+    !candidate ||
+    candidate.alreadyMigrated ||
+    dismissedScope === scope ||
+    readDismissed(scope)
+  ) {
     return null;
   }
+
+  const dismiss = () => {
+    writeDismissed(scope);
+    setDismissedScope(scope);
+  };
 
   const migrate = async () => {
     const generation = scopeGenerationRef.current;
@@ -167,6 +198,15 @@ export const GuestMigrationPrompt = ({
         type="button"
       >
         {status === "saving" ? "Saving…" : "Save to my account"}
+      </button>
+      <button
+        aria-label="Dismiss"
+        className="migration-prompt-dismiss"
+        disabled={status === "saving"}
+        onClick={dismiss}
+        type="button"
+      >
+        ×
       </button>
     </section>
   );

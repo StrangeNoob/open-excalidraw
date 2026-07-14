@@ -19,6 +19,7 @@ import {
   type AuthClient,
   type EmailSignInInput,
   type EmailSignUpInput,
+  type LinkedAccount,
   type OAuthProvider,
 } from "./auth-client";
 import { purgeProtectedState } from "./protected-state";
@@ -34,15 +35,20 @@ export type AuthStatus = "error" | "loading" | "ready";
 
 export interface AuthContextValue {
   capabilities: AuthCapabilities;
+  changePassword(currentPassword: string, newPassword: string): Promise<void>;
+  linkSocial(provider: OAuthProvider, returnPath: string): Promise<void>;
+  listAccounts(): Promise<LinkedAccount[]>;
   logout(): Promise<void>;
   refresh(): Promise<SessionResponse>;
   requestPasswordReset(email: string, redirectTo: string): Promise<void>;
   resendVerification(email: string, callbackURL: string): Promise<void>;
   resetPassword(newPassword: string, token: string): Promise<void>;
+  setPassword(newPassword: string): Promise<void>;
   signIn(input: EmailSignInInput): Promise<SessionResponse>;
   signUp(input: EmailSignUpInput): Promise<SessionResponse>;
   startOAuth(provider: OAuthProvider, returnPath: string): Promise<void>;
   status: AuthStatus;
+  unlinkAccount(providerId: string): Promise<void>;
   user: SessionResponse["user"];
 }
 
@@ -152,6 +158,11 @@ export const AuthProvider = ({
   const value = useMemo<AuthContextValue>(
     () => ({
       capabilities: session.capabilities,
+      changePassword: (currentPassword, newPassword) =>
+        client.changePassword(currentPassword, newPassword),
+      linkSocial: (provider, returnPath) =>
+        client.linkSocial(provider, returnPath),
+      listAccounts: () => client.listAccounts(),
       logout,
       refresh,
       requestPasswordReset: (email, redirectTo) =>
@@ -160,11 +171,13 @@ export const AuthProvider = ({
         client.resendVerification(email, callbackURL),
       resetPassword: (newPassword, token) =>
         client.resetPassword(newPassword, token),
+      setPassword: (newPassword) => client.setPassword(newPassword),
       signIn,
       signUp,
       startOAuth: (provider, returnPath) =>
         client.startOAuth(provider, returnPath),
       status,
+      unlinkAccount: (providerId) => client.unlinkAccount(providerId),
       user: session.user,
     }),
     [client, logout, refresh, session, signIn, signUp, status],

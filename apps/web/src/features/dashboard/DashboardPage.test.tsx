@@ -14,6 +14,7 @@ const createDrawing = (
   role: DrawingSummary["role"],
   title: string,
   offset: number,
+  tags: string[] = [],
 ): DrawingSummary => ({
   contentRevision: "1",
   createdAt: "2026-07-10T10:00:00.000Z",
@@ -22,6 +23,7 @@ const createDrawing = (
   ownerName: role === "owner" ? "Ada" : "Grace",
   ownerUserId: `10000000-0000-4000-8000-${String(offset).padStart(12, "0")}`,
   role,
+  tags,
   title,
   updatedAt: "2026-07-10T12:30:00.000Z",
 });
@@ -51,6 +53,16 @@ class FakeDashboardApi implements DashboardApi {
       candidate.id === drawing.id ? renamed : candidate,
     );
     return Promise.resolve(renamed);
+  });
+  readonly setTags = vi.fn((drawing: DrawingSummary, tags: string[]) => {
+    const tagged = { ...drawing, tags };
+    this.data.owned = this.data.owned.map((candidate) =>
+      candidate.id === drawing.id ? tagged : candidate,
+    );
+    this.data.shared = this.data.shared.map((candidate) =>
+      candidate.id === drawing.id ? tagged : candidate,
+    );
+    return Promise.resolve(tagged);
   });
 
   constructor(data: DrawingListResponse) {
@@ -210,6 +222,49 @@ describe("DashboardPage", () => {
       configurable: true,
       value: true,
     });
+  });
+
+  it("renders tag chips, filters by tag, and edits tags", async () => {
+    const user = userEvent.setup();
+    const tagged = createDrawing("owner", "Tagged board", 1, ["ideas"]);
+    const plain = createDrawing("owner", "Plain board", 2);
+    const shared = createDrawing("viewer", "Shared board", 3, ["work"]);
+    const api = new FakeDashboardApi({
+      nextCursor: null,
+      owned: [tagged, plain],
+      shared: [shared],
+    });
+    renderDashboard(api);
+
+    const taggedCard = (await screen.findByText("Tagged board")).closest(
+      "article",
+    )!;
+    expect(within(taggedCard).getByText("ideas")).toBeInTheDocument();
+
+    const filterBar = screen.getByRole("navigation", {
+      name: "Filter by tag",
+    });
+    await user.click(within(filterBar).getByRole("button", { name: "ideas" }));
+    expect(screen.queryByText("Plain board")).not.toBeInTheDocument();
+    expect(screen.queryByText("Shared board")).not.toBeInTheDocument();
+    expect(screen.getByText("Tagged board")).toBeInTheDocument();
+    await user.click(within(filterBar).getByRole("button", { name: "All" }));
+    expect(screen.getByText("Plain board")).toBeInTheDocument();
+
+    const plainCard = screen.getByText("Plain board").closest("article")!;
+    await user.click(
+      within(plainCard).getByRole("button", { name: "Edit tags" }),
+    );
+    await user.type(
+      within(plainCard).getByLabelText("Tags (comma-separated)"),
+      " Sprint, ideas ,sprint",
+    );
+    await user.click(within(plainCard).getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(api.setTags).toHaveBeenCalledWith(plain, ["sprint", "ideas"]),
+    );
+    expect(within(plainCard).getByText("sprint")).toBeInTheDocument();
   });
 
   it("renders loading, empty, and recoverable error states", async () => {

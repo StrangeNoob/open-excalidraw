@@ -111,7 +111,10 @@ export function buildBetterAuthOptions(
       enabled: true,
       minPasswordLength: 12,
       maxPasswordLength: 128,
-      requireEmailVerification: input.smtpEnabled,
+      // Unverified users may sign in and use the app; verification is nudged
+      // in the dashboard UI and still gates provider linking and invite
+      // acceptance.
+      requireEmailVerification: false,
       revokeSessionsOnPasswordReset: true,
       resetPasswordTokenExpiresIn: DEFAULT_RESET_SECONDS,
       sendResetPassword: async ({ user, url }) => {

@@ -10,6 +10,8 @@ export interface AccessibleDrawing {
   ownerUserId: string;
   ownerName: string;
   role: Role;
+  /** Private tags of the user the drawing was resolved for. */
+  tags: string[];
   contentRevision: bigint;
   metadataRevision: bigint;
   createdAt: Date;
@@ -58,6 +60,11 @@ export interface DrawingRepository {
     drawingId: string;
     userId: string;
   }): Promise<LeaveDrawingResult>;
+  replaceTags(input: {
+    drawingId: string;
+    userId: string;
+    tags: string[];
+  }): Promise<void>;
   transferOwnership(input: {
     drawingId: string;
     currentOwnerUserId: string;
@@ -74,6 +81,7 @@ export const toDrawingSummary = (
   ownerUserId: drawing.ownerUserId,
   ownerName: drawing.ownerName,
   role: drawing.role,
+  tags: drawing.tags,
   contentRevision: drawing.contentRevision.toString(),
   metadataRevision: drawing.metadataRevision.toString(),
   createdAt: drawing.createdAt.toISOString(),

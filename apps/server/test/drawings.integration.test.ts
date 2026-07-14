@@ -189,6 +189,43 @@ describe("drawing HTTP domain", () => {
     );
   });
 
+  it("stores per-user private tags with normalization and caps", async () => {
+    const fixture = createFixture();
+    const drawing = fixture.repository.seed(ownerId, "Tagged", "owner");
+    fixture.repository.members.set(`${drawing.id}:${viewerId}`, "viewer");
+
+    // Viewers may tag: tags are private per user.
+    const viewerTag = await request(fixture.app)
+      .put(`/api/v1/drawings/${drawing.id}/tags`)
+      .set("x-test-user", viewerId)
+      .send({ tags: [" Foo ", "bar", "foo"] });
+    expect(viewerTag.status).toBe(200);
+    expect(viewerTag.body.tags).toEqual(["bar", "foo"]);
+
+    const ownerList = await request(fixture.app)
+      .get("/api/v1/drawings")
+      .set("x-test-user", ownerId);
+    expect(ownerList.body.owned[0].tags).toEqual([]);
+
+    const viewerList = await request(fixture.app)
+      .get("/api/v1/drawings")
+      .set("x-test-user", viewerId);
+    expect(viewerList.body.shared[0].tags).toEqual(["bar", "foo"]);
+
+    const tooMany = await request(fixture.app)
+      .put(`/api/v1/drawings/${drawing.id}/tags`)
+      .set("x-test-user", viewerId)
+      .send({ tags: Array.from({ length: 21 }, (_, i) => `tag-${i}`) });
+    expect(tooMany.status).toBe(400);
+    expect(tooMany.body.code).toBe("INVALID_REQUEST");
+
+    const outsider = await request(fixture.app)
+      .put(`/api/v1/drawings/${drawing.id}/tags`)
+      .set("x-test-user", outsiderId)
+      .send({ tags: ["nope"] });
+    expect(outsider.status).toBe(404);
+  });
+
   it("requires a valid session on every route", async () => {
     const fixture = createFixture();
     const response = await request(fixture.app).get("/api/v1/drawings");
@@ -248,6 +285,11 @@ class InMemoryDrawingRepository implements DrawingRepository {
   public readonly drawings = new Map<string, AccessibleDrawing>();
   public readonly members = new Map<string, "editor" | "viewer">();
   public readonly deleted = new Set<string>();
+  public readonly tags = new Map<string, string[]>();
+
+  private tagsFor(drawingId: string, userId: string): string[] {
+    return this.tags.get(`${drawingId}:${userId}`) ?? [];
+  }
 
   public seed(
     ownerUserId: string,
@@ -262,6 +304,7 @@ class InMemoryDrawingRepository implements DrawingRepository {
       ownerUserId,
       ownerName: "Owner",
       role: "owner",
+      tags: [],
       contentRevision: 0n,
       metadataRevision: 0n,
       createdAt: now,
@@ -279,12 +322,13 @@ class InMemoryDrawingRepository implements DrawingRepository {
     const shared: AccessibleDrawing[] = [];
     for (const drawing of this.drawings.values()) {
       if (this.deleted.has(drawing.id)) continue;
+      const tags = this.tagsFor(drawing.id, userId);
       if (drawing.ownerUserId === userId) {
-        owned.push({ ...drawing, role: "owner" });
+        owned.push({ ...drawing, role: "owner", tags });
         continue;
       }
       const role = this.members.get(`${drawing.id}:${userId}`);
-      if (role) shared.push({ ...drawing, role });
+      if (role) shared.push({ ...drawing, role, tags });
     }
     return Promise.resolve({ owned, shared });
   }
@@ -292,11 +336,26 @@ class InMemoryDrawingRepository implements DrawingRepository {
   public findAccessible(drawingId: string, userId: string) {
     const drawing = this.drawings.get(drawingId);
     if (!drawing || this.deleted.has(drawingId)) return Promise.resolve(null);
+    const tags = this.tagsFor(drawingId, userId);
     if (drawing.ownerUserId === userId) {
-      return Promise.resolve({ ...drawing, role: "owner" as const });
+      return Promise.resolve({ ...drawing, role: "owner" as const, tags });
     }
     const role = this.members.get(`${drawingId}:${userId}`);
-    return Promise.resolve(role ? { ...drawing, role } : null);
+    return Promise.resolve(role ? { ...drawing, role, tags } : null);
+  }
+
+  public replaceTags(input: {
+    drawingId: string;
+    userId: string;
+    tags: string[];
+  }) {
+    const key = `${input.drawingId}:${input.userId}`;
+    if (input.tags.length === 0) {
+      this.tags.delete(key);
+    } else {
+      this.tags.set(key, [...input.tags].sort());
+    }
+    return Promise.resolve();
   }
 
   public create(input: { ownerUserId: string; title: string }) {
