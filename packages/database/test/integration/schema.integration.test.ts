@@ -100,6 +100,7 @@ describe("initial PostgreSQL migration", () => {
       "0001_initial.sql",
       "0002_mutation_noop.sql",
       "0003_asset_cleanup_state.sql",
+      "0004_chat_messages.sql",
     ]);
     expect(second.alreadyApplied).toEqual(first.applied);
     expect(record.rows).toEqual(first.applied);
@@ -163,6 +164,8 @@ describe("database constraints", () => {
       "account.user_id->user.id",
       "audit_events.actor_user_id->user.id",
       "audit_events.drawing_id->drawings.id",
+      "chat_messages.drawing_id->drawings.id",
+      "chat_messages.user_id->user.id",
       "drawing_assets.created_by_user_id->user.id",
       "drawing_assets.drawing_id->drawings.id",
       "drawing_invitations.accepted_by_user_id->user.id",
@@ -405,6 +408,32 @@ describe("database constraints", () => {
         [firstDrawing, randomUUID(), randomBytes(32)],
       ),
     ).rejects.toMatchObject({ code: "23514" });
+  });
+});
+
+describe("chat messages", () => {
+  it("constrains bodies and cascades with the drawing", async () => {
+    const ownerId = await createUser();
+    const drawingId = await createDrawing(ownerId);
+
+    await expect(
+      pool.query(
+        `INSERT INTO chat_messages (drawing_id, user_id, body) VALUES ($1, $2, $3)`,
+        [drawingId, ownerId, ""],
+      ),
+    ).rejects.toMatchObject({ constraint: "chat_messages_body_length" });
+
+    await pool.query(
+      `INSERT INTO chat_messages (drawing_id, user_id, body) VALUES ($1, $2, $3)`,
+      [drawingId, ownerId, "hello"],
+    );
+    await pool.query(`DELETE FROM drawings WHERE id = $1`, [drawingId]);
+
+    const remaining = await pool.query(
+      `SELECT id FROM chat_messages WHERE drawing_id = $1`,
+      [drawingId],
+    );
+    expect(remaining.rowCount).toBe(0);
   });
 });
 

@@ -1,5 +1,6 @@
 export * from "./assets.js";
 export * from "./auth.js";
+export * from "./chat.js";
 export * from "./common/primitives.js";
 export * from "./common/problem.js";
 export * from "./content.js";

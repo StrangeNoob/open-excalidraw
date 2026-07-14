@@ -7,6 +7,7 @@ import type {
 } from "../src/modules/auth/identity.js";
 import {
   attachCollaborationGateway,
+  type GatewayChatService,
   type GatewayMutationService,
   type GatewayPresenceChange,
   type GatewayPresenceParticipant,
@@ -265,6 +266,86 @@ describe("collaboration socket gateway", () => {
     releaseMutation();
   });
 
+  it("lets a viewer send chat and broadcasts to the room including the sender", async () => {
+    const fixture = createFixture();
+    fixture.roles.set(roleKey(EDITOR_ID), "editor");
+    fixture.roles.set(roleKey(VIEWER_ID), "viewer");
+    const editor = fixture.connect("editor", EDITOR_ID);
+    const viewer = fixture.connect("viewer", VIEWER_ID);
+    await join(editor);
+    await join(viewer);
+
+    viewer.clientEmit("chat.send", chatSendEvent("can you zoom the header?"));
+
+    await vi.waitFor(() => {
+      expect(viewer.events("chat.message")).toHaveLength(1);
+      expect(editor.events("chat.message")).toHaveLength(1);
+    });
+    expect(viewer.events("chat.message")[0]).toMatchObject({
+      type: "chat.message",
+      message: {
+        userId: VIEWER_ID,
+        body: "can you zoom the header?",
+      },
+    });
+    expect(viewer.disconnected).toBe(false);
+  });
+
+  it("skips the broadcast for a duplicate chat messageId", async () => {
+    const fixture = createFixture({
+      chatSend: vi.fn().mockResolvedValue(null),
+    });
+    fixture.roles.set(roleKey(EDITOR_ID), "editor");
+    const editor = fixture.connect("editor", EDITOR_ID);
+    await join(editor);
+
+    editor.clientEmit("chat.send", chatSendEvent("again"));
+
+    await vi.waitFor(() => expect(fixture.chatSend).toHaveBeenCalledOnce());
+    expect(editor.events("chat.message")).toHaveLength(0);
+    expect(editor.events("protocol.error")).toHaveLength(0);
+  });
+
+  it("reports a chat rate limit as retryable without disconnecting", async () => {
+    const rateLimitError = Object.assign(
+      new Error("Chat message rate exceeded"),
+      {
+        code: "CHAT_RATE_LIMITED",
+        retryable: true,
+      },
+    );
+    const fixture = createFixture({
+      chatSend: vi.fn().mockRejectedValue(rateLimitError),
+    });
+    fixture.roles.set(roleKey(EDITOR_ID), "editor");
+    const editor = fixture.connect("editor", EDITOR_ID);
+    await join(editor);
+
+    editor.clientEmit("chat.send", chatSendEvent("spam"));
+
+    await vi.waitFor(() =>
+      expect(editor.events("protocol.error")).toContainEqual(
+        expect.objectContaining({ code: "CHAT_RATE_LIMITED", retryable: true }),
+      ),
+    );
+    expect(editor.disconnected).toBe(false);
+  });
+
+  it("rejects chat before the room join completes", async () => {
+    const fixture = createFixture();
+    fixture.roles.set(roleKey(EDITOR_ID), "editor");
+    const editor = fixture.connect("editor", EDITOR_ID);
+
+    editor.clientEmit("chat.send", chatSendEvent("too early"));
+
+    await vi.waitFor(() =>
+      expect(editor.events("protocol.error")).toContainEqual(
+        expect.objectContaining({ code: "SOCKET_NOT_JOINED" }),
+      ),
+    );
+    expect(fixture.chatSend).not.toHaveBeenCalled();
+  });
+
   it("never broadcasts when durable persistence fails", async () => {
     const fixture = createFixture({
       mutate: vi.fn().mockRejectedValue(new Error("database secret")),
@@ -296,6 +377,7 @@ describe("collaboration socket gateway", () => {
 
 function createFixture(
   overrides: {
+    chatSend?: GatewayChatService["send"];
     maxQueuedEvents?: number;
     mutate?: GatewayMutationService["mutate"];
     presenceSweepIntervalMs?: number;
@@ -326,6 +408,18 @@ function createFixture(
   const mutate = vi.fn<GatewayMutationService["mutate"]>(
     overrides.mutate ?? defaultMutate,
   );
+  const defaultChatSend: GatewayChatService["send"] = (binding, event) =>
+    Promise.resolve({
+      id: event.messageId,
+      drawingId: binding.drawingId,
+      userId: binding.userId,
+      authorName: "Test User",
+      body: event.body,
+      createdAt: NOW.toISOString(),
+    });
+  const chatSend = vi.fn<GatewayChatService["send"]>(
+    overrides.chatSend ?? defaultChatSend,
+  );
   const identityService: IdentityService = {
     resolve: (headers) => {
       const userId = readHeader(headers, "x-test-user");
@@ -334,6 +428,7 @@ function createFixture(
   };
 
   const gateway = attachCollaborationGateway(server as unknown as Server, {
+    chatService: { send: chatSend },
     identityService,
     maxQueuedEvents: overrides.maxQueuedEvents,
     membershipResolver: {
@@ -367,6 +462,7 @@ function createFixture(
       socket.setConnection(server.connect(socket));
       return socket;
     },
+    chatSend,
     gateway,
     mutate,
     presence,
@@ -407,6 +503,14 @@ const mutationEvent = (
   ],
   mutationId,
   type: "scene.mutate",
+});
+
+const chatSendEvent = (
+  body: string,
+): Extract<ClientRealtimeEvent, { type: "chat.send" }> => ({
+  body,
+  messageId: "50000000-0000-4000-8000-000000000001",
+  type: "chat.send",
 });
 
 const previewEvent = (): Extract<

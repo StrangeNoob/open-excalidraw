@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  chatHistoryResponseSchema,
+  chatMessageEventSchema,
   clientRealtimeEventSchema,
   createDrawingRequestSchema,
   createInvitationRequestSchema,
@@ -120,6 +122,58 @@ describe("realtime contracts", () => {
         elements: [element],
       }).type,
     ).toBe("scene.committed");
+  });
+
+  it("parses chat events and history", () => {
+    expect(
+      clientRealtimeEventSchema.parse({
+        type: "chat.send",
+        messageId: mutationId,
+        body: "move the login box left",
+      }).type,
+    ).toBe("chat.send");
+
+    const message = {
+      id: mutationId,
+      drawingId,
+      userId: clientInstanceId,
+      authorName: "Ada",
+      body: "done",
+      createdAt: "2026-07-15T10:00:00.000+00:00",
+    };
+    expect(
+      chatMessageEventSchema.parse({ type: "chat.message", message }).message
+        .body,
+    ).toBe("done");
+    expect(
+      chatHistoryResponseSchema.parse({ messages: [message], nextCursor: null })
+        .messages,
+    ).toHaveLength(1);
+  });
+
+  it("rejects invalid chat payloads", () => {
+    expect(
+      clientRealtimeEventSchema.safeParse({
+        type: "chat.send",
+        messageId: mutationId,
+        body: "",
+      }).success,
+    ).toBe(false);
+    expect(
+      clientRealtimeEventSchema.safeParse({
+        type: "chat.send",
+        messageId: mutationId,
+        body: "x".repeat(4_001),
+      }).success,
+    ).toBe(false);
+    expect(
+      clientRealtimeEventSchema.safeParse({
+        type: "chat.send",
+        messageId: mutationId,
+        body: "hi",
+        extra: true,
+      }).success,
+    ).toBe(false);
   });
 
   it("rejects unknown event types and numeric revisions", () => {

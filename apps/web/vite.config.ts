@@ -51,14 +51,17 @@ const excalidrawFonts = (): Plugin => ({
   },
 });
 
+// Overridable so parallel checkouts can run against their own API port.
+const apiTarget = process.env.API_PROXY_TARGET ?? "http://localhost:3000";
+
 export default defineConfig({
   plugins: [react(), excalidrawFonts()],
   server: {
     port: 5173,
     proxy: {
-      "/api": "http://localhost:3000",
+      "/api": apiTarget,
       "/socket.io": {
-        target: "http://localhost:3000",
+        target: apiTarget,
         ws: true,
       },
     },

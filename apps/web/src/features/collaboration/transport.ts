@@ -1,8 +1,10 @@
 import {
+  chatMessageEventSchema,
   collaboratorSchema,
   presenceUpdateEventSchema,
   protocolErrorEventSchema,
   serverRealtimeEventSchema,
+  type ChatMessage,
   type ClientRealtimeEvent,
 } from "@open-excalidraw/contracts";
 import { io, type Socket } from "socket.io-client";
@@ -43,6 +45,7 @@ export interface SocketIoTransportOptions {
 export class SocketIoTransport implements RealtimeTransport {
   readonly #socket: Socket;
   #handlers: RealtimeTransportHandlers | null = null;
+  readonly #chatListeners = new Set<(message: ChatMessage) => void>();
 
   constructor({
     path = "/socket.io",
@@ -62,6 +65,17 @@ export class SocketIoTransport implements RealtimeTransport {
 
   setHandlers(handlers: RealtimeTransportHandlers | null): void {
     this.#handlers = handlers;
+  }
+
+  /**
+   * Chat is bound outside the controller-owned server event union so chat
+   * traffic never routes through the collaboration controller.
+   */
+  onChatMessage(listener: (message: ChatMessage) => void): () => void {
+    this.#chatListeners.add(listener);
+    return () => {
+      this.#chatListeners.delete(listener);
+    };
   }
 
   connect(): void {
@@ -102,6 +116,14 @@ export class SocketIoTransport implements RealtimeTransport {
       const parsed = presenceRosterSchema.safeParse(value);
       if (parsed.success) {
         this.#handlers?.onRoster(parsed.data.collaborators);
+      }
+    });
+    this.#socket.on("chat.message", (value: unknown) => {
+      const parsed = chatMessageEventSchema.safeParse(value);
+      if (parsed.success) {
+        for (const listener of this.#chatListeners) {
+          listener(parsed.data.message);
+        }
       }
     });
   }

@@ -3,6 +3,7 @@ import { Pool, type PoolConfig } from "pg";
 
 import { auditEvents } from "./schema/audit.js";
 import { account, session, user, verification } from "./schema/auth.js";
+import { chatMessages } from "./schema/chat.js";
 import { drawingAssets } from "./schema/assets.js";
 import {
   drawingMutations,
@@ -14,6 +15,7 @@ import { drawingInvitations, drawingMembers } from "./schema/sharing.js";
 export const schema = {
   account,
   auditEvents,
+  chatMessages,
   drawingAssets,
   drawingInvitations,
   drawingMembers,
