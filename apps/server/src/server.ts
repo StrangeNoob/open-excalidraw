@@ -6,7 +6,11 @@ import { fileURLToPath } from "node:url";
 import { CONTRACT_LIMITS } from "@open-excalidraw/contracts";
 import { createDatabase } from "@open-excalidraw/database";
 import { DisabledMailer, SmtpMailer, type Mailer } from "@open-excalidraw/mail";
-import { LocalObjectStorage } from "@open-excalidraw/storage";
+import {
+  LocalObjectStorage,
+  S3ObjectStorage,
+  type ObjectStorage,
+} from "@open-excalidraw/storage";
 import { config as loadDotenv } from "dotenv";
 import { Router } from "express";
 import { Server as SocketIoServer } from "socket.io";
@@ -109,14 +113,9 @@ const sharingService = new SharingService({
   },
 });
 
-if ((process.env.STORAGE_DRIVER ?? "local") !== "local") {
-  throw new Error("Only STORAGE_DRIVER=local is available in this release");
-}
-
-const storage = new LocalObjectStorage({
-  rootDirectory:
-    process.env.STORAGE_LOCAL_PATH ?? join(process.cwd(), "uploads"),
-});
+const storage: ObjectStorage = createStorage(
+  process.env.STORAGE_DRIVER ?? "local",
+);
 const maintenanceJobs = new MaintenanceJobs(database.pool, storage);
 const maintenanceIntervalMs = positiveEnvironmentInteger(
   "MAINTENANCE_INTERVAL_MS",
@@ -376,6 +375,26 @@ function operationalLog(
   process.stdout.write(
     `${JSON.stringify({ level, event, time: new Date().toISOString(), ...details })}\n`,
   );
+}
+
+function createStorage(driver: string): ObjectStorage {
+  if (driver === "local") {
+    return new LocalObjectStorage({
+      rootDirectory:
+        process.env.STORAGE_LOCAL_PATH ?? join(process.cwd(), "uploads"),
+    });
+  }
+  if (driver === "s3") {
+    return new S3ObjectStorage({
+      bucket: requiredEnvironment("S3_BUCKET"),
+      region: process.env.S3_REGION?.trim() || "auto",
+      endpoint: process.env.S3_ENDPOINT?.trim() || undefined,
+      accessKeyId: requiredEnvironment("S3_ACCESS_KEY_ID"),
+      secretAccessKey: requiredEnvironment("S3_SECRET_ACCESS_KEY"),
+      forcePathStyle: process.env.S3_FORCE_PATH_STYLE === "true",
+    });
+  }
+  throw new Error('STORAGE_DRIVER must be "local" or "s3"');
 }
 
 function rootCause(error: unknown): unknown {
