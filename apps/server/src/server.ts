@@ -13,6 +13,7 @@ import { Server as SocketIoServer } from "socket.io";
 
 import { createApp } from "./app.js";
 import {
+  AssetError,
   AssetService,
   createAssetRouter,
   DrizzleAssetRepository,
@@ -234,6 +235,22 @@ const assetRouter = Router().use(
       const resolved = await identity.resolve(request.headers);
       return resolved ? { userId: resolved.userId } : null;
     },
+    onError: (error, request) => {
+      // Expected client failures (4xx) are visible in responses; only
+      // unexpected errors need operator visibility.
+      if (error instanceof AssetError && error.status < 500) {
+        return;
+      }
+      const cause = rootCause(error);
+      operationalLog("error", "assets.request_failed", {
+        errorType: safeErrorType(error),
+        causeType: safeErrorType(cause),
+        causeCode: errorCodeOf(cause),
+        message: cause instanceof Error ? cause.message : String(cause),
+        method: request.method,
+        path: request.path,
+      });
+    },
   }),
 );
 const staticDirectory =
@@ -359,6 +376,29 @@ function operationalLog(
   process.stdout.write(
     `${JSON.stringify({ level, event, time: new Date().toISOString(), ...details })}\n`,
   );
+}
+
+function rootCause(error: unknown): unknown {
+  let current = error;
+  for (let depth = 0; depth < 8; depth += 1) {
+    if (current instanceof Error && current.cause !== undefined) {
+      current = current.cause;
+    } else {
+      break;
+    }
+  }
+  return current;
+}
+
+function errorCodeOf(error: unknown): string | null {
+  if (
+    error instanceof Error &&
+    "code" in error &&
+    typeof error.code === "string"
+  ) {
+    return error.code;
+  }
+  return null;
 }
 
 function safeErrorType(error: unknown): string {

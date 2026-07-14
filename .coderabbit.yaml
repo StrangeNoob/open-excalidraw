@@ -1,0 +1,7 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+reviews:
+  tools:
+    eslint:
+      # CodeRabbit's sandbox cannot install this pnpm 10 workspace; the CI
+      # quality job already runs `eslint . --max-warnings=0` on every PR.
+      enabled: false

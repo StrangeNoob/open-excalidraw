@@ -56,6 +56,7 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
 FROM node:${NODE_VERSION} AS runtime
 ENV NODE_ENV=production
 ENV APP_PORT=3000
+ENV STORAGE_LOCAL_PATH=/data/assets
 WORKDIR /app/apps/server
 RUN addgroup -S -g 10001 open-excalidraw \
     && adduser -S -D -H -u 10001 -G open-excalidraw open-excalidraw \
