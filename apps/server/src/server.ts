@@ -6,16 +6,16 @@ import { fileURLToPath } from "node:url";
 import { CONTRACT_LIMITS } from "@open-excalidraw/contracts";
 import { createDatabase } from "@open-excalidraw/database";
 import { DisabledMailer, SmtpMailer, type Mailer } from "@open-excalidraw/mail";
-import {
-  LocalObjectStorage,
-  S3ObjectStorage,
-  type ObjectStorage,
-} from "@open-excalidraw/storage";
+import type { ObjectStorage } from "@open-excalidraw/storage";
 import { config as loadDotenv } from "dotenv";
 import { Router } from "express";
 import { Server as SocketIoServer } from "socket.io";
 
 import { createApp } from "./app.js";
+import {
+  createStorageFromEnvironment,
+  requiredEnvironment,
+} from "./storage-config.js";
 import {
   AssetError,
   AssetService,
@@ -113,8 +113,8 @@ const sharingService = new SharingService({
   },
 });
 
-const storage: ObjectStorage = createStorage(
-  process.env.STORAGE_DRIVER ?? "local",
+const storage: ObjectStorage = createStorageFromEnvironment(
+  process.env.STORAGE_DRIVER?.trim() || "local",
 );
 const maintenanceJobs = new MaintenanceJobs(database.pool, storage);
 const maintenanceIntervalMs = positiveEnvironmentInteger(
@@ -335,14 +335,6 @@ const shutdown = () => {
 process.once("SIGINT", shutdown);
 process.once("SIGTERM", shutdown);
 
-function requiredEnvironment(name: string): string {
-  const value = process.env[name]?.trim();
-  if (!value) {
-    throw new Error(`${name} is required`);
-  }
-  return value;
-}
-
 function loadEnvironmentFile(): void {
   const candidates = [
     resolve(process.cwd(), ".env"),
@@ -375,26 +367,6 @@ function operationalLog(
   process.stdout.write(
     `${JSON.stringify({ level, event, time: new Date().toISOString(), ...details })}\n`,
   );
-}
-
-function createStorage(driver: string): ObjectStorage {
-  if (driver === "local") {
-    return new LocalObjectStorage({
-      rootDirectory:
-        process.env.STORAGE_LOCAL_PATH ?? join(process.cwd(), "uploads"),
-    });
-  }
-  if (driver === "s3") {
-    return new S3ObjectStorage({
-      bucket: requiredEnvironment("S3_BUCKET"),
-      region: process.env.S3_REGION?.trim() || undefined,
-      endpoint: process.env.S3_ENDPOINT?.trim() || undefined,
-      accessKeyId: requiredEnvironment("S3_ACCESS_KEY_ID"),
-      secretAccessKey: requiredEnvironment("S3_SECRET_ACCESS_KEY"),
-      forcePathStyle: process.env.S3_FORCE_PATH_STYLE === "true",
-    });
-  }
-  throw new Error('STORAGE_DRIVER must be "local" or "s3"');
 }
 
 function rootCause(error: unknown): unknown {
