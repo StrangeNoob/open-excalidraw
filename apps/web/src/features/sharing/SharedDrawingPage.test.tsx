@@ -159,7 +159,9 @@ describe("SharedDrawingPage", () => {
       retryable: false,
     };
     await vi.waitFor(() => expect(transport.handlers).not.toBeNull());
-    transport.handlers?.onError(problem);
+    act(() => {
+      transport.handlers?.onError(problem);
+    });
 
     expect(
       await screen.findByRole("heading", { name: "This link isn't available" }),

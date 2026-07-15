@@ -106,6 +106,10 @@ export const SharedDrawingPage = ({
   const [collaboration, setCollaboration] = useState<CollaborationState>(
     EMPTY_COLLABORATION_STATE,
   );
+  // Latched, not derived from live collaboration state: rendering the notice
+  // unmounts the editor, whose cleanup resets the collaboration state — a
+  // derived flag would clear itself and flip the page back to the canvas.
+  const [linkRevoked, setLinkRevoked] = useState(false);
   // Belt to SharedDrawingRoute's remount-per-token suspenders: a drawing is
   // only ever rendered against the token it was loaded for.
   const shared =
@@ -148,7 +152,12 @@ export const SharedDrawingPage = ({
       transport: resolved.createRealtimeTransport(token),
       userId: "share-viewer",
     });
-    const unsubscribe = realtime.subscribe(setCollaboration);
+    const unsubscribe = realtime.subscribe((state) => {
+      setCollaboration(state);
+      if (state.error !== null && REVOKED_SOCKET_CODES.has(state.error.code)) {
+        setLinkRevoked(true);
+      }
+    });
     realtime.start();
     return () => {
       unsubscribe();
@@ -176,10 +185,6 @@ export const SharedDrawingPage = ({
       .catch(() => undefined);
     return () => abort.abort();
   }, [editorApi, resolved, revision, shared, token]);
-
-  const linkRevoked =
-    collaboration.error !== null &&
-    REVOKED_SOCKET_CODES.has(collaboration.error.code);
 
   if (!tokenValid || status === "not-found" || linkRevoked) {
     return (
