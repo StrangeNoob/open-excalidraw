@@ -90,6 +90,7 @@ export interface DrawingWorkspaceDependencies {
   connectivity?: ConnectivitySource;
   content?: ContentSource;
   createAutosave?: (options: AutosaveControllerOptions) => AutosaveController;
+  createRealtimeTransport?: () => SocketIoTransport;
   host?: ComponentType<ExcalidrawHostProps>;
   hydrate?: typeof hydrateAssets;
   metadata?: DrawingMetadataSource;
@@ -166,6 +167,9 @@ export const DrawingPage = ({
         dependencies?.createAutosave ??
         ((options: AutosaveControllerOptions) =>
           new AutosaveController(options)),
+      createRealtimeTransport:
+        dependencies?.createRealtimeTransport ??
+        (() => new SocketIoTransport()),
       hydrate: dependencies?.hydrate ?? hydrateAssets,
       Host: dependencies?.host ?? ExcalidrawHost,
       metadata: dependencies?.metadata ?? ownedDefaults.metadata,
@@ -175,6 +179,7 @@ export const DrawingPage = ({
     }),
     [dependencies, ownedDefaults],
   );
+  const { createRealtimeTransport } = resolved;
   const connectivity = useConnectivity(resolved.connectivity);
   const [load, setLoad] = useState<WorkspaceLoad | null>(null);
   const [loadError, setLoadError] = useState<WorkspaceLoadError | null>(null);
@@ -195,9 +200,29 @@ export const DrawingPage = ({
   const [sharingOpen, setSharingOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const [chatUnread, setChatUnread] = useState(0);
   const [chatTransport, setChatTransport] = useState<SocketIoTransport | null>(
     null,
   );
+
+  // The panel only listens while it is open, so the page keeps the unread
+  // badge: messages from others that arrive while the panel is closed. The
+  // count resets in the open/close handlers, not here.
+  useEffect(() => {
+    if (!chatTransport || chatOpen) {
+      return;
+    }
+    return chatTransport.onChatMessage((message) => {
+      if (message.drawingId === drawingId && message.userId !== userId) {
+        setChatUnread((count) => count + 1);
+      }
+    });
+  }, [chatTransport, chatOpen, drawingId, userId]);
+
+  const toggleChat = useCallback(() => {
+    setChatUnread(0);
+    setChatOpen((open) => !open);
+  }, []);
   const [restoringRevision, setRestoringRevision] = useState(false);
   const [editorApi, setEditorApi] = useState<ExcalidrawImperativeAPI | null>(
     null,
@@ -304,7 +329,7 @@ export const DrawingPage = ({
     const uploads = new AssetUploadManager({ client: resolved.assets });
     // The chat panel shares this socket, so it lives in state too. The
     // microtask keeps the setState out of the synchronous effect body.
-    const transport = new SocketIoTransport();
+    const transport = createRealtimeTransport();
     queueMicrotask(() => {
       if (collaborationControllerRef.current === realtime) {
         setChatTransport(transport);
@@ -354,6 +379,7 @@ export const DrawingPage = ({
     };
   }, [
     collaborationEnabled,
+    createRealtimeTransport,
     drawingId,
     editorApi,
     resolved.assets,
@@ -720,11 +746,21 @@ export const DrawingPage = ({
             </span>
             {collaborationEnabled ? (
               <button
+                aria-label={
+                  chatUnread > 0
+                    ? `Chat, ${chatUnread} unread message${chatUnread === 1 ? "" : "s"}`
+                    : "Chat"
+                }
                 className="canvas-action"
-                onClick={() => setChatOpen((open) => !open)}
+                onClick={toggleChat}
                 type="button"
               >
                 Chat
+                {chatUnread > 0 ? (
+                  <span aria-hidden="true" className="chat-unread-badge">
+                    {chatUnread > 99 ? "99+" : chatUnread}
+                  </span>
+                ) : null}
               </button>
             ) : null}
             <button

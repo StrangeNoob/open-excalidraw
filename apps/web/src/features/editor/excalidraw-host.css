@@ -74,6 +74,20 @@
   background: var(--button-hover-bg, rgb(0 0 0 / 4%));
 }
 
+.chat-unread-badge {
+  background: var(--accent);
+  border-radius: 999px;
+  color: #fff;
+  display: inline-block;
+  font-size: 0.65rem;
+  line-height: 1;
+  margin-left: 0.4rem;
+  min-width: 1.1em;
+  padding: 0.2em 0.35em;
+  text-align: center;
+  vertical-align: middle;
+}
+
 .canvas-action--primary {
   background: var(--accent);
   border-color: var(--accent);
