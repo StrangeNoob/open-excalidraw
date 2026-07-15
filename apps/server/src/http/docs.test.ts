@@ -21,6 +21,20 @@ describe("API docs", () => {
     expect(response.text).toContain("swagger-ui");
   });
 
+  // A missing script or stylesheet leaves the page blank while the HTML
+  // shell still returns 200, so every asset the page references must serve.
+  it("serves every asset the UI page references", async () => {
+    const page = await request(app).get("/api/docs/");
+    const assets = [...page.text.matchAll(/(?:src|href)="\.\/([^"]+)"/g)].map(
+      (match) => match[1],
+    );
+    expect(assets.length).toBeGreaterThan(0);
+    for (const asset of assets) {
+      const response = await request(app).get(`/api/docs/${asset}`);
+      expect(response.status, `/api/docs/${asset}`).toBe(200);
+    }
+  });
+
   it("only references schemas that exist", () => {
     const schemas = Object.keys(openApiDocument.components.schemas);
     const references = JSON.stringify(openApiDocument).matchAll(

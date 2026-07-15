@@ -52,5 +52,13 @@ Both sides read the same environment variables the server uses
 1. Back up PostgreSQL and the current asset storage.
 2. Run the migration with `--dry-run`, then without, while the old driver is
    still live.
-3. Switch `STORAGE_DRIVER` and restart the server.
-4. Retain the previous storage for a rollback window before deleting it.
+3. Stop the server (or otherwise block uploads) and run the migration once
+   more. The asset list is loaded once per run, so this delta pass picks up
+   anything uploaded since step 2; it is cheap because identical objects are
+   skipped.
+4. Do not switch drivers until the final run reports `missing=0 failed=0`.
+   Only `failed` produces a non-zero exit code, so check the printed summary,
+   not just the exit status. Resolve any missing or failed assets and re-run
+   until clean.
+5. Switch `STORAGE_DRIVER` and restart the server.
+6. Retain the previous storage for a rollback window before deleting it.
