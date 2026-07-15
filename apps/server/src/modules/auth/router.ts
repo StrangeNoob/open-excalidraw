@@ -4,11 +4,17 @@ import type {
 } from "@open-excalidraw/contracts";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { Router, type RequestHandler } from "express";
-import { toNodeHandler } from "better-auth/node";
+import { APIError } from "better-auth/api";
+import { fromNodeHeaders, toNodeHandler } from "better-auth/node";
+import { z } from "zod";
 
 import type { OpenExcalidrawAuth } from "./config.js";
 import type { IdentityService } from "./identity.js";
 import type { ManualResetLinkSource } from "./manual-reset.js";
+
+const setPasswordRequestSchema = z
+  .object({ newPassword: z.string().min(12).max(128) })
+  .strict();
 
 export interface CreateAuthRouterInput {
   auth: OpenExcalidrawAuth;
@@ -77,6 +83,58 @@ export function createAuthRouter(input: CreateAuthRouterInput): Router {
       response.status(200).json(body);
     } catch (error) {
       next(error);
+    }
+  });
+
+  // better-auth's set-password endpoint is server-only, so OAuth-only users
+  // need this proxy to add a password to their account.
+  router.post("/api/v1/me/password", async (request, response) => {
+    const requestId = randomUUID();
+    response.setHeader("x-request-id", requestId);
+    try {
+      const identity = await input.identity.resolve(request.headers);
+      if (!identity) {
+        response.status(401).type("application/problem+json").json({
+          code: "AUTHENTICATION_REQUIRED",
+          status: 401,
+          title: "Authentication is required",
+          requestId,
+        });
+        return;
+      }
+      const body = setPasswordRequestSchema.parse(request.body);
+      await input.auth.api.setPassword({
+        body: { newPassword: body.newPassword },
+        headers: fromNodeHeaders(request.headers),
+      });
+      response.sendStatus(204);
+    } catch (error) {
+      response.type("application/problem+json");
+      if (error instanceof z.ZodError) {
+        response.status(400).json({
+          code: "INVALID_REQUEST",
+          status: 400,
+          title: "Request validation failed",
+          requestId,
+          errors: z.flattenError(error).fieldErrors,
+        });
+        return;
+      }
+      if (error instanceof APIError) {
+        response.status(error.statusCode).json({
+          code: "SET_PASSWORD_FAILED",
+          status: error.statusCode,
+          title: error.body?.message ?? "The password could not be set",
+          requestId,
+        });
+        return;
+      }
+      response.status(500).json({
+        code: "INTERNAL_ERROR",
+        status: 500,
+        title: "The request could not be completed",
+        requestId,
+      });
     }
   });
 

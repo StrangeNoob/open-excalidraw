@@ -16,6 +16,57 @@ describe("GuestMigrationPrompt", () => {
     localRevision: 1,
     title,
   });
+  const dismissKey =
+    "open-excalidraw:guest-migration-dismissed:user-a\u0000guest";
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("hides the prompt when dismissed and persists the dismissal", async () => {
+    const inspect = vi
+      .fn<GuestMigrationService["inspect"]>()
+      .mockResolvedValue(candidate("Local sketch"));
+    const migrate = vi.fn<GuestMigrationService["migrate"]>();
+
+    render(
+      <GuestMigrationPrompt
+        drawingId="guest"
+        onMigrated={vi.fn()}
+        service={{ inspect, migrate }}
+        userId="user-a"
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
+
+    expect(
+      screen.queryByText("Save “Local sketch” to your account?"),
+    ).not.toBeInTheDocument();
+    expect(localStorage.getItem(dismissKey)).toBe("1");
+  });
+
+  it("stays hidden when a previous dismissal is stored", async () => {
+    localStorage.setItem(dismissKey, "1");
+    const inspect = vi
+      .fn<GuestMigrationService["inspect"]>()
+      .mockResolvedValue(candidate("Local sketch"));
+    const migrate = vi.fn<GuestMigrationService["migrate"]>();
+
+    render(
+      <GuestMigrationPrompt
+        drawingId="guest"
+        onMigrated={vi.fn()}
+        service={{ inspect, migrate }}
+        userId="user-a"
+      />,
+    );
+
+    await waitFor(() => expect(inspect).toHaveBeenCalled());
+    expect(
+      screen.queryByText("Save “Local sketch” to your account?"),
+    ).not.toBeInTheDocument();
+  });
 
   it("shows inspection failures and retries for the same account", async () => {
     const inspect = vi

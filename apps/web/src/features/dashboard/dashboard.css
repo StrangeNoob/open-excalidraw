@@ -152,6 +152,45 @@
   color: var(--danger-ink);
 }
 
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+}
+
+.tag-chip {
+  background: var(--blue-wash);
+  border: 1.5px solid var(--blue-ink);
+  border-radius: var(--wobble);
+  color: var(--blue-ink);
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0.15rem 0.55rem;
+}
+
+.tag-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 2rem;
+}
+
+.dashboard-page button.tag-chip {
+  background: var(--card);
+  box-shadow: none;
+  color: var(--ink-soft);
+  min-height: 0;
+}
+
+.dashboard-page button.tag-chip[aria-pressed="true"] {
+  background: var(--blue-wash);
+  border-color: var(--blue-ink);
+  color: var(--blue-ink);
+}
+
 .dashboard-empty,
 .dashboard-error,
 .dashboard-notice {

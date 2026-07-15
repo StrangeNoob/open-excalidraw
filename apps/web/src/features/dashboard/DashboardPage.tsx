@@ -4,13 +4,23 @@ import type {
 } from "@open-excalidraw/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import { getDrawingCapabilities } from "../access";
 import { DashboardApiClient, type DashboardApi } from "./dashboard-api";
 
 const DASHBOARD_QUERY_KEY = ["drawings", "dashboard"] as const;
+const MAX_TAGS = 20;
 const defaultDashboardApi = new DashboardApiClient();
+
+const parseTags = (value: string): string[] => [
+  ...new Set(
+    value
+      .split(",")
+      .map((tag) => tag.trim().toLowerCase())
+      .filter(Boolean),
+  ),
+];
 
 const replaceDrawing = (
   dashboard: DrawingListResponse | undefined,
@@ -51,6 +61,7 @@ const useOnlineStatus = () => {
 const DrawingCard = ({
   drawing,
   onDelete,
+  onEditTags,
   onOpen,
   onRename,
   offline,
@@ -58,6 +69,7 @@ const DrawingCard = ({
 }: {
   drawing: DrawingSummary;
   onDelete: (drawing: DrawingSummary) => void;
+  onEditTags: (drawing: DrawingSummary, tags: string[]) => void;
   onOpen: (drawing: DrawingSummary) => void;
   onRename: (drawing: DrawingSummary, title: string) => void;
   offline: boolean;
@@ -66,6 +78,29 @@ const DrawingCard = ({
   const capabilities = getDrawingCapabilities(drawing.role);
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState(drawing.title);
+  const [editingTags, setEditingTags] = useState(false);
+  const [tagsInput, setTagsInput] = useState(drawing.tags.join(", "));
+  const [tagsError, setTagsError] = useState<string | null>(null);
+
+  const submitTags = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const nextTags = parseTags(tagsInput);
+
+    if (nextTags.length > MAX_TAGS) {
+      setTagsError(`Use at most ${MAX_TAGS} tags.`);
+      return;
+    }
+
+    setTagsError(null);
+    setEditingTags(false);
+
+    if (nextTags.join("\n") === drawing.tags.join("\n")) {
+      setTagsInput(drawing.tags.join(", "));
+      return;
+    }
+
+    onEditTags(drawing, nextTags);
+  };
 
   const submitRename = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -134,6 +169,45 @@ const DrawingCard = ({
         </div>
       </dl>
 
+      {editingTags ? (
+        <form
+          aria-label={`Edit tags of ${drawing.title}`}
+          onSubmit={submitTags}
+        >
+          <label>
+            Tags (comma-separated)
+            <input
+              autoFocus
+              onChange={(event) => setTagsInput(event.target.value)}
+              placeholder="ideas, sprint-12"
+              value={tagsInput}
+            />
+          </label>
+          {tagsError ? <p role="alert">{tagsError}</p> : null}
+          <button disabled={pending || offline} type="submit">
+            Save
+          </button>
+          <button
+            onClick={() => {
+              setTagsInput(drawing.tags.join(", "));
+              setTagsError(null);
+              setEditingTags(false);
+            }}
+            type="button"
+          >
+            Cancel
+          </button>
+        </form>
+      ) : drawing.tags.length > 0 ? (
+        <ul aria-label="Tags" className="tag-list">
+          {drawing.tags.map((tag) => (
+            <li className="tag-chip" key={tag}>
+              {tag}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
       <div className="drawing-card-actions">
         <button
           disabled={pending}
@@ -151,6 +225,17 @@ const DrawingCard = ({
             Rename
           </button>
         ) : null}
+        <button
+          disabled={pending || offline}
+          onClick={() => {
+            setTagsInput(drawing.tags.join(", "));
+            setTagsError(null);
+            setEditingTags(true);
+          }}
+          type="button"
+        >
+          Edit tags
+        </button>
         {capabilities.deleteDrawing ? (
           <button
             className="danger-button"
@@ -170,6 +255,7 @@ const DrawingSection = ({
   drawings,
   emptyMessage,
   onDelete,
+  onEditTags,
   onOpen,
   onRename,
   offline,
@@ -179,6 +265,7 @@ const DrawingSection = ({
   drawings: DrawingSummary[];
   emptyMessage: string;
   onDelete: (drawing: DrawingSummary) => void;
+  onEditTags: (drawing: DrawingSummary, tags: string[]) => void;
   onOpen: (drawing: DrawingSummary) => void;
   onRename: (drawing: DrawingSummary, title: string) => void;
   offline: boolean;
@@ -196,6 +283,7 @@ const DrawingSection = ({
             drawing={drawing}
             key={drawing.id}
             onDelete={onDelete}
+            onEditTags={onEditTags}
             onOpen={onOpen}
             onRename={onRename}
             offline={offline}
@@ -221,6 +309,7 @@ export const DashboardPage = ({
   const online = useOnlineStatus();
   const [newTitle, setNewTitle] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
   const dashboard = useQuery({
     queryFn: () => api.listDrawings(),
     queryKey: DASHBOARD_QUERY_KEY,
@@ -261,6 +350,24 @@ export const DashboardPage = ({
     },
   });
 
+  const setTags = useMutation({
+    mutationFn: ({
+      drawing,
+      tags,
+    }: {
+      drawing: DrawingSummary;
+      tags: string[];
+    }) => api.setTags(drawing, tags),
+    onError: (error) => setActionError(error.message),
+    onSuccess: (drawing) => {
+      setActionError(null);
+      queryClient.setQueryData<DrawingListResponse>(
+        DASHBOARD_QUERY_KEY,
+        (current) => replaceDrawing(current, drawing),
+      );
+    },
+  });
+
   const deleteDrawing = useMutation({
     mutationFn: (drawing: DrawingSummary) => api.deleteDrawing(drawing),
     onError: (error) => setActionError(error.message),
@@ -283,6 +390,7 @@ export const DashboardPage = ({
   const pending =
     createDrawing.isPending ||
     renameDrawing.isPending ||
+    setTags.isPending ||
     deleteDrawing.isPending;
 
   const submitCreate = (event: FormEvent<HTMLFormElement>) => {
@@ -305,12 +413,29 @@ export const DashboardPage = ({
     }
   };
 
+  const allTags = dashboard.data
+    ? [
+        ...new Set(
+          [...dashboard.data.owned, ...dashboard.data.shared].flatMap(
+            (drawing) => drawing.tags,
+          ),
+        ),
+      ].sort()
+    : [];
+  // A filter can outlive its tag (e.g. the last tagged drawing was untagged).
+  const activeTag = tagFilter && allTags.includes(tagFilter) ? tagFilter : null;
+  const byTag = (drawings: DrawingSummary[]) =>
+    activeTag
+      ? drawings.filter((drawing) => drawing.tags.includes(activeTag))
+      : drawings;
+
   return (
     <main className="dashboard-page">
       <header className="dashboard-header">
         <div>
           <p className="dashboard-eyebrow">Open Excalidraw</p>
           <h1>Your drawings</h1>
+          <Link to="/app/settings">Settings</Link>
         </div>
         <form className="create-drawing" onSubmit={submitCreate}>
           <label>
@@ -346,40 +471,78 @@ export const DashboardPage = ({
           </button>
         </section>
       ) : (
-        <div className="dashboard-sections">
-          <DrawingSection
-            drawings={dashboard.data.owned}
-            emptyMessage="Create your first drawing to get started."
-            onDelete={requestDelete}
-            onOpen={(drawing) =>
-              (onOpenDrawing ?? ((next) => navigate(`/drawings/${next.id}`)))(
-                drawing,
-              )
-            }
-            onRename={(drawing, title) =>
-              renameDrawing.mutate({ drawing, title })
-            }
-            offline={!online}
-            pending={pending}
-            title="Owned"
-          />
-          <DrawingSection
-            drawings={dashboard.data.shared}
-            emptyMessage="Drawings shared with you will appear here."
-            onDelete={requestDelete}
-            onOpen={(drawing) =>
-              (onOpenDrawing ?? ((next) => navigate(`/drawings/${next.id}`)))(
-                drawing,
-              )
-            }
-            onRename={(drawing, title) =>
-              renameDrawing.mutate({ drawing, title })
-            }
-            offline={!online}
-            pending={pending}
-            title="Shared"
-          />
-        </div>
+        <>
+          {allTags.length > 0 ? (
+            <nav aria-label="Filter by tag" className="tag-filter-bar">
+              {/* ponytail: single-select filter; multi-select if anyone asks */}
+              <button
+                aria-pressed={activeTag === null}
+                className="tag-chip"
+                onClick={() => setTagFilter(null)}
+                type="button"
+              >
+                All
+              </button>
+              {allTags.map((tag) => (
+                <button
+                  aria-pressed={activeTag === tag}
+                  className="tag-chip"
+                  key={tag}
+                  onClick={() =>
+                    setTagFilter((current) => (current === tag ? null : tag))
+                  }
+                  type="button"
+                >
+                  {tag}
+                </button>
+              ))}
+            </nav>
+          ) : null}
+          <div className="dashboard-sections">
+            <DrawingSection
+              drawings={byTag(dashboard.data.owned)}
+              emptyMessage={
+                activeTag
+                  ? `No owned drawings tagged “${activeTag}”.`
+                  : "Create your first drawing to get started."
+              }
+              onDelete={requestDelete}
+              onEditTags={(drawing, tags) => setTags.mutate({ drawing, tags })}
+              onOpen={(drawing) =>
+                (onOpenDrawing ?? ((next) => navigate(`/drawings/${next.id}`)))(
+                  drawing,
+                )
+              }
+              onRename={(drawing, title) =>
+                renameDrawing.mutate({ drawing, title })
+              }
+              offline={!online}
+              pending={pending}
+              title="Owned"
+            />
+            <DrawingSection
+              drawings={byTag(dashboard.data.shared)}
+              emptyMessage={
+                activeTag
+                  ? `No shared drawings tagged “${activeTag}”.`
+                  : "Drawings shared with you will appear here."
+              }
+              onDelete={requestDelete}
+              onEditTags={(drawing, tags) => setTags.mutate({ drawing, tags })}
+              onOpen={(drawing) =>
+                (onOpenDrawing ?? ((next) => navigate(`/drawings/${next.id}`)))(
+                  drawing,
+                )
+              }
+              onRename={(drawing, title) =>
+                renameDrawing.mutate({ drawing, title })
+              }
+              offline={!online}
+              pending={pending}
+              title="Shared"
+            />
+          </div>
+        </>
       )}
     </main>
   );

@@ -258,6 +258,17 @@ a {
   font-size: 1.15rem;
 }
 
+.migration-prompt button.migration-prompt-dismiss {
+  background: transparent;
+  border-color: var(--accent-ink);
+  box-shadow: none;
+  color: var(--accent-ink);
+  font-size: 1.2rem;
+  line-height: 1;
+  min-height: 2rem;
+  padding: 0.2rem 0.6rem;
+}
+
 .migration-prompt p {
   color: var(--ink-soft);
   flex: 1;

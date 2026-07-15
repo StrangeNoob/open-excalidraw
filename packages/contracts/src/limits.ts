@@ -1,5 +1,7 @@
 export const CONTRACT_LIMITS = {
   assetManifestEntries: 10_000,
+  drawingTagCharacters: 32,
+  drawingTagsPerDrawing: 20,
   drawingTitleCharacters: 120,
   elementsPerPatch: 5_000,
   elementsPerScene: 50_000,

@@ -16,6 +16,7 @@ import {
   ResetPasswordPage,
   SignUpPage,
   useAuth,
+  VerifyEmailNotice,
 } from "../features/auth";
 
 const DashboardPage = lazy(() =>
@@ -41,6 +42,11 @@ const AuthenticatedGuestMigrationPrompt = lazy(() =>
 const InvitationPage = lazy(() =>
   import("../features/sharing").then((module) => ({
     default: module.InvitationPage,
+  })),
+);
+const SettingsPage = lazy(() =>
+  import("../features/settings").then((module) => ({
+    default: module.SettingsPage,
   })),
 );
 
@@ -81,8 +87,45 @@ const DashboardRoute = () => {
 
   return (
     <Suspense fallback={<p aria-live="polite">Loading your drawings…</p>}>
+      <VerifyEmailNotice />
       <AuthenticatedGuestMigrationPrompt userId={auth.user.id} />
       <DashboardPage />
+    </Suspense>
+  );
+};
+
+const SettingsRoute = () => {
+  const auth = useAuth();
+  const location = useLocation();
+
+  if (auth.status === "loading") {
+    return <p aria-live="polite">Loading your account…</p>;
+  }
+
+  if (auth.status === "error") {
+    return (
+      <main>
+        <h1>Could not load your account</h1>
+        <button onClick={() => void auth.refresh()} type="button">
+          Try again
+        </button>
+      </main>
+    );
+  }
+
+  if (!auth.user) {
+    const returnTo = `${location.pathname}${location.search}${location.hash}`;
+    return (
+      <Navigate
+        replace
+        to={`/login?returnTo=${encodeURIComponent(returnTo)}`}
+      />
+    );
+  }
+
+  return (
+    <Suspense fallback={<p aria-live="polite">Loading settings…</p>}>
+      <SettingsPage />
     </Suspense>
   );
 };
@@ -171,6 +214,10 @@ export const appRoutes: RouteObject[] = [
       {
         path: "/app",
         element: <DashboardRoute />,
+      },
+      {
+        path: "/app/settings",
+        element: <SettingsRoute />,
       },
       {
         path: "/dashboard",

@@ -25,6 +25,7 @@ export interface DashboardApi {
     drawing: DrawingSummary,
     title: string,
   ): Promise<DrawingSummary>;
+  setTags(drawing: DrawingSummary, tags: string[]): Promise<DrawingSummary>;
 }
 
 export class DashboardApiClient implements DashboardApi {
@@ -70,6 +71,22 @@ export class DashboardApiClient implements DashboardApi {
           title,
         }),
         method: "PATCH",
+      },
+      drawingMutationResponseSchema,
+    );
+
+    return unwrapDrawing(response);
+  }
+
+  async setTags(
+    drawing: DrawingSummary,
+    tags: string[],
+  ): Promise<DrawingSummary> {
+    const response = await this.#api.request(
+      `/v1/drawings/${drawing.id}/tags`,
+      {
+        body: JSON.stringify({ tags }),
+        method: "PUT",
       },
       drawingMutationResponseSchema,
     );

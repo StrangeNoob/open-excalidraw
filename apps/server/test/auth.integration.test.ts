@@ -154,6 +154,105 @@ describe("auth HTTP boundary", () => {
     expect(resetLinks.consume("unknown@example.test")).toBeNull();
   });
 
+  it("signs unverified users in immediately while still issuing a verification token", async () => {
+    const memory = createMemoryAdapter();
+    const auth = createOpenExcalidrawAuth({
+      database: {} as never,
+      databaseAdapter: memory.factory,
+      mailer: new DisabledMailer(),
+      baseUrl: BASE_URL,
+      secret: SECRET,
+      smtpEnabled: true,
+      secureCookies: false,
+    });
+    const app = express();
+    app.use(express.json());
+    app.use(
+      createAuthRouter({
+        auth,
+        identity: createIdentityService(auth),
+        capabilities: authCapabilities({ smtpEnabled: true }),
+      }),
+    );
+
+    const signup = await request(app)
+      .post("/api/auth/sign-up/email")
+      .set("origin", BASE_URL)
+      .send({
+        name: "Unverified User",
+        email: "unverified@example.test",
+        password: "correct-horse-battery-staple",
+      });
+    expect(signup.status).toBe(200);
+    expect(signup.body.token).not.toBeNull();
+
+    const me = await request(app)
+      .get("/api/v1/me")
+      .set("cookie", sessionCookie(signup.headers["set-cookie"]))
+      .set("origin", BASE_URL);
+    expect(me.body.user).toMatchObject({
+      email: "unverified@example.test",
+      emailVerified: false,
+    });
+  });
+
+  it("guards the set-password proxy with authentication and validation", async () => {
+    const memory = createMemoryAdapter();
+    const auth = createOpenExcalidrawAuth({
+      database: {} as never,
+      databaseAdapter: memory.factory,
+      mailer: new DisabledMailer(),
+      baseUrl: BASE_URL,
+      secret: SECRET,
+      smtpEnabled: false,
+      // Plain cookies keep the round-trip simple over supertest's http.
+      secureCookies: false,
+    });
+    const app = express();
+    app.use(express.json());
+    app.use(
+      createAuthRouter({
+        auth,
+        identity: createIdentityService(auth),
+        capabilities: authCapabilities({ smtpEnabled: false }),
+      }),
+    );
+
+    await request(app)
+      .post("/api/v1/me/password")
+      .send({ newPassword: "long-enough-password" })
+      .expect(401);
+
+    const signup = await request(app)
+      .post("/api/auth/sign-up/email")
+      .set("origin", BASE_URL)
+      .send({
+        name: "New User",
+        email: "proxy@example.test",
+        password: "correct-horse-battery-staple",
+      });
+    expect(signup.status).toBe(200);
+    const cookie = sessionCookie(signup.headers["set-cookie"]);
+
+    const invalid = await request(app)
+      .post("/api/v1/me/password")
+      .set("cookie", cookie)
+      .set("origin", BASE_URL)
+      .send({ newPassword: "short" })
+      .expect(400);
+    expect(invalid.body.code).toBe("INVALID_REQUEST");
+
+    // Credential accounts already have a password, so better-auth rejects
+    // the server-only setPassword call; the proxy maps it to problem+json.
+    const alreadySet = await request(app)
+      .post("/api/v1/me/password")
+      .set("cookie", cookie)
+      .set("origin", BASE_URL)
+      .send({ newPassword: "another-long-password" });
+    expect(alreadySet.status).toBeGreaterThanOrEqual(400);
+    expect(alreadySet.body.code).toBe("SET_PASSWORD_FAILED");
+  });
+
   it("issues secure same-site cookies with the configured expiration and rejects disabled OAuth", async () => {
     const memory = createMemoryAdapter();
     const auth = createOpenExcalidrawAuth({
@@ -224,6 +323,12 @@ describe("auth HTTP boundary", () => {
   });
 });
 
+function sessionCookie(header: string | string[] | undefined): string {
+  const lines =
+    header === undefined ? [] : Array.isArray(header) ? header : [header];
+  return lines.map((line) => line.split(";")[0]).join("; ");
+}
+
 function testUser(email: string): Record<string, unknown> {
   const now = new Date();
   return {
@@ -268,6 +373,12 @@ function createMemoryAdapter() {
             account: rows.account!.filter(
               (account) => account.userId === row.id,
             ),
+          } as never);
+        }
+        if (input.model === "session" && input.join?.user) {
+          return Promise.resolve({
+            ...row,
+            user: rows.user!.find((user) => user.id === row.userId) ?? null,
           } as never);
         }
         return Promise.resolve({ ...row } as never);

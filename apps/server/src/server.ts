@@ -81,6 +81,10 @@ const auth = createOpenExcalidrawAuth({
   smtpEnabled,
   manualResetLinks,
   trustedOrigins: allowedBrowserOrigins,
+  sessionExpiresInSeconds: positiveEnvironmentInteger(
+    "SESSION_TTL_SECONDS",
+    60 * 60 * 24 * 30,
+  ),
   ...(google ? { google } : {}),
   ...(github ? { github } : {}),
 });
@@ -354,7 +358,7 @@ function positiveEnvironmentInteger(name: string, fallback: number): number {
   // Node timers overflow above a signed 32-bit millisecond delay and are
   // otherwise clamped to 1 ms, which would turn a typo into a tight loop.
   if (!Number.isSafeInteger(value) || value > 2_147_483_647) {
-    throw new Error(`${name} must not exceed 2147483647 milliseconds`);
+    throw new Error(`${name} must not exceed 2147483647`);
   }
   return value;
 }

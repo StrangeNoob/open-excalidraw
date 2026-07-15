@@ -5,3 +5,4 @@ export * from "./AuthPages";
 export * from "./AuthProvider";
 export * from "./protected-state";
 export * from "./return-path";
+export * from "./VerifyEmailNotice";
