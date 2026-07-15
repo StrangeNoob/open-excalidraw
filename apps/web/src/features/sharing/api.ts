@@ -122,7 +122,7 @@ export class SharingClient implements SharingSource {
   createShareLink(drawingId: string): Promise<CreateShareLinkResponse> {
     return this.api.request(
       `/v1/drawings/${encodeURIComponent(drawingId)}/share-link`,
-      { method: "PUT" },
+      { method: "POST" },
       createShareLinkResponseSchema,
     );
   }

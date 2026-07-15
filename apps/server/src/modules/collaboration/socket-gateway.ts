@@ -427,6 +427,20 @@ export function attachCollaborationGateway(
           }
           options.roomRegistry.join(binding);
           bindings.set(binding.connectionId, binding);
+          // A revoke between token resolution and registration finds no
+          // binding to kick, so re-validate now that the binding is visible;
+          // any later revoke is delivered through the registry push path.
+          const live = await options.shareLinkResolver.resolveToken(shareToken);
+          if (!live || live.drawingId !== binding.drawingId) {
+            options.roomRegistry.leave(binding.connectionId);
+            bindings.delete(binding.connectionId);
+            throw new GatewayError(
+              "SOCKET_NOT_MEMBER",
+              "The share link is no longer active",
+              false,
+              true,
+            );
+          }
           // Main room only: share viewers receive scene and presence
           // broadcasts but never the members-room chat fan-out.
           await socket.join(roomName(binding.drawingId));

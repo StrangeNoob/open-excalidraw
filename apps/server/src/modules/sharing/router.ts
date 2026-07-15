@@ -117,7 +117,8 @@ export function createSharingRouter(input: {
     },
   );
 
-  router.put(
+  // POST, not PUT: every call mints a fresh token, so it is not idempotent.
+  router.post(
     "/api/v1/drawings/:drawingId/share-link",
     async (request, response) => {
       await authenticated(

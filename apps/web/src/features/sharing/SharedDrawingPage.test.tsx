@@ -1,7 +1,7 @@
 import "../../shared/test/excalidraw-dom";
 
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { useEffect } from "react";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 
@@ -12,7 +12,7 @@ import type {
   RealtimeProblem,
 } from "../collaboration";
 import type { ExcalidrawHostProps } from "../editor";
-import { SharedDrawingPage } from "./SharedDrawingPage";
+import { SharedDrawingRoute } from "./SharedDrawingPage";
 
 const TOKEN = "s".repeat(43);
 const DRAWING_ID = "00000000-0000-4000-8000-000000000001";
@@ -76,7 +76,7 @@ const renderPage = (options?: {
       {
         path: "/s/:token",
         element: (
-          <SharedDrawingPage
+          <SharedDrawingRoute
             dependencies={{
               assets: () => ({ download: vi.fn() }),
               createRealtimeTransport: () =>
@@ -91,7 +91,7 @@ const renderPage = (options?: {
     { initialEntries: [options?.path ?? `/s/${TOKEN}`] },
   );
   render(<RouterProvider router={router} />);
-  return { inspect, transport };
+  return { inspect, router, transport };
 };
 
 describe("SharedDrawingPage", () => {
@@ -132,6 +132,19 @@ describe("SharedDrawingPage", () => {
       screen.getByRole("heading", { name: "This link isn't available" }),
     ).toBeInTheDocument();
     expect(inspect).not.toHaveBeenCalled();
+  });
+
+  it("drops the loaded drawing when navigating to another token", async () => {
+    const { router } = renderPage();
+    await screen.findByTestId("share-host");
+
+    await act(() => router.navigate("/s/not-a-token"));
+
+    expect(screen.queryByTestId("share-host")).toBeNull();
+    expect(screen.queryByText("Roadmap sketch")).toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "This link isn't available" }),
+    ).toBeInTheDocument();
   });
 
   it("replaces the canvas when the link is revoked mid-session", async () => {

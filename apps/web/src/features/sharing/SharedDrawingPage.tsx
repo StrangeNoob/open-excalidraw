@@ -62,6 +62,15 @@ export interface SharedDrawingPageProps {
 
 type LoadStatus = "loading" | "ready" | "not-found" | "error";
 
+/**
+ * Route entry for /s/:token. Remounts the page per token so no load, socket,
+ * or error state can survive navigation between share URLs.
+ */
+export const SharedDrawingRoute = (props: SharedDrawingPageProps) => {
+  const { token = "" } = useParams();
+  return <SharedDrawingPage key={token} {...props} />;
+};
+
 export const SharedDrawingPage = ({
   dependencies,
 }: SharedDrawingPageProps = {}) => {
@@ -87,13 +96,20 @@ export const SharedDrawingPage = ({
   const [status, setStatus] = useState<LoadStatus>(
     tokenValid ? "loading" : "not-found",
   );
-  const [shared, setShared] = useState<SharedDrawingResponse | null>(null);
+  const [loaded, setLoaded] = useState<{
+    token: string;
+    drawing: SharedDrawingResponse;
+  } | null>(null);
   const [editorApi, setEditorApi] = useState<ExcalidrawImperativeAPI | null>(
     null,
   );
   const [collaboration, setCollaboration] = useState<CollaborationState>(
     EMPTY_COLLABORATION_STATE,
   );
+  // Belt to SharedDrawingRoute's remount-per-token suspenders: a drawing is
+  // only ever rendered against the token it was loaded for.
+  const shared =
+    loaded !== null && loaded.token === token ? loaded.drawing : null;
 
   useEffect(() => {
     if (!tokenValid) return;
@@ -102,7 +118,7 @@ export const SharedDrawingPage = ({
       .inspect(token)
       .then((drawing) => {
         if (!active) return;
-        setShared(drawing);
+        setLoaded({ token, drawing });
         setStatus("ready");
       })
       .catch((caught: unknown) => {
@@ -165,7 +181,7 @@ export const SharedDrawingPage = ({
     collaboration.error !== null &&
     REVOKED_SOCKET_CODES.has(collaboration.error.code);
 
-  if (status === "not-found" || linkRevoked) {
+  if (!tokenValid || status === "not-found" || linkRevoked) {
     return (
       <main className="shared-drawing-notice">
         <h1>This link isn&apos;t available</h1>

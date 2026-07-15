@@ -462,6 +462,35 @@ describe("collaboration socket gateway", () => {
     );
   });
 
+  it("rejects a join when the link is revoked during authorization", async () => {
+    let resolutions = 0;
+    const fixture = createFixture({
+      // Calls 1-2 are the upgrade and the join authorization; returning null
+      // from call 3 simulates a revoke landing between token resolution and
+      // binding registration, which only the post-registration recheck sees.
+      resolveToken: (token) => {
+        resolutions += 1;
+        return Promise.resolve(
+          token === SHARE_TOKEN && resolutions <= 2
+            ? { drawingId: DRAWING_ID, linkId: SHARE_LINK_ID }
+            : null,
+        );
+      },
+    });
+    const shareViewer = fixture.connect("share-viewer", null, {
+      auth: { shareToken: SHARE_TOKEN },
+    });
+
+    shareViewer.clientEmit("room.join", joinEvent());
+
+    await vi.waitFor(() => expect(shareViewer.disconnected).toBe(true));
+    expect(shareViewer.events("protocol.error")).toContainEqual(
+      expect.objectContaining({ code: "SOCKET_NOT_MEMBER" }),
+    );
+    expect(shareViewer.events("room.ready")).toHaveLength(0);
+    expect(fixture.rooms.getBinding(shareViewer.id)).toBeNull();
+  });
+
   it("rejects unknown share tokens at the upgrade", async () => {
     const fixture = createFixture();
     const shareViewer = fixture.connect("share-viewer", null, {
@@ -528,6 +557,9 @@ function createFixture(
     maxQueuedEvents?: number;
     mutate?: GatewayMutationService["mutate"];
     presenceSweepIntervalMs?: number;
+    resolveToken?: (
+      token: string,
+    ) => Promise<{ linkId: string; drawingId: string } | null>;
   } = {},
 ) {
   const server = new FakeServer();
@@ -593,7 +625,10 @@ function createFixture(
     securityAudit,
     sessionValidityResolver: { isSessionActive: sessionActive },
     shareLinkResolver: {
-      resolveToken: (token) => Promise.resolve(shareLinks.get(token) ?? null),
+      resolveToken: (token) =>
+        overrides.resolveToken
+          ? overrides.resolveToken(token)
+          : Promise.resolve(shareLinks.get(token) ?? null),
     },
     snapshotProvider: {
       loadSnapshot: (drawingId, userId) => {

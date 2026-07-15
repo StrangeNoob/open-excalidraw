@@ -44,9 +44,9 @@ const InvitationPage = lazy(() =>
     default: module.InvitationPage,
   })),
 );
-const SharedDrawingPage = lazy(() =>
+const SharedDrawingRoute = lazy(() =>
   import("../features/sharing").then((module) => ({
-    default: module.SharedDrawingPage,
+    default: module.SharedDrawingRoute,
   })),
 );
 const SettingsPage = lazy(() =>
@@ -193,7 +193,7 @@ export const appRoutes: RouteObject[] = [
     path: "/s/:token",
     element: (
       <Suspense fallback={<p aria-live="polite">Opening shared drawing…</p>}>
-        <SharedDrawingPage />
+        <SharedDrawingRoute />
       </Suspense>
     ),
   },

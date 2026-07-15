@@ -566,7 +566,7 @@ export const openApiDocument = {
           "404": notFound,
         },
       },
-      put: {
+      post: {
         tags: ["Sharing"],
         summary: "Create or regenerate the public share link (owner only)",
         description:
