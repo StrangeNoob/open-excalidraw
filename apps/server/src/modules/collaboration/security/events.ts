@@ -4,7 +4,7 @@ import { SocketSecurityError } from "./errors.js";
 import type { SocketAuthorizationBinding } from "./session.js";
 
 export type BoundClientEventType =
-  "presence.update" | "scene.mutate" | "scene.preview";
+  "chat.send" | "presence.update" | "scene.mutate" | "scene.preview";
 
 /**
  * Must consult live session state or an authoritative revocation registry.
@@ -15,9 +15,10 @@ export interface SocketSessionValidityResolver {
 }
 
 const allowedEventsByRole = {
-  owner: ["presence.update", "scene.mutate", "scene.preview"],
-  editor: ["presence.update", "scene.mutate", "scene.preview"],
-  viewer: ["presence.update"],
+  owner: ["chat.send", "presence.update", "scene.mutate", "scene.preview"],
+  editor: ["chat.send", "presence.update", "scene.mutate", "scene.preview"],
+  // Viewers may talk: commenting on a drawing is the point of view access.
+  viewer: ["chat.send", "presence.update"],
 } as const satisfies Record<Role, readonly BoundClientEventType[]>;
 
 function canPublishSocketEvent(

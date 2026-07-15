@@ -1,8 +1,11 @@
 import {
+  chatSendEventSchema,
   presenceUpdateEventSchema,
   roomJoinEventSchema,
   sceneMutateEventSchema,
   scenePreviewEventSchema,
+  type ChatMessage,
+  type ChatSendEvent,
   type ClientRealtimeEvent,
   type ServerRealtimeEvent,
 } from "@open-excalidraw/contracts";
@@ -19,6 +22,7 @@ import {
   assertNoClientAuthorizationClaims,
   SocketSecurityError,
   withServerRole,
+  type BoundClientEventType,
   type DrawingMembershipResolver,
   type SocketAuthorizationBinding,
   type SocketSessionValidityResolver,
@@ -51,6 +55,13 @@ export interface GatewayMutationService {
     binding: SocketAuthorizationBinding,
     event: SceneMutateEvent,
   ): Promise<GatewayMutationOutcome>;
+}
+
+export interface GatewayChatService {
+  send(
+    binding: SocketAuthorizationBinding,
+    event: ChatSendEvent,
+  ): Promise<ChatMessage | null>;
 }
 
 export interface GatewayPreviewService {
@@ -157,6 +168,7 @@ export interface CollaborationSnapshotProvider {
 }
 
 export interface CollaborationGatewayOptions {
+  chatService: GatewayChatService;
   identityService: IdentityService;
   membershipResolver: DrawingMembershipResolver;
   mutationService: GatewayMutationService;
@@ -518,6 +530,27 @@ export function attachCollaborationGateway(
       });
     });
 
+    socket.on("chat.send", (raw: unknown) => {
+      enqueue(async () => {
+        const event = parseEvent(chatSendEventSchema, raw);
+        const binding = await authorizeCurrent(
+          socket,
+          "chat.send",
+          options,
+          now(),
+        );
+        const message = await options.chatService.send(binding, event);
+        // A duplicate messageId was already persisted and broadcast once;
+        // the reconnect history refetch covers any client that missed it.
+        if (!message) return;
+        // Sender included deliberately: the echo is the delivery ack.
+        io.to(roomName(binding.drawingId)).emit("chat.message", {
+          type: "chat.message",
+          message,
+        });
+      });
+    });
+
     socket.on("disconnect", () => {
       disposed = true;
       queue.close();
@@ -548,7 +581,7 @@ export function attachCollaborationGateway(
 
 async function authorizeCurrent(
   socket: Socket,
-  eventType: "presence.update" | "scene.mutate" | "scene.preview",
+  eventType: BoundClientEventType,
   options: CollaborationGatewayOptions,
   now: Date,
 ): Promise<SocketAuthorizationBinding> {
@@ -793,6 +826,7 @@ function toProtocolError(caught: unknown): MappedProtocolError {
 }
 
 const SAFE_DOMAIN_ERROR_CODES = new Set([
+  "CHAT_RATE_LIMITED",
   "FUTURE_REVISION",
   "ELEMENT_LIMIT_EXCEEDED",
   "ASSET_LIMIT_EXCEEDED",

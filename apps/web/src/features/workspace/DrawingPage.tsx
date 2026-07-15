@@ -31,6 +31,7 @@ import {
   useConnectivity,
 } from "../connectivity";
 import { CloudOutboxDb } from "../connectivity/storage/cloudOutboxDb";
+import { ChatClient, ChatPanel, type ChatSource } from "../chat";
 import {
   CollaborationController,
   isEventLocalProblem,
@@ -85,6 +86,7 @@ type PendingRealtimeChange = {
 
 export interface DrawingWorkspaceDependencies {
   assets?: AssetSource;
+  chat?: ChatSource;
   connectivity?: ConnectivitySource;
   content?: ContentSource;
   createAutosave?: (options: AutosaveControllerOptions) => AutosaveController;
@@ -146,6 +148,7 @@ export const DrawingPage = ({
 }: DrawingPageProps) => {
   const [ownedDefaults] = useState(() => ({
     assets: new AssetClient(),
+    chat: new ChatClient(),
     content: new ContentClient(),
     metadata: new DrawingMetadataClient(),
     recovery: new CloudRecoveryRepository(),
@@ -156,6 +159,7 @@ export const DrawingPage = ({
   const resolved = useMemo(
     () => ({
       assets: dependencies?.assets ?? ownedDefaults.assets,
+      chat: dependencies?.chat ?? ownedDefaults.chat,
       connectivity: dependencies?.connectivity ?? browserConnectivity,
       content: dependencies?.content ?? ownedDefaults.content,
       createAutosave:
@@ -190,6 +194,10 @@ export const DrawingPage = ({
   );
   const [sharingOpen, setSharingOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatTransport, setChatTransport] = useState<SocketIoTransport | null>(
+    null,
+  );
   const [restoringRevision, setRestoringRevision] = useState(false);
   const [editorApi, setEditorApi] = useState<ExcalidrawImperativeAPI | null>(
     null,
@@ -294,6 +302,14 @@ export const DrawingPage = ({
     const outbox = new CloudOutboxDb();
     collaborationOutboxRef.current = outbox;
     const uploads = new AssetUploadManager({ client: resolved.assets });
+    // The chat panel shares this socket, so it lives in state too. The
+    // microtask keeps the setState out of the synchronous effect body.
+    const transport = new SocketIoTransport();
+    queueMicrotask(() => {
+      if (collaborationControllerRef.current === realtime) {
+        setChatTransport(transport);
+      }
+    });
     const realtime = new CollaborationController({
       drawingId,
       editor: editorApi,
@@ -301,7 +317,7 @@ export const DrawingPage = ({
       initialElements: workspace.content.content.scene.elements,
       initialRole: workspace.drawing.role,
       outbox,
-      transport: new SocketIoTransport(),
+      transport,
       uploadAssets: (nextDrawingId, files, fileIds) =>
         uploads.uploadReferenced(nextDrawingId, files, fileIds),
       userId,
@@ -329,6 +345,7 @@ export const DrawingPage = ({
       if (collaborationOutboxRef.current === outbox) {
         collaborationOutboxRef.current = null;
       }
+      setChatTransport((current) => (current === transport ? null : current));
       setCollaboration(EMPTY_COLLABORATION_STATE);
       void realtime
         .stop()
@@ -701,6 +718,15 @@ export const DrawingPage = ({
             >
               {effectiveRole ?? "access revoked"}
             </span>
+            {collaborationEnabled ? (
+              <button
+                className="canvas-action"
+                onClick={() => setChatOpen((open) => !open)}
+                type="button"
+              >
+                Chat
+              </button>
+            ) : null}
             <button
               className="canvas-action"
               onClick={() => setHistoryOpen(true)}
@@ -748,6 +774,17 @@ export const DrawingPage = ({
         </MainMenu>
       </WorkspaceHost>
 
+      {collaborationEnabled && chatOpen && chatTransport ? (
+        <ChatPanel
+          client={resolved.chat}
+          drawingId={drawingId}
+          error={collaboration.error}
+          onClose={() => setChatOpen(false)}
+          status={collaboration.status}
+          transport={chatTransport}
+          userId={userId}
+        />
+      ) : null}
       <SharingDialog
         client={resolved.sharing}
         drawingId={drawingId}

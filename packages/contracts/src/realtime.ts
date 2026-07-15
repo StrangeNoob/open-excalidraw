@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { assetManifestSchema } from "./assets.js";
+import { chatSendEventSchema } from "./chat.js";
 import { revisionSchema, roleSchema, uuidSchema } from "./common/primitives.js";
 import { excalidrawElementSchema, sceneEnvelopeSchema } from "./content.js";
 import { CONTRACT_LIMITS } from "./limits.js";
@@ -143,6 +144,7 @@ export const clientRealtimeEventSchema = z.discriminatedUnion("type", [
   scenePreviewEventSchema,
   sceneMutateEventSchema,
   presenceUpdateEventSchema,
+  chatSendEventSchema,
 ]);
 
 export const serverRealtimeEventSchema = z.discriminatedUnion("type", [

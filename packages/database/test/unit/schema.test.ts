@@ -1,6 +1,7 @@
 import { getTableConfig } from "drizzle-orm/pg-core";
 
 import { account, session, user, verification } from "../../src/schema/auth";
+import { chatMessages } from "../../src/schema/chat";
 import { drawingAssets } from "../../src/schema/assets";
 import { auditEvents } from "../../src/schema/audit";
 import {
@@ -24,6 +25,7 @@ describe("database schema", () => {
       drawingRevisions,
       drawingMutations,
       auditEvents,
+      chatMessages,
     ].map((table) => getTableConfig(table).name);
 
     expect(names).toEqual([
@@ -38,7 +40,22 @@ describe("database schema", () => {
       "drawing_revisions",
       "drawing_mutations",
       "audit_events",
+      "chat_messages",
     ]);
+  });
+
+  it("keeps chat bodies database constrained and history reads indexed", () => {
+    const config = getTableConfig(chatMessages);
+
+    expect(config.checks.map((check) => check.name)).toContain(
+      "chat_messages_body_length",
+    );
+    expect(config.indexes.map((index) => index.config.name)).toEqual(
+      expect.arrayContaining([
+        "chat_messages_drawing_created_idx",
+        "chat_messages_user_id_idx",
+      ]),
+    );
   });
 
   it("keeps membership roles database constrained", () => {

@@ -43,6 +43,11 @@ import { RoomRegistry } from "./modules/collaboration/room-registry.js";
 import { StrictOriginPolicy } from "./modules/collaboration/security/index.js";
 import { attachCollaborationGateway } from "./modules/collaboration/socket-gateway.js";
 import {
+  ChatService,
+  createChatRouter,
+  PostgresChatRepository,
+} from "./modules/chat/index.js";
+import {
   ContentService,
   createContentRouter,
   PostgresContentRepository,
@@ -230,6 +235,10 @@ const presenceService = new PresenceService({
   membershipResolver,
   sessionValidityResolver,
 });
+const chatService = new ChatService({
+  repository: new PostgresChatRepository(database.pool),
+  membershipResolver,
+});
 const assetRouter = Router().use(
   "/api/v1",
   createAssetRouter({
@@ -281,6 +290,7 @@ const app = createApp({
     createDrawingRouter({ service: drawingService, identity }),
     createContentRouter({ service: contentService, identity }),
     createSharingRouter({ service: sharingService, identity }),
+    createChatRouter({ service: chatService, identity }),
     assetRouter,
   ],
   ...(staticDirectory ? { staticDirectory } : {}),
@@ -296,6 +306,7 @@ const io = new SocketIoServer(server, {
   serveClient: false,
 });
 const collaborationGateway = attachCollaborationGateway(io, {
+  chatService,
   identityService: identity,
   membershipResolver,
   mutationService,
