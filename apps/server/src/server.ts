@@ -65,6 +65,8 @@ loadEnvironmentFile();
 
 const databaseUrl = requiredEnvironment("DATABASE_URL");
 const baseUrl = process.env.APP_BASE_URL ?? "http://localhost:3000";
+// ponytail: reuses the web app's icon as the email hero; swap for a dedicated banner asset if one lands.
+const emailHeroImageUrl = new URL("/icon-512.png", baseUrl).toString();
 const allowedBrowserOrigins = browserAllowedOrigins(baseUrl);
 const secret = requiredEnvironment("BETTER_AUTH_SECRET");
 const smtpEnabled = Boolean(process.env.SMTP_HOST?.trim());
@@ -86,6 +88,7 @@ const auth = createOpenExcalidrawAuth({
   secret,
   smtpEnabled,
   manualResetLinks,
+  heroImageUrl: emailHeroImageUrl,
   trustedOrigins: allowedBrowserOrigins,
   sessionExpiresInSeconds: positiveEnvironmentInteger(
     "SESSION_TTL_SECONDS",
@@ -112,6 +115,7 @@ const sharingService = new SharingService({
   repository: new PostgresSharingRepository(database.pool),
   mailer,
   publicBaseUrl: baseUrl,
+  heroImageUrl: emailHeroImageUrl,
   requireVerifiedEmailForAcceptance: smtpEnabled,
   membershipEvents: {
     roleChanged: (drawingId, userId, role) => {

@@ -41,6 +41,41 @@ describe("mail templates", () => {
     ).toContain("Reset password");
   });
 
+  it("includes a preheader and a copy-paste fallback link", () => {
+    const email = renderVerificationEmail({
+      to: "person@example.com",
+      verificationUrl: "https://draw.example.com/verify/token",
+    });
+
+    expect(email.html).toContain("mso-hide:all");
+    expect(email.html).toContain("copy and paste this link");
+    expect(email.html).toContain("'Gochi Hand'");
+    expect(email.html).toContain("'Nunito'");
+    expect(
+      email.html.match(/https:\/\/draw\.example\.com\/verify\/token/g)?.length,
+    ).toBe(3);
+  });
+
+  it("renders the hero image only when a valid URL is provided", () => {
+    const base = {
+      to: "person@example.com",
+      verificationUrl: "https://draw.example.com/verify/token",
+    };
+
+    expect(
+      renderVerificationEmail({
+        ...base,
+        heroImageUrl: "https://draw.example.com/icon-512.png",
+      }).html,
+    ).toMatch(
+      /<img src="https:\/\/draw\.example\.com\/icon-512\.png"[^>]*><span[^>]*>Open Excalidraw<\/span>/,
+    );
+    expect(renderVerificationEmail(base).html).not.toContain("<img");
+    expect(() =>
+      renderVerificationEmail({ ...base, heroImageUrl: "javascript:alert(1)" }),
+    ).toThrow(/HTTP or HTTPS/);
+  });
+
   it("rejects non-HTTP action URLs", () => {
     expect(() =>
       renderPasswordResetEmail({

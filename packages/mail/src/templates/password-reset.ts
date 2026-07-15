@@ -5,6 +5,7 @@ export interface PasswordResetEmailInput {
   to: string;
   resetUrl: string;
   productName?: string;
+  heroImageUrl?: string;
 }
 
 export function renderPasswordResetEmail(
@@ -18,5 +19,6 @@ export function renderPasswordResetEmail(
     actionLabel: "Reset password",
     actionUrl: input.resetUrl,
     productName: input.productName,
+    heroImageUrl: input.heroImageUrl,
   });
 }

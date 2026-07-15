@@ -44,6 +44,7 @@ export interface CreateAuthInput {
   sessionExpiresInSeconds?: number;
   manualResetLinks?: ManualResetLinkSink;
   productName?: string;
+  heroImageUrl?: string;
 }
 
 export type OpenExcalidrawAuth = ReturnType<typeof createOpenExcalidrawAuth>;
@@ -125,6 +126,7 @@ export function buildBetterAuthOptions(
             mailer: input.mailer,
             manualResetLinks,
             productName: input.productName,
+            heroImageUrl: input.heroImageUrl,
             user,
             url,
           });
@@ -146,6 +148,7 @@ export function buildBetterAuthOptions(
             to: user.email,
             verificationUrl: url,
             productName: input.productName,
+            heroImageUrl: input.heroImageUrl,
           }),
         );
       },
@@ -178,6 +181,7 @@ async function deliverPasswordReset(input: {
   mailer: Mailer;
   manualResetLinks: ManualResetLinkSink;
   productName?: string;
+  heroImageUrl?: string;
   user: { id: string; email: string };
   url: string;
 }): Promise<void> {
@@ -189,6 +193,7 @@ async function deliverPasswordReset(input: {
           to: input.user.email,
           resetUrl: input.url,
           productName: input.productName,
+          heroImageUrl: input.heroImageUrl,
         }),
       )
     ).status;
