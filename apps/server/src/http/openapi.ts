@@ -908,18 +908,30 @@ export const openApiDocument = {
         },
       },
       ShareLinkStatus: {
-        type: "object",
-        required: ["active"],
-        additionalProperties: false,
-        properties: {
-          active: { type: "boolean" },
-          url: {
-            type: "string",
-            format: "uri",
-            description: "The public share URL. Present when active.",
+        oneOf: [
+          {
+            type: "object",
+            required: ["active", "url", "createdAt"],
+            additionalProperties: false,
+            properties: {
+              active: { type: "boolean", enum: [true] },
+              url: {
+                type: "string",
+                format: "uri",
+                description: "The public share URL.",
+              },
+              createdAt: isoDateTime,
+            },
           },
-          createdAt: isoDateTime,
-        },
+          {
+            type: "object",
+            required: ["active"],
+            additionalProperties: false,
+            properties: {
+              active: { type: "boolean", enum: [false] },
+            },
+          },
+        ],
       },
       CreateShareLinkResponse: {
         type: "object",

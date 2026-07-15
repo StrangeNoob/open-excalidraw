@@ -4,7 +4,13 @@ import type {
   MemberRole,
   ShareLinkStatus,
 } from "@open-excalidraw/contracts";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import {
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
 import { SharingClient, type SharingSource } from "./api";
 
@@ -32,13 +38,18 @@ export const SharingDialog = ({
   const [notice, setNotice] = useState<string | null>(null);
   const [manualUrl, setManualUrl] = useState<string | null>(null);
   const [shareLink, setShareLink] = useState<ShareLinkStatus | null>(null);
+  // Guards against a slow response for a previous drawing (or an older call
+  // for this one) committing its members or bearer share URL into the dialog.
+  const loadSequence = useRef(0);
 
   const load = useCallback(async () => {
+    const sequence = ++loadSequence.current;
     try {
       const [result, link] = await Promise.all([
         client.list(drawingId),
         client.getShareLink(drawingId),
       ]);
+      if (sequence !== loadSequence.current) return;
       setError(null);
       setMembers(result.members);
       setInvitations(
@@ -48,6 +59,7 @@ export const SharingDialog = ({
       );
       setShareLink(link);
     } catch (caught) {
+      if (sequence !== loadSequence.current) return;
       setError(message(caught, "Could not load sharing settings."));
     }
   }, [client, drawingId]);
@@ -180,7 +192,11 @@ export const SharingDialog = ({
             Anyone with the link can view this drawing (read-only, live). No
             account needed.
           </p>
-          {activeShareUrl ? (
+          {shareLink === null ? (
+            // Unknown is not inactive: offering "Create link" before the
+            // status loads would silently rotate an existing link.
+            <p aria-live="polite">Checking share link status…</p>
+          ) : activeShareUrl ? (
             <>
               <div className="sharing-manual-link">
                 <label>

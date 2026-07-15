@@ -71,6 +71,33 @@ describe("SharingDialog", () => {
     );
   });
 
+  it("does not offer link creation before the status loads", async () => {
+    const client = {
+      createShareLink: vi.fn(),
+      getShareLink: vi.fn(() => new Promise<never>(() => undefined)),
+      invite: vi.fn(),
+      list: vi.fn(() => Promise.resolve({ invitations: [], members: [owner] })),
+      removeMember: vi.fn(),
+      revokeInvitation: vi.fn(),
+      revokeShareLink: vi.fn(),
+      updateMember: vi.fn(),
+    };
+
+    render(
+      <SharingDialog
+        client={client}
+        drawingId={DRAWING_ID}
+        onClose={vi.fn()}
+        open
+      />,
+    );
+
+    expect(
+      await screen.findByText("Checking share link status…"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create link" })).toBeNull();
+  });
+
   it("creates, shows, and revokes the public share link", async () => {
     const user = userEvent.setup();
     const shareUrl = "https://draw.example.test/s/" + "s".repeat(43);
