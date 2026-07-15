@@ -13,16 +13,29 @@ around the published `@excalidraw/excalidraw` React package.
 
 The current implementation includes guest IndexedDB persistence, email/password
 authentication, optional Google and GitHub OAuth configuration, named drawing
-dashboards, email-based invitations, owner/editor/viewer permissions,
-PostgreSQL persistence, binary asset storage, conflict-safe revisioned autosave,
-and authenticated real-time editing. It ships as a single-VPS production image
-with an optional managed PostgreSQL override.
+dashboards with private per-user tags, email-based invitations,
+owner/editor/viewer permissions, PostgreSQL persistence, binary asset storage
+(local volume or any S3-compatible bucket, with a migration CLI between them),
+conflict-safe revisioned autosave with revision history and restore,
+authenticated real-time editing, per-drawing chat with persistent history, an
+account settings page, and interactive API documentation. It ships as a
+single-VPS production image with an optional managed PostgreSQL override.
 
 See the
 [platform design](docs/design/open-excalidraw-platform-design.md) and
 [implementation plan](docs/plans/open-excalidraw-implementation-plan.md). The
 [collaboration runbook](docs/operations/collaboration.md) documents the realtime
-protocol, permission enforcement, monitoring, and scaling boundary.
+protocol, permission enforcement, monitoring, and scaling boundary. The
+[storage runbook](docs/operations/storage.md) covers local and S3-compatible
+asset storage and driver migration.
+
+## API documentation
+
+Every deployment serves interactive Swagger UI documentation for the REST API
+at `/api/docs`, backed by the OpenAPI specification at `/api/docs/openapi.json`.
+The spec covers authentication, drawings, scene content and revisions, sharing,
+chat history, and binary assets; realtime editing and chat delivery use
+Socket.IO and are documented in the collaboration runbook.
 
 Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Report
 security issues privately using [SECURITY.md](SECURITY.md).
