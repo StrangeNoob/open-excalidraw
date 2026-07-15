@@ -328,14 +328,7 @@ export const DrawingPage = ({
     const outbox = new CloudOutboxDb();
     collaborationOutboxRef.current = outbox;
     const uploads = new AssetUploadManager({ client: resolved.assets });
-    // The chat panel shares this socket, so it lives in state too. The
-    // microtask keeps the setState out of the synchronous effect body.
     const transport = createRealtimeTransport();
-    queueMicrotask(() => {
-      if (collaborationControllerRef.current === realtime) {
-        setChatTransport(transport);
-      }
-    });
     const realtime = new CollaborationController({
       drawingId,
       editor: editorApi,
@@ -347,6 +340,13 @@ export const DrawingPage = ({
       uploadAssets: (nextDrawingId, files, fileIds) =>
         uploads.uploadReferenced(nextDrawingId, files, fileIds),
       userId,
+    });
+    // The chat panel shares this socket, so it lives in state too. The
+    // microtask keeps the setState out of the synchronous effect body.
+    queueMicrotask(() => {
+      if (collaborationControllerRef.current === realtime) {
+        setChatTransport(transport);
+      }
     });
     const unsubscribe = realtime.subscribe(setCollaboration);
     collaborationControllerRef.current = realtime;
