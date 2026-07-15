@@ -186,13 +186,9 @@ describe("auth HTTP boundary", () => {
     expect(signup.status).toBe(200);
     expect(signup.body.token).not.toBeNull();
 
-    const cookies = signup.headers["set-cookie"];
-    const cookie = (Array.isArray(cookies) ? cookies.map(String) : [])
-      .map((line) => line.split(";")[0])
-      .join("; ");
     const me = await request(app)
       .get("/api/v1/me")
-      .set("cookie", cookie)
+      .set("cookie", sessionCookie(signup.headers["set-cookie"]))
       .set("origin", BASE_URL);
     expect(me.body.user).toMatchObject({
       email: "unverified@example.test",
@@ -236,11 +232,7 @@ describe("auth HTTP boundary", () => {
         password: "correct-horse-battery-staple",
       });
     expect(signup.status).toBe(200);
-    const cookies = signup.headers["set-cookie"];
-    const cookieLines: string[] = Array.isArray(cookies)
-      ? cookies.map(String)
-      : [String(cookies)];
-    const cookie = cookieLines.map((line) => line.split(";")[0]).join("; ");
+    const cookie = sessionCookie(signup.headers["set-cookie"]);
 
     const invalid = await request(app)
       .post("/api/v1/me/password")
@@ -330,6 +322,12 @@ describe("auth HTTP boundary", () => {
     expect(oauth.status).toBeGreaterThanOrEqual(400);
   });
 });
+
+function sessionCookie(header: string | string[] | undefined): string {
+  const lines =
+    header === undefined ? [] : Array.isArray(header) ? header : [header];
+  return lines.map((line) => line.split(";")[0]).join("; ");
+}
 
 function testUser(email: string): Record<string, unknown> {
   const now = new Date();

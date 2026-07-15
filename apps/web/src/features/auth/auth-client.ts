@@ -50,9 +50,7 @@ const oauthStartResponseSchema = z
   })
   .passthrough();
 
-const linkedAccountsSchema = z.array(
-  z.object({ providerId: z.string() }).passthrough(),
-);
+const linkedAccountsSchema = z.array(z.object({ providerId: z.string() }));
 
 export class CookieAuthClient implements AuthClient {
   readonly #api: HttpApiClient;

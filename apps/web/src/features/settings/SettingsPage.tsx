@@ -118,7 +118,11 @@ const ProvidersSection = ({
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [busyProvider, setBusyProvider] = useState<string | null>(null);
-  const available = PROVIDERS.filter(({ id }) => auth.capabilities[id]);
+  // Linked providers stay visible even if their capability was disabled
+  // later, so the user can still disconnect them.
+  const available = PROVIDERS.filter(
+    ({ id }) => auth.capabilities[id] || linkedProviderIds.includes(id),
+  );
   // Keep at least one way to sign in; the server enforces this too.
   const lastAccount = linkedProviderIds.length <= 1;
 

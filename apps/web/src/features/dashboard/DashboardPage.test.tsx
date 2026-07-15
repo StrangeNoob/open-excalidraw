@@ -267,6 +267,28 @@ describe("DashboardPage", () => {
     expect(within(plainCard).getByText("sprint")).toBeInTheDocument();
   });
 
+  it("rejects more than 20 tags instead of dropping them", async () => {
+    const user = userEvent.setup();
+    const drawing = createDrawing("owner", "Crowded board", 1);
+    const api = new FakeDashboardApi({
+      nextCursor: null,
+      owned: [drawing],
+      shared: [],
+    });
+    renderDashboard(api);
+
+    const card = (await screen.findByText("Crowded board")).closest("article")!;
+    await user.click(within(card).getByRole("button", { name: "Edit tags" }));
+    await user.type(
+      within(card).getByLabelText("Tags (comma-separated)"),
+      Array.from({ length: 21 }, (_, i) => `tag-${i}`).join(","),
+    );
+    await user.click(within(card).getByRole("button", { name: "Save" }));
+
+    expect(within(card).getByText("Use at most 20 tags.")).toBeVisible();
+    expect(api.setTags).not.toHaveBeenCalled();
+  });
+
   it("renders loading, empty, and recoverable error states", async () => {
     let resolveList!: (data: DrawingListResponse) => void;
     const loadingApi = new FakeDashboardApi({

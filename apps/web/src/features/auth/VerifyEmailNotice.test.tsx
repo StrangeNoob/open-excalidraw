@@ -10,8 +10,10 @@ import type {
   LinkedAccount,
   OAuthProvider,
 } from "./auth-client";
-import { AuthProvider } from "./AuthProvider";
+import { AuthProvider, useAuth } from "./AuthProvider";
 import { VerifyEmailNotice } from "./VerifyEmailNotice";
+
+const AuthStatusProbe = () => <p>{`auth status: ${useAuth().status}`}</p>;
 
 const session = (emailVerified: boolean): SessionResponse => ({
   capabilities: {
@@ -64,6 +66,7 @@ const renderNotice = (emailVerified: boolean) => {
     <QueryClientProvider client={queryClient}>
       <AuthProvider client={client}>
         <VerifyEmailNotice />
+        <AuthStatusProbe />
       </AuthProvider>
     </QueryClientProvider>,
   );
@@ -91,9 +94,11 @@ describe("VerifyEmailNotice", () => {
   });
 
   it("renders nothing for verified users", async () => {
-    const client = renderNotice(true);
+    renderNotice(true);
 
-    await waitFor(() => expect(client.getSession).toHaveBeenCalled());
+    // Wait for the session to be committed, not merely requested, so the
+    // absence check runs against the verified user's render.
+    expect(await screen.findByText("auth status: ready")).toBeInTheDocument();
     expect(screen.queryByText("Verify your email")).not.toBeInTheDocument();
   });
 });

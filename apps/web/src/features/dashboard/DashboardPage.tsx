@@ -13,15 +13,14 @@ const DASHBOARD_QUERY_KEY = ["drawings", "dashboard"] as const;
 const MAX_TAGS = 20;
 const defaultDashboardApi = new DashboardApiClient();
 
-const parseTags = (value: string): string[] =>
-  [
-    ...new Set(
-      value
-        .split(",")
-        .map((tag) => tag.trim().toLowerCase())
-        .filter(Boolean),
-    ),
-  ].slice(0, MAX_TAGS);
+const parseTags = (value: string): string[] => [
+  ...new Set(
+    value
+      .split(",")
+      .map((tag) => tag.trim().toLowerCase())
+      .filter(Boolean),
+  ),
+];
 
 const replaceDrawing = (
   dashboard: DrawingListResponse | undefined,
@@ -81,10 +80,18 @@ const DrawingCard = ({
   const [title, setTitle] = useState(drawing.title);
   const [editingTags, setEditingTags] = useState(false);
   const [tagsInput, setTagsInput] = useState(drawing.tags.join(", "));
+  const [tagsError, setTagsError] = useState<string | null>(null);
 
   const submitTags = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const nextTags = parseTags(tagsInput);
+
+    if (nextTags.length > MAX_TAGS) {
+      setTagsError(`Use at most ${MAX_TAGS} tags.`);
+      return;
+    }
+
+    setTagsError(null);
     setEditingTags(false);
 
     if (nextTags.join("\n") === drawing.tags.join("\n")) {
@@ -176,12 +183,14 @@ const DrawingCard = ({
               value={tagsInput}
             />
           </label>
+          {tagsError ? <p role="alert">{tagsError}</p> : null}
           <button disabled={pending || offline} type="submit">
             Save
           </button>
           <button
             onClick={() => {
               setTagsInput(drawing.tags.join(", "));
+              setTagsError(null);
               setEditingTags(false);
             }}
             type="button"
@@ -220,6 +229,7 @@ const DrawingCard = ({
           disabled={pending || offline}
           onClick={() => {
             setTagsInput(drawing.tags.join(", "));
+            setTagsError(null);
             setEditingTags(true);
           }}
           type="button"
