@@ -48,6 +48,7 @@ describe("mail templates", () => {
     });
 
     expect(email.html).toContain("mso-hide:all");
+    expect(email.html).toContain("<!--[if mso]>");
     expect(email.html).toContain("copy and paste this link");
     expect(email.html).toContain("'Gochi Hand'");
     expect(email.html).toContain("'Nunito'");

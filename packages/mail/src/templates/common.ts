@@ -57,6 +57,7 @@ export function renderActionEmail(input: TemplateShellInput): MailMessage {
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f5f7">
       <tr>
         <td align="center" style="padding:32px 16px">
+          <!--[if mso]><table role="presentation" width="600" cellpadding="0" cellspacing="0" align="center"><tr><td><![endif]-->
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px">
             <tr>
               <td style="background:#ffffff;border:1px solid #e9e9ee;border-radius:12px;padding:32px">
@@ -71,6 +72,7 @@ export function renderActionEmail(input: TemplateShellInput): MailMessage {
               <td style="padding:16px 4px 0;font-size:12px;line-height:1.6;color:#8a8a96">${escapeHtml(closing)}<br>${escapeHtml(productName)}</td>
             </tr>
           </table>
+          <!--[if mso]></td></tr></table><![endif]-->
         </td>
       </tr>
     </table>
