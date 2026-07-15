@@ -31,6 +31,9 @@ const apiUpdateScene = vi.fn();
 const editorApi = {
   addFiles: apiAddFiles,
   updateScene: apiUpdateScene,
+  getAppState: () => appState,
+  getFiles: () => ({}),
+  getSceneElementsIncludingDeleted: () => [],
 } as unknown as ExcalidrawImperativeAPI;
 
 const element = (version: number, fileId?: string) => ({
@@ -533,5 +536,84 @@ describe("DrawingPage", () => {
     ).rejects.toThrow("restore failed");
     expect(realtime.resumeWrites).toHaveBeenCalledOnce();
     expect(realtime.stop).not.toHaveBeenCalled();
+  });
+
+  it("badges the chat button for messages arriving while the panel is closed", async () => {
+    const user = userEvent.setup();
+    const { dependencies } = createDependencies();
+    const chatListeners = new Set<(message: unknown) => void>();
+    const fakeTransport = {
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+      emit: vi.fn(),
+      setHandlers: vi.fn(),
+      onChatMessage: (listener: (message: unknown) => void) => {
+        chatListeners.add(listener);
+        return () => chatListeners.delete(listener);
+      },
+    };
+    const receive = (body: string, senderId: string) =>
+      act(() => {
+        for (const listener of [...chatListeners]) {
+          listener({
+            id: crypto.randomUUID(),
+            drawingId: DRAWING_A,
+            userId: senderId,
+            authorName: "Ada",
+            body,
+            createdAt: "2026-07-15T00:00:00.000Z",
+          });
+        }
+      });
+
+    const workspaceDependencies = {
+      ...dependencies,
+      chat: {
+        history: vi.fn(() =>
+          Promise.resolve({ messages: [], nextCursor: null }),
+        ),
+      },
+      createRealtimeTransport: () => fakeTransport as never,
+    };
+    const { rerender } = render(
+      <DrawingPage
+        dependencies={workspaceDependencies}
+        drawingId={DRAWING_A}
+        userId={USER}
+      />,
+    );
+    await screen.findByRole("button", { name: "Chat" });
+    await waitFor(() => expect(chatListeners.size).toBeGreaterThan(0));
+
+    receive("first", "20000000-0000-4000-8000-000000000001");
+    receive("second", "20000000-0000-4000-8000-000000000001");
+    receive("own message is not unread", USER);
+
+    const badged = await screen.findByRole("button", {
+      name: "Chat, 2 unread messages",
+    });
+    expect(badged).toHaveTextContent("Chat2");
+
+    await user.click(badged);
+    expect(
+      await screen.findByRole("button", { name: "Chat" }),
+    ).not.toHaveTextContent("2");
+    await user.click(screen.getByRole("button", { name: "Chat" }));
+
+    receive("while closed again", "20000000-0000-4000-8000-000000000001");
+    await screen.findByRole("button", { name: "Chat, 1 unread message" });
+
+    rerender(
+      <DrawingPage
+        dependencies={workspaceDependencies}
+        drawingId={DRAWING_B}
+        userId={USER}
+      />,
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Chat" }),
+      ).not.toHaveTextContent("1"),
+    );
   });
 });
