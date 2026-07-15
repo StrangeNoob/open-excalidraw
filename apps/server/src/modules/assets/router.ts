@@ -17,8 +17,11 @@ import type { AssetIdentityResolver, AssetRecord } from "./types.js";
 export interface CreateAssetRouterOptions {
   service: AssetService;
   resolveIdentity: AssetIdentityResolver;
+  resolveShareDrawing?: (token: string) => Promise<string | null>;
   onError?: (error: unknown, request: Request) => void;
 }
+
+const SHARE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
 export function createAssetRouter(options: CreateAssetRouterOptions): Router {
   const router = express.Router();
@@ -76,6 +79,29 @@ export function createAssetRouter(options: CreateAssetRouterOptions): Router {
       await pipeline(result.body, response);
     },
   );
+
+  router.get("/share/:token/assets/:fileId", async (request, response) => {
+    const token = request.params.token ?? "";
+    const drawingId =
+      SHARE_TOKEN_PATTERN.test(token) && options.resolveShareDrawing
+        ? await options.resolveShareDrawing(token)
+        : null;
+    if (!drawingId) {
+      throw assetError(
+        404,
+        "ASSET_NOT_FOUND",
+        "Asset not found",
+        "The asset is unavailable.",
+      );
+    }
+    const result = await options.service.downloadShared({
+      drawingId,
+      fileId: request.params.fileId ?? "",
+    });
+
+    setDownloadHeaders(response, result.asset);
+    await pipeline(result.body, response);
+  });
 
   const errorHandler: ErrorRequestHandler = (
     error,

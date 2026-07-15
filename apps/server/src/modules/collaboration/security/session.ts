@@ -21,6 +21,8 @@ export interface SocketAuthorizationBinding {
   sessionId: string;
   sessionExpiresAt: Date;
   role: Role;
+  /** Present only for anonymous share-link viewers (receive-only sockets). */
+  shareLinkId?: string;
 }
 
 export interface AuthorizeSocketJoinInput {
@@ -111,6 +113,72 @@ export function assertNoClientAuthorizationClaims(auth: unknown): void {
       );
     }
   }
+}
+
+export const SHARE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+
+export interface ShareLinkResolver {
+  resolveToken(
+    token: string,
+  ): Promise<{ linkId: string; drawingId: string } | null>;
+}
+
+export function shareUserId(linkId: string): string {
+  return `share:${linkId}`;
+}
+
+export function shareTokenFromHandshake(auth: unknown): string | null {
+  if (typeof auth !== "object" || auth === null || Array.isArray(auth)) {
+    return null;
+  }
+  const token = (auth as Record<string, unknown>).shareToken;
+  return typeof token === "string" && SHARE_TOKEN_PATTERN.test(token)
+    ? token
+    : null;
+}
+
+// Share bindings never expire by time; revocation is pushed through the room
+// registry when the owner revokes or regenerates the link.
+const SHARE_BINDING_EXPIRY_MS = 8_640_000_000_000_000;
+
+export interface AuthorizeShareSocketJoinInput {
+  connectionId: string;
+  drawingId: string;
+  handshake: SocketHandshakeLike;
+  originPolicy: StrictOriginPolicy;
+  shareLinkResolver: ShareLinkResolver;
+}
+
+export async function authorizeShareSocketJoin(
+  input: AuthorizeShareSocketJoinInput,
+): Promise<SocketAuthorizationBinding> {
+  input.originPolicy.assertAllowed(input.handshake.headers);
+  assertNoClientAuthorizationClaims(input.handshake.auth);
+
+  const token = shareTokenFromHandshake(input.handshake.auth);
+  if (!token) {
+    throw new SocketSecurityError(
+      "SOCKET_UNAUTHENTICATED",
+      "A valid share token is required",
+    );
+  }
+  const link = await input.shareLinkResolver.resolveToken(token);
+  if (!link || link.drawingId !== input.drawingId) {
+    throw new SocketSecurityError(
+      "SOCKET_NOT_MEMBER",
+      "The share link is not active for this drawing",
+    );
+  }
+
+  return Object.freeze({
+    connectionId: input.connectionId,
+    drawingId: input.drawingId,
+    userId: shareUserId(link.linkId),
+    sessionId: shareUserId(link.linkId),
+    sessionExpiresAt: new Date(SHARE_BINDING_EXPIRY_MS),
+    role: "viewer" as const,
+    shareLinkId: link.linkId,
+  });
 }
 
 export function withServerRole(

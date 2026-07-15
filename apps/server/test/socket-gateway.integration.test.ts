@@ -20,11 +20,14 @@ import {
 } from "../src/modules/collaboration/security/index.js";
 
 const DRAWING_ID = "a0d1c2e3-f456-4789-a012-3456789abcde";
+const OTHER_DRAWING_ID = "b0d1c2e3-f456-4789-a012-3456789abcde";
 const EDITOR_ID = "10000000-0000-4000-8000-000000000001";
 const VIEWER_ID = "10000000-0000-4000-8000-000000000002";
 const CLIENT_ID = "20000000-0000-4000-8000-000000000001";
 const ORIGIN = "https://draw.example.test";
 const NOW = new Date("2026-07-11T10:00:00.000Z");
+const SHARE_LINK_ID = "60000000-0000-4000-8000-000000000001";
+const SHARE_TOKEN = "s".repeat(43);
 
 describe("collaboration socket gateway", () => {
   it("rejects an untrusted or unauthenticated Socket.IO upgrade", async () => {
@@ -346,6 +349,150 @@ describe("collaboration socket gateway", () => {
     expect(fixture.chatSend).not.toHaveBeenCalled();
   });
 
+  it("gives a share-link viewer a live read-only room", async () => {
+    const fixture = createFixture();
+    fixture.roles.set(roleKey(EDITOR_ID), "editor");
+    fixture.shareLinks.set(SHARE_TOKEN, {
+      drawingId: DRAWING_ID,
+      linkId: SHARE_LINK_ID,
+    });
+    const editor = fixture.connect("editor", EDITOR_ID);
+    const shareViewer = fixture.connect("share-viewer", null, {
+      auth: { shareToken: SHARE_TOKEN },
+    });
+    await join(editor);
+    await join(shareViewer);
+
+    expect(shareViewer.events("room.ready")[0]).toMatchObject({
+      revision: "7",
+      role: "viewer",
+      snapshot: fixture.snapshot.snapshot,
+      type: "room.ready",
+    });
+    // Anonymous viewers never enter presence: members-only roster.
+    expect(
+      fixture.presence.roster().map((participant) => participant.connectionId),
+    ).toEqual([editor.id]);
+
+    editor.clientEmit(
+      "scene.mutate",
+      mutationEvent("30000000-0000-4000-8000-000000000031"),
+    );
+    await vi.waitFor(() =>
+      expect(shareViewer.events("scene.committed")).toHaveLength(1),
+    );
+  });
+
+  it("never delivers chat to share-link viewers", async () => {
+    const fixture = createFixture();
+    fixture.roles.set(roleKey(EDITOR_ID), "editor");
+    fixture.roles.set(roleKey(VIEWER_ID), "viewer");
+    fixture.shareLinks.set(SHARE_TOKEN, {
+      drawingId: DRAWING_ID,
+      linkId: SHARE_LINK_ID,
+    });
+    const editor = fixture.connect("editor", EDITOR_ID);
+    const viewer = fixture.connect("viewer", VIEWER_ID);
+    const shareViewer = fixture.connect("share-viewer", null, {
+      auth: { shareToken: SHARE_TOKEN },
+    });
+    await join(editor);
+    await join(viewer);
+    await join(shareViewer);
+
+    editor.clientEmit("chat.send", chatSendEvent("members only"));
+
+    await vi.waitFor(() => {
+      expect(editor.events("chat.message")).toHaveLength(1);
+      expect(viewer.events("chat.message")).toHaveLength(1);
+    });
+    expect(shareViewer.events("chat.message")).toHaveLength(0);
+  });
+
+  it("rejects every emit from a share-link viewer and disconnects on repeat", async () => {
+    const fixture = createFixture();
+    fixture.shareLinks.set(SHARE_TOKEN, {
+      drawingId: DRAWING_ID,
+      linkId: SHARE_LINK_ID,
+    });
+    const shareViewer = fixture.connect("share-viewer", null, {
+      auth: { shareToken: SHARE_TOKEN },
+    });
+    await join(shareViewer);
+
+    shareViewer.clientEmit(
+      "scene.mutate",
+      mutationEvent("30000000-0000-4000-8000-000000000041"),
+    );
+    shareViewer.clientEmit("chat.send", chatSendEvent("hello?"));
+    shareViewer.clientEmit("presence.update", {
+      idleState: "active",
+      type: "presence.update",
+    });
+
+    await vi.waitFor(() => expect(shareViewer.disconnected).toBe(true));
+    const forbidden = shareViewer
+      .events("protocol.error")
+      .filter(
+        (event) =>
+          (event as { code: string }).code === "SOCKET_EVENT_FORBIDDEN",
+      );
+    expect(forbidden).toHaveLength(3);
+    expect(fixture.mutate).not.toHaveBeenCalled();
+    expect(fixture.chatSend).not.toHaveBeenCalled();
+  });
+
+  it("kicks live share viewers when the link is revoked", async () => {
+    const fixture = createFixture();
+    fixture.shareLinks.set(SHARE_TOKEN, {
+      drawingId: DRAWING_ID,
+      linkId: SHARE_LINK_ID,
+    });
+    const shareViewer = fixture.connect("share-viewer", null, {
+      auth: { shareToken: SHARE_TOKEN },
+    });
+    await join(shareViewer);
+
+    fixture.shareLinks.delete(SHARE_TOKEN);
+    fixture.rooms.revoke(DRAWING_ID, `share:${SHARE_LINK_ID}`);
+
+    expect(shareViewer.disconnected).toBe(true);
+    expect(shareViewer.events("protocol.error")).toContainEqual(
+      expect.objectContaining({ code: "SOCKET_MEMBERSHIP_REVOKED" }),
+    );
+  });
+
+  it("rejects unknown share tokens at the upgrade", async () => {
+    const fixture = createFixture();
+    const shareViewer = fixture.connect("share-viewer", null, {
+      auth: { shareToken: SHARE_TOKEN },
+    });
+
+    await vi.waitFor(() => expect(shareViewer.connectError).not.toBeNull());
+    expect(connectErrorData(shareViewer)).toMatchObject({
+      code: "SOCKET_UNAUTHENTICATED",
+      type: "protocol.error",
+    });
+  });
+
+  it("rejects a share token that belongs to a different drawing", async () => {
+    const fixture = createFixture();
+    fixture.shareLinks.set(SHARE_TOKEN, {
+      drawingId: OTHER_DRAWING_ID,
+      linkId: SHARE_LINK_ID,
+    });
+    const shareViewer = fixture.connect("share-viewer", null, {
+      auth: { shareToken: SHARE_TOKEN },
+    });
+
+    shareViewer.clientEmit("room.join", joinEvent());
+
+    await vi.waitFor(() => expect(shareViewer.disconnected).toBe(true));
+    expect(shareViewer.events("protocol.error")).toContainEqual(
+      expect.objectContaining({ code: "SOCKET_NOT_MEMBER" }),
+    );
+  });
+
   it("never broadcasts when durable persistence fails", async () => {
     const fixture = createFixture({
       mutate: vi.fn().mockRejectedValue(new Error("database secret")),
@@ -385,6 +532,7 @@ function createFixture(
 ) {
   const server = new FakeServer();
   const roles = new Map<string, Role>();
+  const shareLinks = new Map<string, { linkId: string; drawingId: string }>();
   const rooms = new FakeRoomRegistry();
   const presence = new FakePresenceService();
   const preview = new FakePreviewService();
@@ -444,11 +592,16 @@ function createFixture(
     roomRegistry: rooms,
     securityAudit,
     sessionValidityResolver: { isSessionActive: sessionActive },
+    shareLinkResolver: {
+      resolveToken: (token) => Promise.resolve(shareLinks.get(token) ?? null),
+    },
     snapshotProvider: {
       loadSnapshot: (drawingId, userId) => {
         const role = roles.get(`${drawingId}:${userId}`);
         return Promise.resolve(role ? { ...snapshot, drawingId, role } : null);
       },
+      loadPublicSnapshot: (drawingId) =>
+        Promise.resolve({ ...snapshot, drawingId, role: "viewer" as const }),
     },
   });
 
@@ -456,9 +609,15 @@ function createFixture(
     connect(
       id: string,
       userId: string | null,
-      socketOptions: { origin?: string } = {},
+      socketOptions: { auth?: Record<string, string>; origin?: string } = {},
     ) {
-      const socket = new FakeSocket(server, id, userId, socketOptions.origin);
+      const socket = new FakeSocket(
+        server,
+        id,
+        userId,
+        socketOptions.origin,
+        socketOptions.auth,
+      );
       socket.setConnection(server.connect(socket));
       return socket;
     },
@@ -472,6 +631,7 @@ function createFixture(
     securityAudit,
     server,
     sessionActive,
+    shareLinks,
     snapshot,
   };
 }
@@ -764,9 +924,10 @@ class FakeSocket {
     readonly id: string,
     userId: string | null,
     origin = ORIGIN,
+    auth: Record<string, string> = {},
   ) {
     this.handshake = {
-      auth: {},
+      auth,
       headers: {
         origin,
         ...(userId ? { "x-test-user": userId } : {}),

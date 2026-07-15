@@ -6,11 +6,13 @@ import type {
   RequestIdentity,
 } from "../src/modules/auth/identity.js";
 import {
+  authorizeShareSocketJoin,
   authorizeSocketEvent,
   authorizeSocketJoin,
   SocketSecurityError,
   StrictOriginPolicy,
   type DrawingMembershipResolver,
+  type ShareLinkResolver,
 } from "../src/modules/collaboration/security/index.js";
 
 const drawingId = "a0d1c2e3-f456-4789-a012-3456789abcde";
@@ -119,6 +121,84 @@ describe("socket authorization boundary", () => {
     expect(error).toBeInstanceOf(Error);
     expect(error.name).toBe("SocketSecurityError");
   });
+});
+
+describe("share-link socket authorization", () => {
+  const shareToken = "s".repeat(43);
+  const linkId = "60000000-0000-4000-8000-000000000001";
+
+  it("binds a frozen anonymous viewer from an active token", async () => {
+    const binding = await shareJoin({ auth: { shareToken } });
+
+    expect(binding).toMatchObject({
+      connectionId: "socket-1",
+      drawingId,
+      role: "viewer",
+      shareLinkId: linkId,
+      sessionId: `share:${linkId}`,
+      userId: `share:${linkId}`,
+    });
+    expect(Object.isFrozen(binding)).toBe(true);
+  });
+
+  it("rejects unknown or revoked tokens", async () => {
+    await expect(
+      shareJoin({ auth: { shareToken }, link: null }),
+    ).rejects.toMatchObject({ code: "SOCKET_NOT_MEMBER" });
+  });
+
+  it("rejects a token bound to a different drawing", async () => {
+    await expect(
+      shareJoin({
+        auth: { shareToken },
+        link: { drawingId: "b0d1c2e3-f456-4789-a012-3456789abcde", linkId },
+      }),
+    ).rejects.toMatchObject({ code: "SOCKET_NOT_MEMBER" });
+  });
+
+  it("rejects malformed tokens without consulting the resolver", async () => {
+    const resolveToken = vi.fn();
+    await expect(
+      shareJoin({
+        auth: { shareToken: "short" },
+        resolver: { resolveToken },
+      }),
+    ).rejects.toMatchObject({ code: "SOCKET_UNAUTHENTICATED" });
+    expect(resolveToken).not.toHaveBeenCalled();
+  });
+
+  it("still rejects untrusted origins and forged claims", async () => {
+    await expect(
+      shareJoin({ auth: { shareToken }, origin: "https://evil.example.test" }),
+    ).rejects.toMatchObject({ code: "SOCKET_ORIGIN_DENIED" });
+    await expect(
+      shareJoin({ auth: { shareToken, role: "owner" } }),
+    ).rejects.toMatchObject({ code: "SOCKET_FORGED_AUTHORIZATION" });
+  });
+
+  interface ShareJoinOptions {
+    auth?: unknown;
+    link?: { drawingId: string; linkId: string } | null;
+    origin?: string;
+    resolver?: ShareLinkResolver;
+  }
+
+  function shareJoin(options: ShareJoinOptions = {}) {
+    const link =
+      options.link === undefined ? { drawingId, linkId } : options.link;
+    return authorizeShareSocketJoin({
+      connectionId: "socket-1",
+      drawingId,
+      handshake: {
+        auth: options.auth,
+        headers: { origin: options.origin ?? trustedOrigin },
+      },
+      originPolicy: new StrictOriginPolicy([trustedOrigin]),
+      shareLinkResolver: options.resolver ?? {
+        resolveToken: () => Promise.resolve(link),
+      },
+    });
+  }
 });
 
 interface JoinOptions {

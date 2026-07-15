@@ -247,10 +247,27 @@ export class AssetService {
       );
     }
 
-    const asset = await this.#repository.findAsset(
-      input.drawingId,
-      input.fileId,
-    );
+    return this.#streamAsset(input.drawingId, input.fileId);
+  }
+
+  /**
+   * Streams an asset without a per-user role check. The caller is responsible
+   * for authorizing access, e.g. by resolving an active share-link token to
+   * the drawing ID.
+   */
+  public async downloadShared(input: {
+    drawingId: string;
+    fileId: string;
+  }): Promise<DownloadAssetResult> {
+    validateIdentifiers(input.drawingId, input.fileId);
+    return this.#streamAsset(input.drawingId, input.fileId);
+  }
+
+  async #streamAsset(
+    drawingId: string,
+    fileId: string,
+  ): Promise<DownloadAssetResult> {
+    const asset = await this.#repository.findAsset(drawingId, fileId);
     if (!asset) {
       throw assetError(
         404,

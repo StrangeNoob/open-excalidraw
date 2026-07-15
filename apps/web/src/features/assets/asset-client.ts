@@ -97,6 +97,50 @@ export class AssetClient {
   }
 }
 
+/** Downloads assets of a publicly shared drawing via its share token. */
+export class ShareAssetClient implements Pick<AssetClient, "download"> {
+  readonly #baseUrl: string;
+  readonly #fetch: typeof globalThis.fetch;
+  readonly #token: string;
+
+  constructor(
+    token: string,
+    {
+      baseUrl = "/api/v1",
+      fetch = globalThis.fetch.bind(globalThis),
+    }: Pick<AssetClientOptions, "baseUrl" | "fetch"> = {},
+  ) {
+    this.#baseUrl = baseUrl.replace(/\/$/, "");
+    this.#fetch = fetch;
+    this.#token = token;
+  }
+
+  async download(
+    _drawingId: string,
+    fileId: string,
+    signal?: AbortSignal,
+  ): Promise<BinaryFileData> {
+    const response = await this.#fetch(
+      `${this.#baseUrl}/share/${encodeURIComponent(
+        this.#token,
+      )}/assets/${encodeURIComponent(fileId)}`,
+      { headers: { accept: "image/*" }, signal },
+    );
+    if (!response.ok) {
+      throw new AssetRequestError(response.status, fileId, "download");
+    }
+    const blob = await response.blob();
+    return {
+      created: Date.now(),
+      dataURL: await blobToDataUrl(blob),
+      id: fileId as BinaryFileData["id"],
+      mimeType: (blob.type ||
+        response.headers.get("content-type") ||
+        "application/octet-stream") as BinaryFileData["mimeType"],
+    };
+  }
+}
+
 export interface AssetUploadManagerOptions {
   client: Pick<AssetClient, "upload">;
 }

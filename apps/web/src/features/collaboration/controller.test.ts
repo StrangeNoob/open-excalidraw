@@ -174,6 +174,7 @@ const ready = (
 const setup = (options?: {
   outbox?: MemoryOutbox;
   role?: RoomReadyEvent["role"];
+  presenceEnabled?: boolean;
   presenceHeartbeatMs?: number;
   deferReady?: boolean;
   initialRole?: RoomReadyEvent["role"];
@@ -193,6 +194,7 @@ const setup = (options?: {
     initialElements: [element(1)],
     initialRole: options?.initialRole,
     outbox,
+    presenceEnabled: options?.presenceEnabled,
     presenceHeartbeatMs: options?.presenceHeartbeatMs,
     previewThrottleMs: 100,
     transport,
@@ -721,6 +723,26 @@ describe("CollaborationController", () => {
     expect(fixture.transport.emitted).toEqual([
       { idleState: "active", type: "presence.update" },
     ]);
+  });
+
+  it("never emits presence when presence is disabled", async () => {
+    const fixture = setup({
+      presenceEnabled: false,
+      presenceHeartbeatMs: 1_000,
+      role: "viewer",
+    });
+    await waitFor(() => expect(fixture.controller.state.status).toBe("ready"));
+    fixture.controller.publishPresence({
+      pointer: { x: 1, y: 2, tool: "pointer" },
+      idleState: "active",
+    });
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(
+      fixture.transport.emitted.filter(
+        ({ type }) => type === "presence.update",
+      ),
+    ).toEqual([]);
   });
 
   it("persists dirty edits before an intentional stop", async () => {

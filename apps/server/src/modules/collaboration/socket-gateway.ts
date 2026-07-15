@@ -16,14 +16,17 @@ import { ZodError, type ZodType } from "zod";
 import type { IdentityService } from "../auth/identity.js";
 import { ReconciliationLimitError } from "./core/reconcile.js";
 import {
+  authorizeShareSocketJoin,
   authorizeSocketEvent,
   authorizeSocketJoin,
   assertActiveIdentity,
   assertNoClientAuthorizationClaims,
+  shareTokenFromHandshake,
   SocketSecurityError,
   withServerRole,
   type BoundClientEventType,
   type DrawingMembershipResolver,
+  type ShareLinkResolver,
   type SocketAuthorizationBinding,
   type SocketSessionValidityResolver,
   type StrictOriginPolicy,
@@ -165,6 +168,8 @@ export interface CollaborationSnapshotProvider {
     drawingId: string,
     userId: string,
   ): Promise<GatewaySnapshot | null>;
+  /** Role-free snapshot for share-link viewers; always returns role "viewer". */
+  loadPublicSnapshot?(drawingId: string): Promise<GatewaySnapshot | null>;
 }
 
 export interface CollaborationGatewayOptions {
@@ -177,6 +182,7 @@ export interface CollaborationGatewayOptions {
   previewService: GatewayPreviewService;
   roomRegistry: GatewayRoomRegistry;
   sessionValidityResolver: SocketSessionValidityResolver;
+  shareLinkResolver?: ShareLinkResolver;
   snapshotProvider: CollaborationSnapshotProvider;
   securityAudit?: (event: {
     action: "scene.mutate" | "scene.preview";
@@ -389,6 +395,66 @@ export function attachCollaborationGateway(
         bindings.delete(socket.id);
         await leaveCurrentRoom(socket, options, emitRoster);
 
+        const shareToken = shareTokenFromHandshake(socket.handshake.auth);
+        if (shareToken !== null) {
+          if (!options.shareLinkResolver) {
+            throw new GatewayError(
+              "SOCKET_UNAUTHENTICATED",
+              "Share links are not enabled",
+              false,
+              true,
+            );
+          }
+          // Re-validates the token on every join, including controller-driven
+          // rejoins after room.resyncRequired, so revoked links cannot resync.
+          const binding = await authorizeShareSocketJoin({
+            connectionId: socket.id,
+            drawingId: event.drawingId,
+            handshake: socket.handshake,
+            originPolicy: options.originPolicy,
+            shareLinkResolver: options.shareLinkResolver,
+          });
+          const snapshot = await options.snapshotProvider.loadPublicSnapshot?.(
+            binding.drawingId,
+          );
+          if (!snapshot) {
+            throw new GatewayError(
+              "SOCKET_NOT_MEMBER",
+              "The drawing is unavailable or access was revoked",
+              false,
+              true,
+            );
+          }
+          options.roomRegistry.join(binding);
+          bindings.set(binding.connectionId, binding);
+          // Main room only: share viewers receive scene and presence
+          // broadcasts but never the members-room chat fan-out.
+          await socket.join(roomName(binding.drawingId));
+          if (
+            event.lastRevision !== undefined &&
+            event.lastRevision !== snapshot.revision.toString()
+          ) {
+            emitServerEvent(socket, {
+              type: "room.resyncRequired",
+              reason: "revision-gap",
+              revision: snapshot.revision.toString(),
+            });
+          }
+          emitServerEvent(socket, {
+            type: "room.ready",
+            assetManifest: snapshot.assetManifest,
+            collaborators: collaboratorsFor(
+              options.presenceService.roster(binding.drawingId),
+              options.roomRegistry,
+            ),
+            connectionId: binding.connectionId,
+            revision: snapshot.revision.toString(),
+            role: binding.role,
+            snapshot: snapshot.snapshot,
+          });
+          return;
+        }
+
         let binding = await authorizeSocketJoin({
           connectionId: socket.id,
           drawingId: event.drawingId,
@@ -433,6 +499,7 @@ export function attachCollaborationGateway(
         options.roomRegistry.join(binding);
         bindings.set(binding.connectionId, binding);
         await socket.join(roomName(binding.drawingId));
+        await socket.join(membersRoomName(binding.drawingId));
         try {
           await options.presenceService.join(binding, {
             image: identity.image,
@@ -442,6 +509,7 @@ export function attachCollaborationGateway(
           options.roomRegistry.leave(binding.connectionId);
           bindings.delete(binding.connectionId);
           await socket.leave(roomName(binding.drawingId));
+          await socket.leave(membersRoomName(binding.drawingId));
           throw caught;
         }
 
@@ -544,7 +612,8 @@ export function attachCollaborationGateway(
         // the reconnect history refetch covers any client that missed it.
         if (!message) return;
         // Sender included deliberately: the echo is the delivery ack.
-        io.to(roomName(binding.drawingId)).emit("chat.message", {
+        // Members room only: chat must never reach share-link viewers.
+        io.to(membersRoomName(binding.drawingId)).emit("chat.message", {
           type: "chat.message",
           message,
         });
@@ -596,6 +665,15 @@ async function authorizeCurrent(
     );
   }
 
+  // Must precede the membership lookup: the synthetic share user id is not a
+  // UUID and would fail the uuid-typed role SQL.
+  if (binding.shareLinkId) {
+    throw new SocketSecurityError(
+      "SOCKET_EVENT_FORBIDDEN",
+      "Share link viewers are read-only",
+    );
+  }
+
   const currentRole = await options.membershipResolver.getRole(
     binding.drawingId,
     binding.userId,
@@ -643,6 +721,7 @@ async function leaveCurrentRoom(
   await clearPreviewAndRequestResync(socket, binding, options);
   options.presenceService.leave(socket.id);
   await socket.leave(roomName(binding.drawingId));
+  await socket.leave(membersRoomName(binding.drawingId));
   emitRoster(binding.drawingId);
 }
 
@@ -653,6 +732,18 @@ async function authenticateUpgrade(
 ): Promise<void> {
   options.originPolicy.assertAllowed(socket.handshake.headers);
   assertNoClientAuthorizationClaims(socket.handshake.auth);
+  const shareToken = shareTokenFromHandshake(socket.handshake.auth);
+  if (shareToken !== null && options.shareLinkResolver) {
+    // A share token takes precedence over any session cookie also present.
+    const link = await options.shareLinkResolver.resolveToken(shareToken);
+    if (!link) {
+      throw new SocketSecurityError(
+        "SOCKET_UNAUTHENTICATED",
+        "The share link is not active",
+      );
+    }
+    return;
+  }
   const identity = await options.identityService.resolve(
     socket.handshake.headers,
   );
@@ -899,6 +990,11 @@ class BoundedSerialQueue {
 
 function roomName(drawingId: string): string {
   return `${ROOM_PREFIX}${drawingId}`;
+}
+
+/** Authenticated members only; carries broadcasts share viewers must not see. */
+function membersRoomName(drawingId: string): string {
+  return `${ROOM_PREFIX}${drawingId}:members`;
 }
 
 function assertPositiveInteger(value: number, name: string): void {

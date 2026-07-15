@@ -229,26 +229,44 @@ export class PostgresMutationRepository implements MutationRepository {
       if (!drawing) return null;
       const role = await roleForLockedDrawing(client, drawing, userId);
       if (!role) return null;
-      const snapshot = drawing.scene as SceneEnvelope;
-      const referencedAssets = referencedAssetIds(snapshot.elements);
-      const assets = await client.query<AssetRow>(
-        `SELECT id, drawing_id, file_id, mime_type, byte_size, sha256,
-                file_version, created_at
-         FROM drawing_assets
-         WHERE drawing_id = $1 AND file_id = ANY($2::text[])
-           AND deleted_at IS NULL
-         ORDER BY file_id`,
-        [drawingId, referencedAssets],
-      );
-      return {
-        drawingId,
-        role,
-        revision: BigInt(drawing.content_revision),
-        snapshot,
-        assetManifest: assets.rows.map(mapAsset),
-      };
+      return snapshotForLockedDrawing(client, drawing, role);
     });
   }
+
+  public async loadPublicSnapshot(
+    drawingId: string,
+  ): Promise<CollaborationSnapshot | null> {
+    return transaction(this.pool, async (client) => {
+      const drawing = await lockDrawing(client, drawingId, "share");
+      if (!drawing) return null;
+      return snapshotForLockedDrawing(client, drawing, "viewer");
+    });
+  }
+}
+
+async function snapshotForLockedDrawing(
+  client: PoolClient,
+  drawing: LockedDrawing,
+  role: Role,
+): Promise<CollaborationSnapshot> {
+  const snapshot = drawing.scene as SceneEnvelope;
+  const referencedAssets = referencedAssetIds(snapshot.elements);
+  const assets = await client.query<AssetRow>(
+    `SELECT id, drawing_id, file_id, mime_type, byte_size, sha256,
+            file_version, created_at
+     FROM drawing_assets
+     WHERE drawing_id = $1 AND file_id = ANY($2::text[])
+       AND deleted_at IS NULL
+     ORDER BY file_id`,
+    [drawing.id, referencedAssets],
+  );
+  return {
+    drawingId: drawing.id,
+    role,
+    revision: BigInt(drawing.content_revision),
+    snapshot,
+    assetManifest: assets.rows.map(mapAsset),
+  };
 }
 
 interface AssetRow extends QueryResultRow {

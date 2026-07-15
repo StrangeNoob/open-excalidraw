@@ -37,6 +37,8 @@ const presenceRosterSchema = z
   .strict();
 
 export interface SocketIoTransportOptions {
+  /** Handshake auth payload, e.g. { shareToken } for public share viewers. */
+  auth?: Record<string, string>;
   path?: string;
   socket?: Socket;
   url?: string;
@@ -48,6 +50,7 @@ export class SocketIoTransport implements RealtimeTransport {
   readonly #chatListeners = new Set<(message: ChatMessage) => void>();
 
   constructor({
+    auth,
     path = "/socket.io",
     socket,
     url,
@@ -59,6 +62,7 @@ export class SocketIoTransport implements RealtimeTransport {
         path,
         transports: ["websocket", "polling"],
         withCredentials: true,
+        ...(auth ? { auth } : {}),
       });
     this.#bind();
   }

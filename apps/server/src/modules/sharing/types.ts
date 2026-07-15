@@ -34,6 +34,20 @@ export type CreateShareResult =
   | { status: "not-found" }
   | { status: "forbidden" };
 
+export interface ShareLinkRecord {
+  linkId: string;
+  token: string;
+  createdAt: Date;
+}
+
+export interface SharedDrawingRecord {
+  linkId: string;
+  drawingId: string;
+  title: string;
+  scene: unknown;
+  revision: string;
+}
+
 export interface SharingRepository {
   list(
     drawingId: string,
@@ -74,6 +88,38 @@ export interface SharingRepository {
     invitationId: string;
     auditRequestId?: string;
   }): Promise<"revoked" | "not-found" | "forbidden">;
+  createShareLink(input: {
+    drawingId: string;
+    actorUserId: string;
+    token: string;
+    auditRequestId?: string;
+  }): Promise<
+    | {
+        status: "created";
+        link: ShareLinkRecord;
+        replacedLinkId: string | null;
+      }
+    | { status: "not-found" }
+    | { status: "forbidden" }
+  >;
+  getShareLink(
+    drawingId: string,
+    actorUserId: string,
+  ): Promise<
+    | { status: "ok"; link: ShareLinkRecord | null }
+    | { status: "not-found" | "forbidden" }
+  >;
+  revokeShareLink(input: {
+    drawingId: string;
+    actorUserId: string;
+    auditRequestId?: string;
+  }): Promise<
+    | { status: "revoked"; linkId: string }
+    | { status: "no-link" }
+    | { status: "not-found" }
+    | { status: "forbidden" }
+  >;
+  resolveShareToken(token: string): Promise<SharedDrawingRecord | null>;
   inspect(tokenHash: Buffer): Promise<InvitationRecord | null>;
   accept(input: {
     tokenHash: Buffer;

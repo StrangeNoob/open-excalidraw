@@ -117,6 +117,69 @@ export function createSharingRouter(input: {
     },
   );
 
+  router.put(
+    "/api/v1/drawings/:drawingId/share-link",
+    async (request, response) => {
+      await authenticated(
+        request,
+        response,
+        input.identity,
+        async (identity, requestId) => ({
+          status: 200,
+          body: await input.service.createShareLink(
+            identity.userId,
+            drawingId(request),
+            requestId,
+          ),
+        }),
+      );
+    },
+  );
+
+  router.get(
+    "/api/v1/drawings/:drawingId/share-link",
+    async (request, response) => {
+      await authenticated(
+        request,
+        response,
+        input.identity,
+        async (identity) => ({
+          status: 200,
+          body: await input.service.getShareLink(
+            identity.userId,
+            drawingId(request),
+          ),
+        }),
+      );
+    },
+  );
+
+  router.delete(
+    "/api/v1/drawings/:drawingId/share-link",
+    async (request, response) => {
+      await authenticated(
+        request,
+        response,
+        input.identity,
+        async (identity, requestId) => {
+          await input.service.revokeShareLink(
+            identity.userId,
+            drawingId(request),
+            requestId,
+          );
+          return { status: 204 };
+        },
+      );
+    },
+  );
+
+  router.get("/api/v1/share/:token", async (request, response) => {
+    await route(request, response, async () => ({
+      status: 200,
+      body: await input.service.inspectShareToken(token(request)),
+    }));
+  });
+
   router.get("/api/v1/invitations/:token", async (request, response) => {
     await route(request, response, async () => ({
       status: 200,

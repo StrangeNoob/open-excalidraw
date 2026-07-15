@@ -2,6 +2,9 @@ import { createHash, randomBytes } from "node:crypto";
 
 import {
   createInvitationResponseSchema,
+  createShareLinkResponseSchema,
+  sharedDrawingResponseSchema,
+  shareLinkStatusSchema,
   type MemberRole,
 } from "@open-excalidraw/contracts";
 import { renderInvitationEmail, type Mailer } from "@open-excalidraw/mail";
@@ -23,6 +26,9 @@ export interface SharingServiceOptions {
     roleChanged(drawingId: string, userId: string, role: MemberRole): void;
     revoked(drawingId: string, userId: string): void;
   };
+  shareLinkEvents?: {
+    revoked(drawingId: string, linkId: string): void;
+  };
 }
 
 type CreateInvitationResponse = z.infer<typeof createInvitationResponseSchema>;
@@ -34,6 +40,7 @@ export class SharingService {
   readonly #requireVerifiedEmail: boolean;
   readonly #invitationLifetimeMs: number;
   readonly #membershipEvents: SharingServiceOptions["membershipEvents"];
+  readonly #shareLinkEvents: SharingServiceOptions["shareLinkEvents"];
 
   public constructor(options: SharingServiceOptions) {
     this.#repository = options.repository;
@@ -44,6 +51,7 @@ export class SharingService {
     }
     this.#requireVerifiedEmail = options.requireVerifiedEmailForAcceptance;
     this.#membershipEvents = options.membershipEvents;
+    this.#shareLinkEvents = options.shareLinkEvents;
     this.#invitationLifetimeMs = options.invitationLifetimeMs ?? SEVEN_DAYS_MS;
     if (
       !Number.isSafeInteger(this.#invitationLifetimeMs) ||
@@ -180,6 +188,80 @@ export class SharingService {
     this.#handleMutationResult(result, "revoked");
   }
 
+  public async createShareLink(
+    actorUserId: string,
+    drawingId: string,
+    auditRequestId?: string,
+  ) {
+    const token = randomBytes(32).toString("base64url");
+    const result = await this.#repository.createShareLink({
+      drawingId,
+      actorUserId,
+      token,
+      ...(auditRequestId ? { auditRequestId } : {}),
+    });
+    if (result.status === "not-found") throw notFound();
+    if (result.status === "forbidden") throw forbidden();
+    if (result.replacedLinkId) {
+      this.#shareLinkEvents?.revoked(drawingId, result.replacedLinkId);
+    }
+    return createShareLinkResponseSchema.parse({
+      url: this.#shareUrl(result.link.token),
+      createdAt: result.link.createdAt.toISOString(),
+    });
+  }
+
+  public async getShareLink(actorUserId: string, drawingId: string) {
+    const result = await this.#repository.getShareLink(drawingId, actorUserId);
+    if (result.status !== "ok") {
+      if (result.status === "not-found") throw notFound();
+      throw forbidden();
+    }
+    return shareLinkStatusSchema.parse(
+      result.link
+        ? {
+            active: true,
+            url: this.#shareUrl(result.link.token),
+            createdAt: result.link.createdAt.toISOString(),
+          }
+        : { active: false },
+    );
+  }
+
+  public async revokeShareLink(
+    actorUserId: string,
+    drawingId: string,
+    auditRequestId?: string,
+  ) {
+    const result = await this.#repository.revokeShareLink({
+      drawingId,
+      actorUserId,
+      ...(auditRequestId ? { auditRequestId } : {}),
+    });
+    if (result.status === "not-found") throw notFound();
+    if (result.status === "forbidden") throw forbidden();
+    if (result.status === "no-link") throw shareLinkNotFound();
+    this.#shareLinkEvents?.revoked(drawingId, result.linkId);
+  }
+
+  public async inspectShareToken(token: string) {
+    const record = await this.#repository.resolveShareToken(token);
+    if (!record) throw shareLinkNotFound();
+    return sharedDrawingResponseSchema.parse({
+      drawingId: record.drawingId,
+      title: record.title,
+      scene: record.scene,
+      revision: record.revision,
+    });
+  }
+
+  #shareUrl(token: string) {
+    return new URL(
+      `/s/${encodeURIComponent(token)}`,
+      this.#publicBaseUrl,
+    ).toString();
+  }
+
   public async inspect(token: string) {
     const invitation = await this.#repository.inspect(tokenHash(token));
     if (!invitation) throw invitationNotFound();
@@ -272,3 +354,5 @@ const forbidden = () =>
   );
 const invitationNotFound = () =>
   new SharingDomainError("INVITATION_NOT_FOUND", 404, "Invitation not found");
+const shareLinkNotFound = () =>
+  new SharingDomainError("SHARE_LINK_NOT_FOUND", 404, "Share link not found");
