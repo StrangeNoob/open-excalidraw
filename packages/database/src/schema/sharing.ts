@@ -5,6 +5,7 @@ import {
   index,
   pgTable,
   primaryKey,
+  text,
   timestamp,
   uniqueIndex,
   uuid,
@@ -104,5 +105,34 @@ export const drawingInvitations = pgTable(
   ],
 );
 
+export const drawingShareLinks = pgTable(
+  "drawing_share_links",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    drawingId: uuid("drawing_id")
+      .notNull()
+      .references(() => drawings.id, { onDelete: "cascade" }),
+    token: text("token").notNull(),
+    createdByUserId: uuid("created_by_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("drawing_share_links_token_unique").on(table.token),
+    uniqueIndex("drawing_share_links_active_drawing_unique")
+      .on(table.drawingId)
+      .where(sql`${table.revokedAt} is null`),
+    check(
+      "drawing_share_links_token_format",
+      sql`${table.token} ~ '^[A-Za-z0-9_-]{43}$'`,
+    ),
+  ],
+);
+
 export type DrawingMember = typeof drawingMembers.$inferSelect;
 export type DrawingInvitation = typeof drawingInvitations.$inferSelect;
+export type DrawingShareLink = typeof drawingShareLinks.$inferSelect;

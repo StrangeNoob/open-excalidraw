@@ -42,6 +42,12 @@ const drawingIdParameter = {
   required: true,
   schema: uuid,
 };
+const shareTokenParameter = {
+  name: "token",
+  in: "path",
+  required: true,
+  schema: { type: "string", pattern: "^[A-Za-z0-9_-]{43}$" },
+};
 
 const unauthorized = problem("Authentication is required.");
 const notFound = problem("Drawing not found or not accessible.");
@@ -548,6 +554,91 @@ export const openApiDocument = {
         },
       },
     },
+    "/api/v1/drawings/{drawingId}/share-link": {
+      parameters: [drawingIdParameter],
+      get: {
+        tags: ["Sharing"],
+        summary: "Read the public share link (owner only)",
+        responses: {
+          "200": json("Share link status.", ref("ShareLinkStatus")),
+          "401": unauthorized,
+          "403": forbidden,
+          "404": notFound,
+        },
+      },
+      post: {
+        tags: ["Sharing"],
+        summary: "Create or regenerate the public share link (owner only)",
+        description:
+          "Creates a read-only public link, revoking any previous link for " +
+          "the drawing. Live share viewers on a replaced link are " +
+          "disconnected.",
+        responses: {
+          "200": json("The new share link.", ref("CreateShareLinkResponse")),
+          "401": unauthorized,
+          "403": forbidden,
+          "404": notFound,
+        },
+      },
+      delete: {
+        tags: ["Sharing"],
+        summary: "Revoke the public share link (owner only)",
+        responses: {
+          "204": { description: "Share link revoked." },
+          "401": unauthorized,
+          "403": forbidden,
+          "404": problem("Drawing or share link not found."),
+        },
+      },
+    },
+    "/api/v1/share/{token}": {
+      parameters: [shareTokenParameter],
+      get: {
+        tags: ["Sharing"],
+        summary: "Read a publicly shared drawing",
+        description:
+          "Unauthenticated read-only access via an active share link. Live " +
+          "updates are delivered over Socket.IO using the same token in the " +
+          "handshake `auth.shareToken` field.",
+        security: [],
+        responses: {
+          "200": json("The shared drawing.", ref("SharedDrawing")),
+          "404": problem("`SHARE_LINK_NOT_FOUND`."),
+        },
+      },
+    },
+    "/api/v1/share/{token}/assets/{fileId}": {
+      parameters: [
+        shareTokenParameter,
+        {
+          name: "fileId",
+          in: "path",
+          required: true,
+          description: "Excalidraw file id of the embedded asset.",
+          schema: {
+            type: "string",
+            maxLength: 256,
+            pattern: "^[A-Za-z0-9_-]+$",
+          },
+        },
+      ],
+      get: {
+        tags: ["Assets"],
+        summary: "Download an asset of a publicly shared drawing",
+        security: [],
+        responses: {
+          "200": {
+            description:
+              "The asset bytes, served as an attachment with a sandboxing " +
+              "CSP and immutable caching.",
+            content: {
+              "image/*": { schema: { type: "string", format: "binary" } },
+            },
+          },
+          "404": problem("`ASSET_NOT_FOUND`: unknown asset or inactive link."),
+        },
+      },
+    },
     "/api/v1/drawings/{drawingId}/messages": {
       parameters: [drawingIdParameter],
       get: {
@@ -814,6 +905,52 @@ export const openApiDocument = {
             maxItems: 20,
             items: { type: "string", minLength: 1, maxLength: 32 },
           },
+        },
+      },
+      ShareLinkStatus: {
+        oneOf: [
+          {
+            type: "object",
+            required: ["active", "url", "createdAt"],
+            additionalProperties: false,
+            properties: {
+              active: { type: "boolean", enum: [true] },
+              url: {
+                type: "string",
+                format: "uri",
+                description: "The public share URL.",
+              },
+              createdAt: isoDateTime,
+            },
+          },
+          {
+            type: "object",
+            required: ["active"],
+            additionalProperties: false,
+            properties: {
+              active: { type: "boolean", enum: [false] },
+            },
+          },
+        ],
+      },
+      CreateShareLinkResponse: {
+        type: "object",
+        required: ["url", "createdAt"],
+        additionalProperties: false,
+        properties: {
+          url: { type: "string", format: "uri" },
+          createdAt: isoDateTime,
+        },
+      },
+      SharedDrawing: {
+        type: "object",
+        required: ["drawingId", "title", "scene", "revision"],
+        additionalProperties: false,
+        properties: {
+          drawingId: uuid,
+          title: { type: "string", maxLength: 120 },
+          scene: ref("SceneEnvelope"),
+          revision: revision,
         },
       },
       SceneEnvelope: {

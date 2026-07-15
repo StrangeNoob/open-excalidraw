@@ -102,6 +102,7 @@ describe("initial PostgreSQL migration", () => {
       "0003_asset_cleanup_state.sql",
       "0004_drawing_user_tags.sql",
       "0005_chat_messages.sql",
+      "0006_drawing_share_links.sql",
     ]);
     expect(second.alreadyApplied).toEqual(first.applied);
     expect(record.rows).toEqual(first.applied);
@@ -178,6 +179,8 @@ describe("database constraints", () => {
       "drawing_mutations.drawing_id->drawings.id",
       "drawing_revisions.author_user_id->user.id",
       "drawing_revisions.drawing_id->drawings.id",
+      "drawing_share_links.created_by_user_id->user.id",
+      "drawing_share_links.drawing_id->drawings.id",
       "drawing_user_tags.drawing_id->drawings.id",
       "drawing_user_tags.user_id->user.id",
       "drawings.owner_user_id->user.id",
@@ -197,6 +200,8 @@ describe("database constraints", () => {
         "account_provider_account_unique",
         "drawing_invitations_token_hash_unique",
         "drawing_invitations_active_email_unique",
+        "drawing_share_links_token_unique",
+        "drawing_share_links_active_drawing_unique",
         "drawing_assets_storage_key_unique",
         "drawing_assets_drawing_file_unique",
         "drawing_revisions_drawing_revision_unique",

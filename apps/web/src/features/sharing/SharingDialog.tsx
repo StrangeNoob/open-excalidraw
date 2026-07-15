@@ -2,8 +2,15 @@ import type {
   DrawingMember,
   Invitation,
   MemberRole,
+  ShareLinkStatus,
 } from "@open-excalidraw/contracts";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import {
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
 import { SharingClient, type SharingSource } from "./api";
 
@@ -30,10 +37,19 @@ export const SharingDialog = ({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [manualUrl, setManualUrl] = useState<string | null>(null);
+  const [shareLink, setShareLink] = useState<ShareLinkStatus | null>(null);
+  // Guards against a slow response for a previous drawing (or an older call
+  // for this one) committing its members or bearer share URL into the dialog.
+  const loadSequence = useRef(0);
 
   const load = useCallback(async () => {
+    const sequence = ++loadSequence.current;
     try {
-      const result = await client.list(drawingId);
+      const [result, link] = await Promise.all([
+        client.list(drawingId),
+        client.getShareLink(drawingId),
+      ]);
+      if (sequence !== loadSequence.current) return;
       setError(null);
       setMembers(result.members);
       setInvitations(
@@ -41,7 +57,9 @@ export const SharingDialog = ({
           (invitation) => invitation.status === "pending",
         ),
       );
+      setShareLink(link);
     } catch (caught) {
+      if (sequence !== loadSequence.current) return;
       setError(message(caught, "Could not load sharing settings."));
     }
   }, [client, drawingId]);
@@ -87,6 +105,8 @@ export const SharingDialog = ({
       setBusy(false);
     }
   };
+
+  const activeShareUrl = shareLink?.active ? (shareLink.url ?? null) : null;
 
   const mutate = async (action: () => Promise<void>) => {
     setBusy(true);
@@ -165,6 +185,76 @@ export const SharingDialog = ({
             </button>
           </div>
         ) : null}
+
+        <section aria-labelledby="public-share-link">
+          <h3 id="public-share-link">Public share link</h3>
+          <p>
+            Anyone with the link can view this drawing (read-only, live). No
+            account needed.
+          </p>
+          {shareLink === null ? (
+            // Unknown is not inactive: offering "Create link" before the
+            // status loads would silently rotate an existing link.
+            <p aria-live="polite">Checking share link status…</p>
+          ) : activeShareUrl ? (
+            <>
+              <div className="sharing-manual-link">
+                <label>
+                  Share link
+                  <input readOnly value={activeShareUrl} />
+                </label>
+                <button
+                  disabled={busy}
+                  onClick={() => void copyShareLink(activeShareUrl, setNotice)}
+                  type="button"
+                >
+                  Copy link
+                </button>
+              </div>
+              <div className="sharing-share-link-actions">
+                <button
+                  disabled={busy}
+                  onClick={() =>
+                    void mutate(async () => {
+                      await client.createShareLink(drawingId);
+                      setNotice(
+                        "Share link regenerated. The old link no longer works.",
+                      );
+                    })
+                  }
+                  type="button"
+                >
+                  Regenerate
+                </button>
+                <button
+                  disabled={busy}
+                  onClick={() =>
+                    void mutate(async () => {
+                      await client.revokeShareLink(drawingId);
+                      setNotice("Share link revoked.");
+                    })
+                  }
+                  type="button"
+                >
+                  Revoke
+                </button>
+              </div>
+            </>
+          ) : (
+            <button
+              disabled={busy}
+              onClick={() =>
+                void mutate(async () => {
+                  const created = await client.createShareLink(drawingId);
+                  await copyShareLink(created.url, setNotice);
+                })
+              }
+              type="button"
+            >
+              Create link
+            </button>
+          )}
+        </section>
 
         <section aria-labelledby="people-with-access">
           <h3 id="people-with-access">People with access</h3>
@@ -257,6 +347,18 @@ const copyInvitation = async (
     setNotice("Invitation link copied.");
   } catch {
     setNotice("Select and copy the invitation link above.");
+  }
+};
+
+const copyShareLink = async (
+  url: string,
+  setNotice: (notice: string) => void,
+) => {
+  try {
+    await navigator.clipboard.writeText(url);
+    setNotice("Share link copied.");
+  } catch {
+    setNotice("Select and copy the share link above.");
   }
 };
 

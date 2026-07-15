@@ -5,6 +5,8 @@ import type {
   CreateShareResult,
   InvitationRecord,
   MemberRecord,
+  ShareLinkRecord,
+  SharedDrawingRecord,
   SharingRepository,
 } from "./types.js";
 
@@ -324,6 +326,151 @@ export class PostgresSharingRepository implements SharingRepository {
     });
   }
 
+  public async createShareLink(input: {
+    drawingId: string;
+    actorUserId: string;
+    token: string;
+    auditRequestId?: string;
+  }) {
+    return transaction(this.pool, async (client) => {
+      const access = await lockDrawingAccess(
+        client,
+        input.drawingId,
+        input.actorUserId,
+        "update",
+      );
+      if (access === "not-found") return { status: "not-found" as const };
+      if (access === "member") {
+        await auditRejected(client, input, "create-share-link");
+        return { status: "forbidden" as const };
+      }
+      const replaced = await client.query<{ id: string }>(
+        `UPDATE drawing_share_links SET revoked_at = now()
+         WHERE drawing_id = $1 AND revoked_at IS NULL RETURNING id`,
+        [input.drawingId],
+      );
+      const replacedLinkId = replaced.rows[0]?.id ?? null;
+      const inserted = await client.query<ShareLinkRow>(
+        `INSERT INTO drawing_share_links (drawing_id, token, created_by_user_id)
+         VALUES ($1, $2, $3) RETURNING id, token, created_at`,
+        [input.drawingId, input.token, input.actorUserId],
+      );
+      const link = inserted.rows[0];
+      if (!link) throw new Error("Share link insert returned no row");
+      if (input.auditRequestId) {
+        if (replacedLinkId) {
+          await insertAuditEvent(client, {
+            actorUserId: input.actorUserId,
+            drawingId: input.drawingId,
+            eventType: "sharing.share_link_revoked",
+            requestId: input.auditRequestId,
+            metadata: { shareLinkId: replacedLinkId, reason: "regenerated" },
+          });
+        }
+        await insertAuditEvent(client, {
+          actorUserId: input.actorUserId,
+          drawingId: input.drawingId,
+          eventType: "sharing.share_link_created",
+          requestId: input.auditRequestId,
+          metadata: { shareLinkId: link.id },
+        });
+      }
+      return {
+        status: "created" as const,
+        link: mapShareLink(link),
+        replacedLinkId,
+      };
+    });
+  }
+
+  public async getShareLink(drawingId: string, actorUserId: string) {
+    return transaction(this.pool, async (client) => {
+      const access = await lockDrawingAccess(
+        client,
+        drawingId,
+        actorUserId,
+        "share",
+      );
+      if (access === "not-found") return { status: "not-found" as const };
+      if (access === "member") return { status: "forbidden" as const };
+      const result = await client.query<ShareLinkRow>(
+        `SELECT id, token, created_at FROM drawing_share_links
+         WHERE drawing_id = $1 AND revoked_at IS NULL LIMIT 1`,
+        [drawingId],
+      );
+      return {
+        status: "ok" as const,
+        link: result.rows[0] ? mapShareLink(result.rows[0]) : null,
+      };
+    });
+  }
+
+  public async revokeShareLink(input: {
+    drawingId: string;
+    actorUserId: string;
+    auditRequestId?: string;
+  }) {
+    return transaction(this.pool, async (client) => {
+      const access = await lockDrawingAccess(
+        client,
+        input.drawingId,
+        input.actorUserId,
+        "update",
+      );
+      if (access === "not-found") return { status: "not-found" as const };
+      if (access === "member") {
+        await auditRejected(client, input, "revoke-share-link");
+        return { status: "forbidden" as const };
+      }
+      const result = await client.query<{ id: string }>(
+        `UPDATE drawing_share_links SET revoked_at = now()
+         WHERE drawing_id = $1 AND revoked_at IS NULL RETURNING id`,
+        [input.drawingId],
+      );
+      const linkId = result.rows[0]?.id;
+      if (!linkId) return { status: "no-link" as const };
+      if (input.auditRequestId) {
+        await insertAuditEvent(client, {
+          actorUserId: input.actorUserId,
+          drawingId: input.drawingId,
+          eventType: "sharing.share_link_revoked",
+          requestId: input.auditRequestId,
+          metadata: { shareLinkId: linkId },
+        });
+      }
+      return { status: "revoked" as const, linkId };
+    });
+  }
+
+  public async resolveShareToken(
+    token: string,
+  ): Promise<SharedDrawingRecord | null> {
+    const result = await this.pool.query<{
+      link_id: string;
+      drawing_id: string;
+      title: string;
+      scene: unknown;
+      content_revision: string;
+    }>(
+      `SELECT l.id AS link_id, d.id AS drawing_id, d.title, d.scene,
+              d.content_revision
+       FROM drawing_share_links l
+       JOIN drawings d ON d.id = l.drawing_id
+       WHERE l.token = $1 AND l.revoked_at IS NULL AND d.deleted_at IS NULL
+       LIMIT 1`,
+      [token],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return {
+      linkId: row.link_id,
+      drawingId: row.drawing_id,
+      title: row.title,
+      scene: row.scene,
+      revision: String(row.content_revision),
+    };
+  }
+
   public async inspect(tokenHash: Buffer) {
     const result = await this.pool.query<InvitationRow>(
       `${INVITATION_SELECT} WHERE i.token_hash = $1 LIMIT 1`,
@@ -485,6 +632,16 @@ async function lockDrawingAccess(
     [drawingId, actorUserId],
   );
   return member.rows[0] ? ("member" as const) : ("not-found" as const);
+}
+
+interface ShareLinkRow extends QueryResultRow {
+  id: string;
+  token: string;
+  created_at: Date;
+}
+
+function mapShareLink(row: ShareLinkRow): ShareLinkRecord {
+  return { linkId: row.id, token: row.token, createdAt: row.created_at };
 }
 
 function mapMember(row: MemberRow): MemberRecord {

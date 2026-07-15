@@ -1,10 +1,16 @@
 import {
   createInvitationResponseSchema,
+  createShareLinkResponseSchema,
   drawingMemberSchema,
   invitationSchema,
+  sharedDrawingResponseSchema,
+  shareLinkStatusSchema,
+  type CreateShareLinkResponse,
   type DrawingMember,
   type Invitation,
   type MemberRole,
+  type SharedDrawingResponse,
+  type ShareLinkStatus,
 } from "@open-excalidraw/contracts";
 import { z } from "zod";
 
@@ -39,6 +45,8 @@ export interface InvitationInspection {
 }
 
 export interface SharingSource {
+  createShareLink(drawingId: string): Promise<CreateShareLinkResponse>;
+  getShareLink(drawingId: string): Promise<ShareLinkStatus>;
   invite(
     drawingId: string,
     email: string,
@@ -52,6 +60,7 @@ export interface SharingSource {
   list(drawingId: string): Promise<SharingList>;
   removeMember(drawingId: string, userId: string): Promise<void>;
   revokeInvitation(drawingId: string, invitationId: string): Promise<void>;
+  revokeShareLink(drawingId: string): Promise<void>;
   updateMember(
     drawingId: string,
     userId: string,
@@ -99,6 +108,41 @@ export class SharingClient implements SharingSource {
     return this.api.request<void>(
       `/v1/drawings/${encodeURIComponent(drawingId)}/invitations/${encodeURIComponent(invitationId)}`,
       { method: "DELETE" },
+    );
+  }
+
+  getShareLink(drawingId: string): Promise<ShareLinkStatus> {
+    return this.api.request(
+      `/v1/drawings/${encodeURIComponent(drawingId)}/share-link`,
+      { method: "GET" },
+      shareLinkStatusSchema,
+    );
+  }
+
+  createShareLink(drawingId: string): Promise<CreateShareLinkResponse> {
+    return this.api.request(
+      `/v1/drawings/${encodeURIComponent(drawingId)}/share-link`,
+      { method: "POST" },
+      createShareLinkResponseSchema,
+    );
+  }
+
+  revokeShareLink(drawingId: string) {
+    return this.api.request<void>(
+      `/v1/drawings/${encodeURIComponent(drawingId)}/share-link`,
+      { method: "DELETE" },
+    );
+  }
+}
+
+export class ShareClient {
+  constructor(private readonly api = new HttpApiClient()) {}
+
+  inspect(token: string): Promise<SharedDrawingResponse> {
+    return this.api.request(
+      `/v1/share/${encodeURIComponent(token)}`,
+      { method: "GET" },
+      sharedDrawingResponseSchema,
     );
   }
 }

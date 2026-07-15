@@ -41,7 +41,10 @@ import { PostgresMutationRepository } from "./modules/collaboration/persistence/
 import { PresenceService } from "./modules/collaboration/presence-service.js";
 import { PreviewService } from "./modules/collaboration/preview-service.js";
 import { RoomRegistry } from "./modules/collaboration/room-registry.js";
-import { StrictOriginPolicy } from "./modules/collaboration/security/index.js";
+import {
+  shareUserId,
+  StrictOriginPolicy,
+} from "./modules/collaboration/security/index.js";
 import { attachCollaborationGateway } from "./modules/collaboration/socket-gateway.js";
 import {
   ChatService,
@@ -111,8 +114,9 @@ const contentService = new ContentService(
     },
   },
 );
+const sharingRepository = new PostgresSharingRepository(database.pool);
 const sharingService = new SharingService({
-  repository: new PostgresSharingRepository(database.pool),
+  repository: sharingRepository,
   mailer,
   publicBaseUrl: baseUrl,
   heroImageUrl: emailHeroImageUrl,
@@ -125,7 +129,22 @@ const sharingService = new SharingService({
       roomRegistry.revoke(drawingId, userId);
     },
   },
+  shareLinkEvents: {
+    revoked: (drawingId, linkId) => {
+      // Kicks live anonymous viewers through the same push path used when a
+      // member's access is revoked.
+      roomRegistry.revoke(drawingId, shareUserId(linkId));
+    },
+  },
 });
+const shareLinkResolver = {
+  async resolveToken(token: string) {
+    const resolved = await sharingRepository.resolveShareToken(token);
+    return resolved
+      ? { linkId: resolved.linkId, drawingId: resolved.drawingId }
+      : null;
+  },
+};
 
 const storage: ObjectStorage = createStorageFromEnvironment(
   process.env.STORAGE_DRIVER?.trim() || "local",
@@ -252,6 +271,8 @@ const assetRouter = Router().use(
       const resolved = await identity.resolve(request.headers);
       return resolved ? { userId: resolved.userId } : null;
     },
+    resolveShareDrawing: async (token) =>
+      (await shareLinkResolver.resolveToken(token))?.drawingId ?? null,
     onError: (error, request) => {
       // Expected client failures (4xx) are visible in responses; only
       // unexpected errors need operator visibility.
@@ -329,6 +350,7 @@ const collaborationGateway = attachCollaborationGateway(io, {
       metadata: { action: event.action, reason: "role-forbidden" },
     }),
   sessionValidityResolver,
+  shareLinkResolver,
   snapshotProvider: collaborationRepository,
 });
 

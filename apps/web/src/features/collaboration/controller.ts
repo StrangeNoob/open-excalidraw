@@ -50,6 +50,12 @@ export interface CollaborationControllerOptions {
   initialRole?: Role;
   now?: () => number;
   outbox: CollaborationOutbox;
+  /**
+   * Disable all presence.update emits. Required for share-link viewers: the
+   * server rejects every emit from their receive-only sockets and disconnects
+   * after repeated protocol violations.
+   */
+  presenceEnabled?: boolean;
   presenceHeartbeatMs?: number;
   presenceThrottleMs?: number;
   previewThrottleMs?: number;
@@ -87,6 +93,7 @@ export class CollaborationController {
   readonly #durableDebounceMs: number;
   readonly #durableMaxWaitMs: number;
   readonly #fullResyncMs: number;
+  readonly #presenceEnabled: boolean;
   readonly #presenceHeartbeatMs: number;
   readonly #versions = new ElementVersionFilter();
   readonly #listeners = new Set<(state: CollaborationState) => void>();
@@ -137,6 +144,7 @@ export class CollaborationController {
     this.#durableDebounceMs = options.durableDebounceMs ?? 1_000;
     this.#durableMaxWaitMs = options.durableMaxWaitMs ?? 5_000;
     this.#fullResyncMs = options.fullResyncMs ?? 20_000;
+    this.#presenceEnabled = options.presenceEnabled ?? true;
     this.#presenceHeartbeatMs = options.presenceHeartbeatMs ?? 15_000;
     this.#canonicalElements = [...(options.initialElements ?? [])];
     this.#canonicalSharedSceneState = normalizeSharedSceneState(
@@ -168,11 +176,13 @@ export class CollaborationController {
     this.#fullResyncTimer = setInterval(() => {
       void this.#flushDurable(true);
     }, this.#fullResyncMs);
-    this.#presenceHeartbeatTimer = setInterval(() => {
-      if (this.#state.status === "ready") {
-        this.#transport.emit(this.#lastPresence);
-      }
-    }, this.#presenceHeartbeatMs);
+    if (this.#presenceEnabled) {
+      this.#presenceHeartbeatTimer = setInterval(() => {
+        if (this.#state.status === "ready") {
+          this.#transport.emit(this.#lastPresence);
+        }
+      }, this.#presenceHeartbeatMs);
+    }
     this.#transport.connect();
   }
 
@@ -228,6 +238,7 @@ export class CollaborationController {
   }
 
   publishPresence(event: Omit<PresenceEvent, "type">): void {
+    if (!this.#presenceEnabled) return;
     if (this.#state.status !== "ready") return;
     const next: PresenceEvent = { type: "presence.update", ...event };
     // Excalidraw fires onChange when a remote presence update is applied, so
@@ -425,7 +436,9 @@ export class CollaborationController {
       role: event.role,
       status: "ready",
     });
-    this.#transport.emit(this.#lastPresence);
+    if (this.#presenceEnabled) {
+      this.#transport.emit(this.#lastPresence);
+    }
 
     if (!this.#writesPaused && canWrite(event.role)) {
       for (const record of rebased) {

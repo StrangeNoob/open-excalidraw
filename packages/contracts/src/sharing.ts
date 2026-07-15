@@ -3,9 +3,12 @@ import { z } from "zod";
 import {
   isoDateTimeSchema,
   memberRoleSchema,
+  revisionSchema,
   roleSchema,
   uuidSchema,
 } from "./common/primitives.js";
+import { sceneEnvelopeSchema } from "./content.js";
+import { drawingTitleSchema } from "./drawings.js";
 
 export const drawingMemberSchema = z
   .object({
@@ -63,5 +66,37 @@ export const updateMemberRoleRequestSchema = z
   .object({ role: memberRoleSchema })
   .strict();
 
+export const shareLinkStatusSchema = z
+  .object({
+    active: z.boolean(),
+    url: z.string().url().optional(),
+    createdAt: isoDateTimeSchema.optional(),
+  })
+  .strict()
+  .refine((value) => !value.active || value.url !== undefined, {
+    message: "An active share link must include its url",
+  });
+
+export const createShareLinkResponseSchema = z
+  .object({
+    url: z.string().url(),
+    createdAt: isoDateTimeSchema,
+  })
+  .strict();
+
+export const sharedDrawingResponseSchema = z
+  .object({
+    drawingId: uuidSchema,
+    title: drawingTitleSchema,
+    scene: sceneEnvelopeSchema,
+    revision: revisionSchema,
+  })
+  .strict();
+
 export type DrawingMember = z.infer<typeof drawingMemberSchema>;
 export type Invitation = z.infer<typeof invitationSchema>;
+export type ShareLinkStatus = z.infer<typeof shareLinkStatusSchema>;
+export type CreateShareLinkResponse = z.infer<
+  typeof createShareLinkResponseSchema
+>;
+export type SharedDrawingResponse = z.infer<typeof sharedDrawingResponseSchema>;

@@ -48,6 +48,8 @@ export interface CollaborationSnapshotProvider {
     drawingId: string,
     userId: string,
   ): Promise<CollaborationSnapshot | null>;
+  /** Role-free snapshot for share-link viewers; always returns role "viewer". */
+  loadPublicSnapshot?(drawingId: string): Promise<CollaborationSnapshot | null>;
 }
 
 export interface MutationRepository extends CollaborationSnapshotProvider {

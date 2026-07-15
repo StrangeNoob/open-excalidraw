@@ -464,3 +464,142 @@ async function withTimeout<T>(promise: Promise<T>, milliseconds: number) {
     if (timeout) clearTimeout(timeout);
   }
 }
+
+describeDatabase("public share link lifecycle", () => {
+  const database = createDatabase(databaseUrl ?? "postgresql://unused");
+  const ownerId = randomUUID();
+  const editorId = randomUUID();
+  const drawingId = randomUUID();
+  const repository = new PostgresSharingRepository(database.pool);
+  const revokedLinks: Array<{ drawingId: string; linkId: string }> = [];
+  const service = new SharingService({
+    repository,
+    mailer: new DisabledMailer(),
+    publicBaseUrl: "https://draw.example.test",
+    requireVerifiedEmailForAcceptance: false,
+    shareLinkEvents: {
+      revoked: (revokedDrawingId, linkId) => {
+        revokedLinks.push({ drawingId: revokedDrawingId, linkId });
+      },
+    },
+  });
+
+  const tokenFromUrl = (url: string) =>
+    decodeURIComponent(new URL(url).pathname.split("/").at(-1) ?? "");
+
+  beforeAll(async () => {
+    await runMigrations({ pool: database.pool });
+    await database.pool.query(
+      `INSERT INTO "user" (id, name, email, email_verified)
+       VALUES
+         ($1, 'Link Owner', $2, true),
+         ($3, 'Link Editor', $4, true)`,
+      [
+        ownerId,
+        `${ownerId}@example.test`,
+        editorId,
+        `${editorId}@example.test`,
+      ],
+    );
+    const scene = JSON.stringify({
+      type: "excalidraw",
+      version: 2,
+      source: "test",
+      elements: [],
+      appState: {},
+    });
+    await database.pool.query(
+      `INSERT INTO drawings
+         (id, owner_user_id, title, scene, scene_format_version, scene_bytes)
+       VALUES ($1, $2, 'Linked drawing', $3::jsonb, 2, $4)`,
+      [drawingId, ownerId, scene, Buffer.byteLength(scene)],
+    );
+    await database.pool.query(
+      `INSERT INTO drawing_members (drawing_id, user_id, role, created_by_user_id)
+       VALUES ($1, $2, 'editor', $3)`,
+      [drawingId, editorId, ownerId],
+    );
+  });
+
+  afterAll(async () => {
+    await database.pool.query(`DELETE FROM drawings WHERE id = $1`, [
+      drawingId,
+    ]);
+    await database.pool.query(`DELETE FROM "user" WHERE id = ANY($1::uuid[])`, [
+      [ownerId, editorId],
+    ]);
+    await database.close();
+  });
+
+  it("creates, resolves, regenerates, and revokes the link", async () => {
+    const created = await service.createShareLink(ownerId, drawingId);
+    const firstToken = tokenFromUrl(created.url);
+    expect(firstToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(revokedLinks).toHaveLength(0);
+
+    const status = await service.getShareLink(ownerId, drawingId);
+    expect(status).toMatchObject({ active: true, url: created.url });
+
+    const shared = await service.inspectShareToken(firstToken);
+    expect(shared).toMatchObject({
+      drawingId,
+      title: "Linked drawing",
+      revision: "0",
+    });
+    expect(shared.scene.type).toBe("excalidraw");
+
+    const regenerated = await service.createShareLink(ownerId, drawingId);
+    const secondToken = tokenFromUrl(regenerated.url);
+    expect(secondToken).not.toBe(firstToken);
+    expect(revokedLinks).toHaveLength(1);
+    await expect(service.inspectShareToken(firstToken)).rejects.toMatchObject({
+      code: "SHARE_LINK_NOT_FOUND",
+    });
+    await expect(service.inspectShareToken(secondToken)).resolves.toMatchObject(
+      { drawingId },
+    );
+
+    await service.revokeShareLink(ownerId, drawingId);
+    expect(revokedLinks).toHaveLength(2);
+    await expect(service.getShareLink(ownerId, drawingId)).resolves.toEqual({
+      active: false,
+    });
+    await expect(service.inspectShareToken(secondToken)).rejects.toMatchObject({
+      code: "SHARE_LINK_NOT_FOUND",
+    });
+    await expect(
+      service.revokeShareLink(ownerId, drawingId),
+    ).rejects.toMatchObject({ code: "SHARE_LINK_NOT_FOUND" });
+  });
+
+  it("conceals link management from editors and outsiders", async () => {
+    await expect(
+      service.createShareLink(editorId, drawingId),
+    ).rejects.toMatchObject({ code: "FORBIDDEN", status: 403 });
+    await expect(
+      service.createShareLink(randomUUID(), drawingId),
+    ).rejects.toMatchObject({ code: "DRAWING_NOT_FOUND", status: 404 });
+    await expect(
+      service.getShareLink(editorId, drawingId),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("stops resolving tokens of a soft-deleted drawing", async () => {
+    const created = await service.createShareLink(ownerId, drawingId);
+    const token = tokenFromUrl(created.url);
+    await database.pool.query(
+      `UPDATE drawings SET deleted_at = now() WHERE id = $1`,
+      [drawingId],
+    );
+    try {
+      await expect(service.inspectShareToken(token)).rejects.toMatchObject({
+        code: "SHARE_LINK_NOT_FOUND",
+      });
+    } finally {
+      await database.pool.query(
+        `UPDATE drawings SET deleted_at = NULL WHERE id = $1`,
+        [drawingId],
+      );
+    }
+  });
+});
