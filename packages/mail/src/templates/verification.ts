@@ -5,6 +5,7 @@ export interface VerificationEmailInput {
   to: string;
   verificationUrl: string;
   productName?: string;
+  heroImageUrl?: string;
 }
 
 export function renderVerificationEmail(
@@ -19,5 +20,6 @@ export function renderVerificationEmail(
     actionLabel: "Verify email",
     actionUrl: input.verificationUrl,
     productName: input.productName,
+    heroImageUrl: input.heroImageUrl,
   });
 }

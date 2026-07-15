@@ -8,6 +8,7 @@ export interface InvitationEmailInput {
   drawingTitle: string;
   role: "editor" | "viewer";
   productName?: string;
+  heroImageUrl?: string;
 }
 
 export function renderInvitationEmail(
@@ -25,7 +26,8 @@ export function renderInvitationEmail(
     actionLabel: "Open invitation",
     actionUrl: input.invitationUrl,
     productName: input.productName,
+    heroImageUrl: input.heroImageUrl,
     closing:
-      "This invitation is personal. Do not forward the link. It will expire after the configured invitation period.",
+      "This invitation link is personal to you and will expire — please do not forward it. If you were not expecting this invitation, you can ignore this email.",
   });
 }

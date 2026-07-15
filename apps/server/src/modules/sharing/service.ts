@@ -17,6 +17,7 @@ export interface SharingServiceOptions {
   repository: SharingRepository;
   mailer: Mailer;
   publicBaseUrl: string;
+  heroImageUrl?: string;
   requireVerifiedEmailForAcceptance: boolean;
   invitationLifetimeMs?: number;
   membershipEvents?: {
@@ -31,6 +32,7 @@ export class SharingService {
   readonly #repository: SharingRepository;
   readonly #mailer: Mailer;
   readonly #publicBaseUrl: URL;
+  readonly #heroImageUrl: string | undefined;
   readonly #requireVerifiedEmail: boolean;
   readonly #invitationLifetimeMs: number;
   readonly #membershipEvents: SharingServiceOptions["membershipEvents"];
@@ -42,6 +44,7 @@ export class SharingService {
     if (!["http:", "https:"].includes(this.#publicBaseUrl.protocol)) {
       throw new TypeError("publicBaseUrl must use HTTP or HTTPS");
     }
+    this.#heroImageUrl = options.heroImageUrl;
     this.#requireVerifiedEmail = options.requireVerifiedEmailForAcceptance;
     this.#membershipEvents = options.membershipEvents;
     this.#invitationLifetimeMs = options.invitationLifetimeMs ?? SEVEN_DAYS_MS;
@@ -107,6 +110,7 @@ export class SharingService {
       inviterName: result.invitation.inviterName,
       drawingTitle: result.invitation.drawingTitle,
       role: result.invitation.role,
+      heroImageUrl: this.#heroImageUrl,
     });
     const delivery = await this.#mailer.send(message).catch(() => ({
       status: "failed" as const,
