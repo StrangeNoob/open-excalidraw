@@ -12,6 +12,7 @@ import { Router } from "express";
 import { Server as SocketIoServer } from "socket.io";
 
 import { createApp } from "./app.js";
+import { createDocsRouter } from "./http/docs.js";
 import {
   createStorageFromEnvironment,
   requiredEnvironment,
@@ -292,6 +293,7 @@ const app = createApp({
     createSharingRouter({ service: sharingService, identity }),
     createChatRouter({ service: chatService, identity }),
     assetRouter,
+    createDocsRouter(),
   ],
   ...(staticDirectory ? { staticDirectory } : {}),
 });
