@@ -50,8 +50,11 @@ describe("database schema", () => {
     expect(config.checks.map((check) => check.name)).toContain(
       "chat_messages_body_length",
     );
-    expect(config.indexes.map((index) => index.config.name)).toContain(
-      "chat_messages_drawing_created_idx",
+    expect(config.indexes.map((index) => index.config.name)).toEqual(
+      expect.arrayContaining([
+        "chat_messages_drawing_created_idx",
+        "chat_messages_user_id_idx",
+      ]),
     );
   });
 

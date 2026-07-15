@@ -423,6 +423,13 @@ describe("chat messages", () => {
       ),
     ).rejects.toMatchObject({ constraint: "chat_messages_body_length" });
 
+    await expect(
+      pool.query(
+        `INSERT INTO chat_messages (drawing_id, user_id, body) VALUES ($1, $2, $3)`,
+        [drawingId, ownerId, "   "],
+      ),
+    ).rejects.toMatchObject({ constraint: "chat_messages_body_length" });
+
     await pool.query(
       `INSERT INTO chat_messages (drawing_id, user_id, body) VALUES ($1, $2, $3)`,
       [drawingId, ownerId, "hello"],

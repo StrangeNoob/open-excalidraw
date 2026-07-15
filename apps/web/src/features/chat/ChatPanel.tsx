@@ -69,13 +69,17 @@ export const ChatPanel = ({
     try {
       const page = await client.history(drawingId, null);
       // Merge instead of replace: a live message may have arrived while
-      // this request was in flight.
+      // this request was in flight, and a reconnect reload must slot the
+      // latest page after any older pages already on screen.
       setMessages((current) => {
-        const pageIds = new Set(page.messages.map(({ id }) => id));
-        return [
-          ...[...page.messages].reverse(),
-          ...current.filter(({ id }) => !pageIds.has(id)),
-        ];
+        const byId = new Map(current.map((message) => [message.id, message]));
+        for (const message of page.messages) {
+          byId.set(message.id, message);
+        }
+        return [...byId.values()].sort(
+          (a, b) =>
+            a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+        );
       });
       setNextCursor(page.nextCursor);
       setLoadError(null);

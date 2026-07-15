@@ -1,5 +1,5 @@
 import type { ChatMessage } from "@open-excalidraw/contracts";
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import type { SocketIoTransport } from "../collaboration";
@@ -124,6 +124,55 @@ describe("ChatPanel", () => {
     expect(
       await screen.findByText(/sending messages too fast/),
     ).toBeInTheDocument();
+  });
+
+  it("keeps chronological order when a reconnect reloads after older pages", async () => {
+    const user = userEvent.setup();
+    const fake = createFakeTransport();
+    const oldest = message({
+      body: "oldest",
+      createdAt: "2026-07-15T00:00:00.000Z",
+    });
+    const middle = message({
+      body: "middle",
+      createdAt: "2026-07-15T00:01:00.000Z",
+    });
+    const newest = message({
+      body: "newest",
+      createdAt: "2026-07-15T00:02:00.000Z",
+    });
+    const client = {
+      history: vi.fn((_drawingId: string, before: string | null) =>
+        Promise.resolve(
+          before
+            ? { messages: [oldest], nextCursor: null }
+            : { messages: [newest, middle], nextCursor: oldest.id },
+        ),
+      ),
+    };
+    const props = {
+      client,
+      drawingId: DRAWING_ID,
+      error: null,
+      onClose: vi.fn(),
+      transport: fake.transport,
+      userId: ME_ID,
+    };
+
+    const { rerender } = render(<ChatPanel {...props} status="ready" />);
+    await user.click(
+      await screen.findByRole("button", { name: "Load older messages" }),
+    );
+    await screen.findByText("oldest");
+
+    rerender(<ChatPanel {...props} status="reconnecting" />);
+    rerender(<ChatPanel {...props} status="ready" />);
+    await waitFor(() => expect(client.history).toHaveBeenCalledTimes(3));
+
+    const bodies = [...document.querySelectorAll(".chat-body")].map(
+      (element) => element.textContent,
+    );
+    expect(bodies).toEqual(["oldest", "middle", "newest"]);
   });
 
   it("ignores messages for other drawings", async () => {

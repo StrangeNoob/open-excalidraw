@@ -32,9 +32,10 @@ export const chatMessages = pgTable(
       table.createdAt.desc(),
       table.id.desc(),
     ),
+    index("chat_messages_user_id_idx").on(table.userId),
     check(
       "chat_messages_body_length",
-      sql`char_length(${table.body}) between 1 and 4000`,
+      sql`char_length(trim(${table.body})) > 0 and char_length(${table.body}) <= 4000`,
     ),
   ],
 );
