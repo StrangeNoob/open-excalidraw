@@ -253,6 +253,7 @@ export const DrawingPage = ({
         setEditorApi(null);
         setAssetFailures(new Map());
         setRestoringRevision(false);
+        setChatUnread(0);
       }
     });
 

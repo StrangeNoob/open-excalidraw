@@ -566,17 +566,18 @@ describe("DrawingPage", () => {
         }
       });
 
-    render(
+    const workspaceDependencies = {
+      ...dependencies,
+      chat: {
+        history: vi.fn(() =>
+          Promise.resolve({ messages: [], nextCursor: null }),
+        ),
+      },
+      createRealtimeTransport: () => fakeTransport as never,
+    };
+    const { rerender } = render(
       <DrawingPage
-        dependencies={{
-          ...dependencies,
-          chat: {
-            history: vi.fn(() =>
-              Promise.resolve({ messages: [], nextCursor: null }),
-            ),
-          },
-          createRealtimeTransport: () => fakeTransport as never,
-        }}
+        dependencies={workspaceDependencies}
         drawingId={DRAWING_A}
         userId={USER}
       />,
@@ -597,5 +598,22 @@ describe("DrawingPage", () => {
     expect(
       await screen.findByRole("button", { name: "Chat" }),
     ).not.toHaveTextContent("2");
+    await user.click(screen.getByRole("button", { name: "Chat" }));
+
+    receive("while closed again", "20000000-0000-4000-8000-000000000001");
+    await screen.findByRole("button", { name: "Chat, 1 unread message" });
+
+    rerender(
+      <DrawingPage
+        dependencies={workspaceDependencies}
+        drawingId={DRAWING_B}
+        userId={USER}
+      />,
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Chat" }),
+      ).not.toHaveTextContent("1"),
+    );
   });
 });
