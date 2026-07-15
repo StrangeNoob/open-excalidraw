@@ -39,6 +39,7 @@ RUN pnpm --filter @open-excalidraw/web build
 # esbuild is a dev dependency of the server package, so both bundles must be
 # produced through that package rather than with a workspace-root pnpm exec.
 RUN pnpm --filter @open-excalidraw/server run bundle
+RUN pnpm --filter @open-excalidraw/server run bundle:migrate-assets
 RUN pnpm --filter @open-excalidraw/server exec esbuild \
     ../../packages/database/src/migrate-cli.ts \
     --bundle \
@@ -56,6 +57,7 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
 FROM node:${NODE_VERSION} AS runtime
 ENV NODE_ENV=production
 ENV APP_PORT=3000
+ENV STORAGE_LOCAL_PATH=/data/assets
 WORKDIR /app/apps/server
 RUN addgroup -S -g 10001 open-excalidraw \
     && adduser -S -D -H -u 10001 -G open-excalidraw open-excalidraw \
@@ -65,6 +67,7 @@ COPY --from=production-dependencies --chown=10001:10001 /workspace/node_modules 
 COPY --from=production-dependencies --chown=10001:10001 /workspace/apps/server/node_modules ./node_modules
 COPY --from=production-dependencies --chown=10001:10001 /workspace/packages/database/node_modules /app/packages/database/node_modules
 COPY --from=build --chown=10001:10001 /workspace/apps/server/dist/server.mjs ./server.mjs
+COPY --from=build --chown=10001:10001 /workspace/apps/server/dist/migrate-assets.mjs ./migrate-assets.mjs
 COPY --from=build --chown=10001:10001 /workspace/apps/web/dist ./public
 COPY --from=build --chown=10001:10001 /output/packages/database/src/migrate.mjs /app/packages/database/src/migrate.mjs
 COPY --from=build --chown=10001:10001 /workspace/packages/database/migrations /app/packages/database/migrations

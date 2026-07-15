@@ -71,6 +71,50 @@ Provider callback URLs must use the final `APP_BASE_URL`:
 `https://draw.example.com/api/auth/callback/github`. Keep the UI, REST API,
 and collaboration socket on the same canonical origin.
 
+## S3-compatible object storage
+
+Assets default to the local volume at `STORAGE_LOCAL_PATH`. Set
+`STORAGE_DRIVER=s3` to store them in any S3-compatible bucket instead — AWS
+S3, Cloudflare R2, MinIO, Backblaze B2, DigitalOcean Spaces, or Wasabi:
+
+```dotenv
+STORAGE_DRIVER=s3
+S3_BUCKET=open-excalidraw-assets
+S3_REGION=auto                # R2 uses "auto"; AWS needs a real region
+S3_ENDPOINT=                  # omit for AWS; see .env.example for providers
+S3_ACCESS_KEY_ID=...
+S3_SECRET_ACCESS_KEY=...
+S3_FORCE_PATH_STYLE=false     # true for MinIO
+```
+
+With the `s3` driver, `STORAGE_LOCAL_PATH` and the persistent asset volume
+are unused, so the container needs no writable mounts. The deployment must
+still run as a single replica: the collaboration registry is in-process (see
+the [collaboration runbook](collaboration.md)).
+
+### Migrating existing assets between drivers
+
+The image ships `migrate-assets.mjs`, which copies every live asset between
+the local volume and the S3 bucket in either direction. It enumerates from
+the database (only referenced assets move), verifies each copy against the
+recorded checksum, and skips assets already at the destination — so it is
+safe to re-run after an interruption.
+
+Run it inside the container with **both** storage configurations present
+(`STORAGE_LOCAL_PATH` and the `S3_*` variables), before switching
+`STORAGE_DRIVER`:
+
+```sh
+node migrate-assets.mjs --from local --to s3 --dry-run   # list what would move
+node migrate-assets.mjs --from local --to s3             # copy volume -> bucket
+node migrate-assets.mjs --from s3 --to local             # copy bucket -> volume
+```
+
+The command prints one line per asset and a
+`copied/skipped/missing/failed` summary, exiting non-zero when any copy
+failed. Once it reports success, flip `STORAGE_DRIVER` and redeploy; the
+source location can be retired afterwards.
+
 ## Start with built-in HTTPS
 
 ```sh

@@ -103,6 +103,7 @@ const drawing = (
   ownerName: "Ada",
   ownerUserId: USER,
   role,
+  tags: [],
   title,
   updatedAt: "2026-07-11T00:00:00.000Z",
 });

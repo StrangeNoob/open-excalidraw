@@ -100,7 +100,8 @@ describe("initial PostgreSQL migration", () => {
       "0001_initial.sql",
       "0002_mutation_noop.sql",
       "0003_asset_cleanup_state.sql",
-      "0004_chat_messages.sql",
+      "0004_drawing_user_tags.sql",
+      "0005_chat_messages.sql",
     ]);
     expect(second.alreadyApplied).toEqual(first.applied);
     expect(record.rows).toEqual(first.applied);
@@ -177,6 +178,8 @@ describe("database constraints", () => {
       "drawing_mutations.drawing_id->drawings.id",
       "drawing_revisions.author_user_id->user.id",
       "drawing_revisions.drawing_id->drawings.id",
+      "drawing_user_tags.drawing_id->drawings.id",
+      "drawing_user_tags.user_id->user.id",
       "drawings.owner_user_id->user.id",
       "session.user_id->user.id",
     ]);

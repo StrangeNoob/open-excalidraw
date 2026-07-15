@@ -162,6 +162,33 @@ export const drawingMutations = pgTable(
   ],
 );
 
+export const drawingUserTags = pgTable(
+  "drawing_user_tags",
+  {
+    drawingId: uuid("drawing_id")
+      .notNull()
+      .references(() => drawings.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    tag: varchar("tag", { length: 32 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({
+      name: "drawing_user_tags_pkey",
+      columns: [table.drawingId, table.userId, table.tag],
+    }),
+    index("drawing_user_tags_user_id_idx").on(table.userId),
+    check(
+      "drawing_user_tags_tag_normalized",
+      sql`${table.tag} = lower(btrim(${table.tag})) AND char_length(${table.tag}) BETWEEN 1 AND 32`,
+    ),
+  ],
+);
+
 /** Canonical predicate for all user-facing drawing reads. */
 export function drawingIsActive() {
   return isNull(drawings.deletedAt);

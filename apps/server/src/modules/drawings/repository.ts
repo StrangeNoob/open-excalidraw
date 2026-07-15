@@ -23,11 +23,21 @@ interface AccessibleDrawingRow extends QueryResultRow {
   owner_user_id: string;
   owner_name: string;
   role: "owner" | "editor" | "viewer";
+  tags: string[];
   content_revision: string;
   metadata_revision: string;
   created_at: Date;
   updated_at: Date;
 }
+
+/** The requesting user's private tags, aggregated per drawing. */
+const tagsSelect = (userParam: string) => `
+  COALESCE((
+    SELECT array_agg(t.tag ORDER BY t.tag)
+    FROM drawing_user_tags t
+    WHERE t.drawing_id = d.id AND t.user_id = ${userParam}
+  ), '{}') AS tags
+`;
 
 export class PostgresDrawingRepository implements DrawingRepository {
   public constructor(private readonly pool: Pool) {}
@@ -39,7 +49,7 @@ export class PostgresDrawingRepository implements DrawingRepository {
           SELECT
             d.id, d.title, d.owner_user_id, u.name AS owner_name,
             'owner'::text AS role, d.content_revision, d.metadata_revision,
-            d.created_at, d.updated_at
+            d.created_at, d.updated_at, ${tagsSelect("$1")}
           FROM drawings d
           JOIN "user" u ON u.id = d.owner_user_id
           WHERE d.owner_user_id = $1 AND d.deleted_at IS NULL
@@ -52,7 +62,7 @@ export class PostgresDrawingRepository implements DrawingRepository {
           SELECT
             d.id, d.title, d.owner_user_id, u.name AS owner_name,
             m.role, d.content_revision, d.metadata_revision,
-            d.created_at, d.updated_at
+            d.created_at, d.updated_at, ${tagsSelect("$1")}
           FROM drawing_members m
           JOIN drawings d ON d.id = m.drawing_id
           JOIN "user" u ON u.id = d.owner_user_id
@@ -98,7 +108,7 @@ export class PostgresDrawingRepository implements DrawingRepository {
         SELECT
           d.id, d.title, d.owner_user_id, u.name AS owner_name,
           'owner'::text AS role, d.content_revision, d.metadata_revision,
-          d.created_at, d.updated_at
+          d.created_at, d.updated_at, '{}'::text[] AS tags
         FROM created d
         JOIN "user" u ON u.id = d.owner_user_id
       `,
@@ -204,6 +214,36 @@ export class PostgresDrawingRepository implements DrawingRepository {
           [input.drawingId, input.ownerUserId],
         );
     return result.rowCount === 1 ? "deleted" : "not-found";
+  }
+
+  public async replaceTags(input: {
+    drawingId: string;
+    userId: string;
+    tags: string[];
+  }): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `DELETE FROM drawing_user_tags WHERE drawing_id = $1 AND user_id = $2`,
+        [input.drawingId, input.userId],
+      );
+      if (input.tags.length > 0) {
+        await client.query(
+          `
+            INSERT INTO drawing_user_tags (drawing_id, user_id, tag)
+            SELECT $1, $2, unnest($3::text[])
+          `,
+          [input.drawingId, input.userId, input.tags],
+        );
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   public async leave(input: { drawingId: string; userId: string }) {
@@ -340,7 +380,8 @@ async function findAccessibleWith(
       SELECT
         d.id, d.title, d.owner_user_id, u.name AS owner_name,
         CASE WHEN d.owner_user_id = $2 THEN 'owner' ELSE m.role END AS role,
-        d.content_revision, d.metadata_revision, d.created_at, d.updated_at
+        d.content_revision, d.metadata_revision, d.created_at, d.updated_at,
+        ${tagsSelect("$2")}
       FROM drawings d
       JOIN "user" u ON u.id = d.owner_user_id
       LEFT JOIN drawing_members m
@@ -365,6 +406,7 @@ function mapAccessible(row: AccessibleDrawingRow): AccessibleDrawing {
     ownerUserId: row.owner_user_id,
     ownerName: row.owner_name,
     role: row.role,
+    tags: row.tags,
     contentRevision: BigInt(row.content_revision),
     metadataRevision: BigInt(row.metadata_revision),
     createdAt: row.created_at,

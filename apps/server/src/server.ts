@@ -6,13 +6,18 @@ import { fileURLToPath } from "node:url";
 import { CONTRACT_LIMITS } from "@open-excalidraw/contracts";
 import { createDatabase } from "@open-excalidraw/database";
 import { DisabledMailer, SmtpMailer, type Mailer } from "@open-excalidraw/mail";
-import { LocalObjectStorage } from "@open-excalidraw/storage";
+import type { ObjectStorage } from "@open-excalidraw/storage";
 import { config as loadDotenv } from "dotenv";
 import { Router } from "express";
 import { Server as SocketIoServer } from "socket.io";
 
 import { createApp } from "./app.js";
 import {
+  createStorageFromEnvironment,
+  requiredEnvironment,
+} from "./storage-config.js";
+import {
+  AssetError,
   AssetService,
   createAssetRouter,
   DrizzleAssetRepository,
@@ -81,6 +86,10 @@ const auth = createOpenExcalidrawAuth({
   smtpEnabled,
   manualResetLinks,
   trustedOrigins: allowedBrowserOrigins,
+  sessionExpiresInSeconds: positiveEnvironmentInteger(
+    "SESSION_TTL_SECONDS",
+    60 * 60 * 24 * 30,
+  ),
   ...(google ? { google } : {}),
   ...(github ? { github } : {}),
 });
@@ -113,14 +122,9 @@ const sharingService = new SharingService({
   },
 });
 
-if ((process.env.STORAGE_DRIVER ?? "local") !== "local") {
-  throw new Error("Only STORAGE_DRIVER=local is available in this release");
-}
-
-const storage = new LocalObjectStorage({
-  rootDirectory:
-    process.env.STORAGE_LOCAL_PATH ?? join(process.cwd(), "uploads"),
-});
+const storage: ObjectStorage = createStorageFromEnvironment(
+  process.env.STORAGE_DRIVER?.trim() || "local",
+);
 const maintenanceJobs = new MaintenanceJobs(database.pool, storage);
 const maintenanceIntervalMs = positiveEnvironmentInteger(
   "MAINTENANCE_INTERVAL_MS",
@@ -243,6 +247,22 @@ const assetRouter = Router().use(
       const resolved = await identity.resolve(request.headers);
       return resolved ? { userId: resolved.userId } : null;
     },
+    onError: (error, request) => {
+      // Expected client failures (4xx) are visible in responses; only
+      // unexpected errors need operator visibility.
+      if (error instanceof AssetError && error.status < 500) {
+        return;
+      }
+      const cause = rootCause(error);
+      operationalLog("error", "assets.request_failed", {
+        errorType: safeErrorType(error),
+        causeType: safeErrorType(cause),
+        causeCode: errorCodeOf(cause),
+        message: cause instanceof Error ? cause.message : String(cause),
+        method: request.method,
+        path: request.path,
+      });
+    },
   }),
 );
 const staticDirectory =
@@ -330,14 +350,6 @@ const shutdown = () => {
 process.once("SIGINT", shutdown);
 process.once("SIGTERM", shutdown);
 
-function requiredEnvironment(name: string): string {
-  const value = process.env[name]?.trim();
-  if (!value) {
-    throw new Error(`${name} is required`);
-  }
-  return value;
-}
-
 function loadEnvironmentFile(): void {
   const candidates = [
     resolve(process.cwd(), ".env"),
@@ -357,7 +369,7 @@ function positiveEnvironmentInteger(name: string, fallback: number): number {
   // Node timers overflow above a signed 32-bit millisecond delay and are
   // otherwise clamped to 1 ms, which would turn a typo into a tight loop.
   if (!Number.isSafeInteger(value) || value > 2_147_483_647) {
-    throw new Error(`${name} must not exceed 2147483647 milliseconds`);
+    throw new Error(`${name} must not exceed 2147483647`);
   }
   return value;
 }
@@ -370,6 +382,29 @@ function operationalLog(
   process.stdout.write(
     `${JSON.stringify({ level, event, time: new Date().toISOString(), ...details })}\n`,
   );
+}
+
+function rootCause(error: unknown): unknown {
+  let current = error;
+  for (let depth = 0; depth < 8; depth += 1) {
+    if (current instanceof Error && current.cause !== undefined) {
+      current = current.cause;
+    } else {
+      break;
+    }
+  }
+  return current;
+}
+
+function errorCodeOf(error: unknown): string | null {
+  if (
+    error instanceof Error &&
+    "code" in error &&
+    typeof error.code === "string"
+  ) {
+    return error.code;
+  }
+  return null;
 }
 
 function safeErrorType(error: unknown): string {
