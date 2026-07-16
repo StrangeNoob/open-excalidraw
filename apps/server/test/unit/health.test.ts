@@ -90,6 +90,29 @@ describe("health endpoint", () => {
     await request(app).get("/health/live").expect(200, { status: "ok" });
   });
 
+  it("serves public brand assets with CORP cross-origin", async () => {
+    const staticDirectory = await mkdtemp(
+      join(tmpdir(), "open-excalidraw-web-"),
+    );
+    await writeFile(join(staticDirectory, "index.html"), "<!doctype html>");
+    await writeFile(join(staticDirectory, "icon-512.png"), "png");
+    await writeFile(join(staticDirectory, "favicon.svg"), "<svg/>");
+    const app = createApp({ staticDirectory });
+
+    const icon = await request(app).get("/icon-512.png").expect(200);
+    expect(icon.headers["cross-origin-resource-policy"]).toBe("cross-origin");
+    const favicon = await request(app).get("/favicon.svg").expect(200);
+    expect(favicon.headers["cross-origin-resource-policy"]).toBe(
+      "cross-origin",
+    );
+    const spa = await request(app).get("/drawings/example").expect(200);
+    expect(spa.headers["cross-origin-resource-policy"]).toBe("same-origin");
+    const api = await request(app).get("/api/v1/missing").expect(404);
+    expect(api.headers["cross-origin-resource-policy"]).toBe("same-origin");
+
+    await rm(staticDirectory, { force: true, recursive: true });
+  });
+
   it("mounts API routers and serves the SPA fallback", async () => {
     const staticDirectory = await mkdtemp(
       join(tmpdir(), "open-excalidraw-web-"),
