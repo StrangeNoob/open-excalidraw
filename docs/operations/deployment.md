@@ -88,7 +88,7 @@ instance-specific OAuth/OIDC/SMTP entries. Then:
 ```sh
 railway templates publish <template-id> --category Starters \
   --description "Self-hostable collaborative drawing built on Excalidraw" \
-  --readme-file README.md --json
+  --readme-file docs/operations/railway-template-overview.md --json
 ```
 
 Publishing returns the template code; link it from the README:
