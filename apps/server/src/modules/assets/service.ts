@@ -350,6 +350,13 @@ export class AssetService {
         new Date(),
       ))
     ) {
+      // The drawing vanished mid-upload. Drop the just-written blob instead
+      // of relying only on the drawing-purge backstop.
+      try {
+        await this.#storage.delete(storageKey);
+      } catch {
+        // Purge deletes the fixed key when the drawing row goes away.
+      }
       throw drawingNotFound();
     }
   }
@@ -389,16 +396,18 @@ export class AssetService {
       input.identity.userId,
     );
 
+    // Storage first: a transient deletion failure surfaces as an error
+    // instead of a 204 that leaves the blob downloadable while the summary
+    // claims no thumbnail exists. A missing key deletes as a no-op.
+    try {
+      await this.#storage.delete(storageKey);
+    } catch (error) {
+      throw mapStorageError(error, MAX_THUMBNAIL_BYTES);
+    }
     if (
       !(await this.#repository.setThumbnailUpdatedAt(input.drawingId, null))
     ) {
       throw drawingNotFound();
-    }
-    try {
-      await this.#storage.delete(storageKey);
-    } catch {
-      // The cleared column already hides the thumbnail; a leftover blob is
-      // replaced by the next upload or removed when the drawing is purged.
     }
   }
 

@@ -19,7 +19,7 @@ export class AssetRequestError extends Error {
   constructor(
     readonly status: number,
     readonly fileId: string,
-    operation: "download" | "upload",
+    operation: "delete" | "download" | "upload",
   ) {
     super(`Asset ${fileId} ${operation} failed (${status})`);
     this.name = "AssetRequestError";
@@ -121,7 +121,7 @@ export class AssetClient {
       signal,
     });
     if (!response.ok) {
-      throw new AssetRequestError(response.status, "thumbnail", "upload");
+      throw new AssetRequestError(response.status, "thumbnail", "delete");
     }
   }
 

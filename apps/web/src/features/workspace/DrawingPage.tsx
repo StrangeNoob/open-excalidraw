@@ -243,6 +243,10 @@ export const DrawingPage = ({
   const thumbnailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // undefined = unknown server state, null = known cleared, string = last sha.
   const thumbnailShaRef = useRef<string | null | undefined>(undefined);
+  // Invalidates in-flight captures on drawing change: a late result from the
+  // previous drawing must not seed this drawing's sha and suppress uploads.
+  const thumbnailGenerationRef = useRef(0);
+  const thumbnailInFlightRef = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
     editorApiRef.current = editorApi;
@@ -251,12 +255,15 @@ export const DrawingPage = ({
   const captureThumbnailNow = useCallback(() => {
     thumbnailTimerRef.current = null;
     const api = editorApiRef.current;
-    if (!api) {
+    // One capture chain at a time; the next edit re-arms the window rather
+    // than overlapping a slow capture.
+    if (!api || thumbnailInFlightRef.current) {
       return;
     }
+    const generation = thumbnailGenerationRef.current;
     // Fire-and-forget: thumbnail failures must never surface or touch
     // autosave/collaboration state.
-    void resolved
+    const capture = resolved
       .captureThumbnail(
         api,
         drawingId,
@@ -264,9 +271,17 @@ export const DrawingPage = ({
         thumbnailShaRef.current,
       )
       .then((sha256) => {
-        thumbnailShaRef.current = sha256;
+        if (generation === thumbnailGenerationRef.current) {
+          thumbnailShaRef.current = sha256;
+        }
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => {
+        if (thumbnailInFlightRef.current === capture) {
+          thumbnailInFlightRef.current = null;
+        }
+      });
+    thumbnailInFlightRef.current = capture;
   }, [drawingId, resolved]);
 
   // Trailing throttle: at most one capture per window, of the scene as it
@@ -303,7 +318,9 @@ export const DrawingPage = ({
         clearTimeout(thumbnailTimerRef.current);
         thumbnailTimerRef.current = null;
       }
+      thumbnailGenerationRef.current += 1;
       thumbnailShaRef.current = undefined;
+      thumbnailInFlightRef.current = null;
     },
     [drawingId],
   );

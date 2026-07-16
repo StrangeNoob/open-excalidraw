@@ -660,6 +660,60 @@ describe("DrawingPage", () => {
     );
   });
 
+  it("ignores a late capture from a previous drawing", async () => {
+    const user = userEvent.setup();
+    let resolveFirst!: (sha256: string | null) => void;
+    const capture = vi
+      .fn<
+        (
+          api: unknown,
+          drawingId: string,
+          client: unknown,
+          previousSha256?: string | null,
+        ) => Promise<string | null>
+      >(() => Promise.resolve("sha-b"))
+      .mockImplementationOnce(
+        () =>
+          new Promise<string | null>((resolve) => {
+            resolveFirst = resolve;
+          }),
+      );
+    const fixture = createDependencies();
+    const view = render(
+      <DrawingPage
+        collaborationEnabled={false}
+        dependencies={{ ...fixture.dependencies, captureThumbnail: capture }}
+        drawingId={DRAWING_A}
+        thumbnailDebounceMs={10}
+        userId={USER}
+      />,
+    );
+    await waitFor(() => expect(capture).toHaveBeenCalledTimes(1));
+
+    view.rerender(
+      <DrawingPage
+        collaborationEnabled={false}
+        dependencies={{ ...fixture.dependencies, captureThumbnail: capture }}
+        drawingId={DRAWING_B}
+        thumbnailDebounceMs={10}
+        userId={USER}
+      />,
+    );
+    // Drawing B's own first capture starts with unknown server state.
+    await waitFor(() => expect(capture).toHaveBeenCalledTimes(2));
+    expect(capture.mock.calls[1]?.[1]).toBe(DRAWING_B);
+    expect(capture.mock.calls[1]?.[3]).toBeUndefined();
+
+    // Drawing A's capture settles late; its sha must not leak into B.
+    await act(async () => {
+      resolveFirst("sha-a");
+      await Promise.resolve();
+    });
+    await user.click(await screen.findByRole("button", { name: "Make edit" }));
+    await waitFor(() => expect(capture).toHaveBeenCalledTimes(3));
+    expect(capture.mock.calls[2]?.[3]).toBe("sha-b");
+  });
+
   it("never lets a failed capture disturb the save status", async () => {
     const user = userEvent.setup();
     const capture = vi.fn(() => Promise.reject(new Error("canvas exploded")));

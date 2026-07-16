@@ -773,7 +773,14 @@ export const openApiDocument = {
               "thumbnail; retry after the next edit.",
           ),
           "413": problem("`THUMBNAIL_TOO_LARGE`: exceeds 512 KiB."),
-          "415": problem("`UNSUPPORTED_THUMBNAIL_TYPE`: not image/png."),
+          "415": problem(
+            "`UNSUPPORTED_THUMBNAIL_TYPE`: not image/png, or " +
+              "`ASSET_MIME_MISMATCH`: the bytes are not PNG.",
+          ),
+          "422": problem(
+            "`ASSET_CHECKSUM_MISMATCH`: the body does not match the " +
+              "declared checksum.",
+          ),
         },
       },
       get: {

@@ -153,6 +153,11 @@ describe("asset pipeline", () => {
         new Blob([new Uint8Array([1])], { type: "image/png" }),
       ),
     ).rejects.toMatchObject({ status: 403 });
+
+    fetch.mockResolvedValueOnce(new Response(null, { status: 503 }));
+    await expect(
+      client.deleteThumbnail("10000000-0000-4000-8000-000000000001"),
+    ).rejects.toThrow("thumbnail delete failed (503)");
   });
 
   it("collects image references from live elements and retained tombstones", () => {

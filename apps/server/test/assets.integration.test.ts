@@ -45,6 +45,7 @@ class MemoryAssetRepository implements AssetRepository {
   failFind = false;
   failFindAfter: number | null = null;
   failInsert = false;
+  failThumbnailUpdate = false;
   findCalls = 0;
 
   public setAccess(drawingId: string, userId: string, role: AssetAccessRole) {
@@ -55,7 +56,7 @@ class MemoryAssetRepository implements AssetRepository {
     const known = [...this.access.keys()].some((key) =>
       key.startsWith(`${drawingId}:`),
     );
-    if (!known) {
+    if (!known || this.failThumbnailUpdate) {
       return Promise.resolve(false);
     }
     this.thumbnails.set(drawingId, when);
@@ -106,6 +107,26 @@ class MemoryAssetRepository implements AssetRepository {
       asset: created,
       created: true,
     });
+  }
+}
+
+class FailingDeleteStorage implements ObjectStorage {
+  public constructor(private readonly delegate: ObjectStorage) {}
+
+  public put(...args: Parameters<ObjectStorage["put"]>) {
+    return this.delegate.put(...args);
+  }
+
+  public get(...args: Parameters<ObjectStorage["get"]>) {
+    return this.delegate.get(...args);
+  }
+
+  public stat(...args: Parameters<ObjectStorage["stat"]>) {
+    return this.delegate.stat(...args);
+  }
+
+  public delete(): ReturnType<ObjectStorage["delete"]> {
+    return Promise.reject(new Error("disk offline"));
   }
 }
 
@@ -410,6 +431,37 @@ describe("asset HTTP boundary", () => {
     await expect(
       storage.stat(`drawings/${DRAWING_A}/thumbnail`),
     ).rejects.toMatchObject({ name: "StorageNotFoundError" });
+  });
+
+  it("removes the blob when the drawing vanishes during thumbnail upload", async () => {
+    repository.failThumbnailUpdate = true;
+    const app = createTestApp(repository, storage);
+
+    const response = await putThumbnail(app, OWNER_ID, PNG);
+    expect(response.status).toBe(404);
+    expect(response.body.code).toBe("DRAWING_NOT_FOUND");
+    await expect(
+      storage.stat(`drawings/${DRAWING_A}/thumbnail`),
+    ).rejects.toMatchObject({ name: "StorageNotFoundError" });
+  });
+
+  it("keeps thumbnail metadata when storage deletion fails", async () => {
+    const app = createTestApp(repository, storage);
+    expect((await putThumbnail(app, OWNER_ID, PNG)).status).toBe(204);
+
+    const failingApp = createTestApp(
+      repository,
+      new FailingDeleteStorage(storage),
+    );
+    const failed = await request(failingApp)
+      .delete(`/api/v1/drawings/${DRAWING_A}/thumbnail`)
+      .set("x-test-user-id", OWNER_ID);
+    expect(failed.status).toBe(503);
+    // The summary still advertises the thumbnail, which remains downloadable.
+    expect(repository.thumbnails.get(DRAWING_A)).toBeInstanceOf(Date);
+    await expect(
+      storage.stat(`drawings/${DRAWING_A}/thumbnail`),
+    ).resolves.toMatchObject({ sha256: checksum(PNG) });
   });
 
   it("clears the thumbnail on delete for editors only", async () => {

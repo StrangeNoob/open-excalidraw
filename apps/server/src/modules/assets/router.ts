@@ -10,7 +10,11 @@ import express, {
 import { requestIdFor } from "../../http/request-context.js";
 
 import { AssetError, assetError } from "./errors.js";
-import { ASSET_CHECKSUM_HEADER, DEFAULT_MAX_ASSET_BYTES } from "./service.js";
+import {
+  ASSET_CHECKSUM_HEADER,
+  DEFAULT_MAX_ASSET_BYTES,
+  MAX_THUMBNAIL_BYTES,
+} from "./service.js";
 import type { AssetService } from "./service.js";
 import type { AssetIdentityResolver, AssetRecord } from "./types.js";
 
@@ -27,6 +31,13 @@ export function createAssetRouter(options: CreateAssetRouterOptions): Router {
   const router = express.Router();
   const rawBody = express.raw({
     limit: options.service.maxAssetBytes,
+    type: () => true,
+  });
+  // Transport guard only, decoupled from the configurable asset limit so a
+  // small maxAssetBytes cannot reject valid thumbnails. The service enforces
+  // MAX_THUMBNAIL_BYTES exactly, with the precise error code.
+  const thumbnailRawBody = express.raw({
+    limit: 2 * MAX_THUMBNAIL_BYTES,
     type: () => true,
   });
 
@@ -82,7 +93,7 @@ export function createAssetRouter(options: CreateAssetRouterOptions): Router {
 
   router.put(
     "/drawings/:drawingId/thumbnail",
-    rawBody,
+    thumbnailRawBody,
     async (request, response) => {
       const identity = await requireIdentity(request, options.resolveIdentity);
       const bytes = request.body as unknown;

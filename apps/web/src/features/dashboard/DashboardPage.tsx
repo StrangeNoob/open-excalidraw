@@ -122,6 +122,9 @@ const DrawingCard = ({
         <img
           alt=""
           className="drawing-card-thumbnail"
+          // Remount per version: onError hides the node, and a reused node
+          // would keep a replacement thumbnail hidden.
+          key={drawing.thumbnailUpdatedAt}
           loading="lazy"
           onError={(event) => {
             // A 404 (e.g. thumbnail replaced mid-render) degrades to the
