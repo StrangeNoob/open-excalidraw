@@ -61,7 +61,13 @@ BETTER_AUTH_SECRET=${{secret(32)}}
 ADMIN_RESET_TOKEN=${{secret(32)}}
 STORAGE_DRIVER=local
 STORAGE_LOCAL_PATH=/data/assets
+PORT=3000
 ```
+
+`PORT` does not configure the application — it tells Railway which port to
+probe for the `/health/ready` deployment healthcheck (without it every
+healthcheck attempt returns `service unavailable` and the deploy fails after
+the five-minute window).
 
 `${{secret(32)}}` generates a fresh value for each deployment, and
 `RAILWAY_PUBLIC_DOMAIN` resolves to the deployment's generated domain, so
@@ -80,10 +86,14 @@ Maintainers create and publish the template from the production project:
 railway templates create --project open-excalidraw --json
 ```
 
-Creating from a project copies the production variable **values** into the
-draft. Before publishing, open the template in the dashboard composer and
-replace every copied value with the definitions above, deleting the
-instance-specific OAuth/OIDC/SMTP entries. Then:
+Template generation blanks every literal variable value on **all** services
+(only `${{...}}` references survive). Before publishing, open the template in
+the dashboard composer and, on `app`, set the definitions above and delete
+the instance-specific OAuth/OIDC/SMTP entries. On `Postgres`, restore the
+blanked literals — `POSTGRES_USER=postgres`, `POSTGRES_DB=railway`,
+`PGDATA=/var/lib/postgresql/data/pgdata`, `PGPORT=5432`, `SSL_CERT_DAYS=820`
+— or the deployed database boots with an empty username and the app fails
+its migrations. Then:
 
 ```sh
 railway templates publish <template-id> --category Starters \
