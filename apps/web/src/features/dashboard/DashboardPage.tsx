@@ -118,6 +118,24 @@ const DrawingCard = ({
 
   return (
     <article className="drawing-card">
+      {drawing.thumbnailUpdatedAt ? (
+        <img
+          alt=""
+          className="drawing-card-thumbnail"
+          // Remount per version: onError hides the node, and a reused node
+          // would keep a replacement thumbnail hidden.
+          key={drawing.thumbnailUpdatedAt}
+          loading="lazy"
+          onError={(event) => {
+            // A 404 (e.g. thumbnail replaced mid-render) degrades to the
+            // text-only card.
+            event.currentTarget.hidden = true;
+          }}
+          src={`/api/v1/drawings/${drawing.id}/thumbnail?v=${encodeURIComponent(
+            drawing.thumbnailUpdatedAt,
+          )}`}
+        />
+      ) : null}
       <div className="drawing-card-heading">
         {renaming ? (
           <form aria-label={`Rename ${drawing.title}`} onSubmit={submitRename}>

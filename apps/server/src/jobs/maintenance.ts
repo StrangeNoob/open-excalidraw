@@ -1,6 +1,8 @@
 import type { ObjectStorage } from "@open-excalidraw/storage";
 import type { Pool, PoolClient } from "pg";
 
+import { thumbnailStorageKey } from "../modules/assets/service.js";
+
 export const DEFAULT_REVISION_RETENTION = 20;
 export const DEFAULT_ASSET_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 export const DEFAULT_DELETED_DRAWING_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
@@ -384,7 +386,14 @@ export class MaintenanceJobs {
          FOR UPDATE`,
         [drawingId],
       );
-      return { storageKeys: assets.rows.map((asset) => asset.storage_key) };
+      return {
+        // The dashboard thumbnail has no drawing_assets row; delete its
+        // fixed key alongside the asset blobs (a missing key is a no-op).
+        storageKeys: [
+          ...assets.rows.map((asset) => asset.storage_key),
+          thumbnailStorageKey(drawingId),
+        ],
+      };
     });
   }
 

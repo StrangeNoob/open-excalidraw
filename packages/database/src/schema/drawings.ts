@@ -55,6 +55,9 @@ export const drawings = pgTable(
       .notNull(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     lastCheckpointAt: timestamp("last_checkpoint_at", { withTimezone: true }),
+    thumbnailUpdatedAt: timestamp("thumbnail_updated_at", {
+      withTimezone: true,
+    }),
   },
   (table) => [
     index("drawings_owner_user_id_idx").on(table.ownerUserId),

@@ -19,7 +19,7 @@ export class AssetRequestError extends Error {
   constructor(
     readonly status: number,
     readonly fileId: string,
-    operation: "download" | "upload",
+    operation: "delete" | "download" | "upload",
   ) {
     super(`Asset ${fileId} ${operation} failed (${status})`);
     this.name = "AssetRequestError";
@@ -90,10 +90,51 @@ export class AssetClient {
     };
   }
 
+  async uploadThumbnail(
+    drawingId: string,
+    blob: Blob,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const response = await this.#fetch(this.#thumbnailUrl(drawingId), {
+      body: bytes.slice().buffer,
+      credentials: "include",
+      headers: {
+        "content-type": "image/png",
+        "x-content-sha256": await this.#sha256(bytes),
+      },
+      method: "PUT",
+      signal,
+    });
+    if (!response.ok) {
+      throw new AssetRequestError(response.status, "thumbnail", "upload");
+    }
+  }
+
+  async deleteThumbnail(
+    drawingId: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const response = await this.#fetch(this.#thumbnailUrl(drawingId), {
+      credentials: "include",
+      method: "DELETE",
+      signal,
+    });
+    if (!response.ok) {
+      throw new AssetRequestError(response.status, "thumbnail", "delete");
+    }
+  }
+
   #url(drawingId: string, fileId: string) {
     return `${this.#baseUrl}/drawings/${encodeURIComponent(
       drawingId,
     )}/assets/${encodeURIComponent(fileId)}`;
+  }
+
+  #thumbnailUrl(drawingId: string) {
+    return `${this.#baseUrl}/drawings/${encodeURIComponent(
+      drawingId,
+    )}/thumbnail`;
   }
 }
 
@@ -248,7 +289,7 @@ export const dataUrlBytes = (dataUrl: string): Uint8Array => {
   return new TextEncoder().encode(decodeURIComponent(payload));
 };
 
-const digestSha256 = async (bytes: Uint8Array): Promise<string> => {
+export const digestSha256 = async (bytes: Uint8Array): Promise<string> => {
   const hash = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
   return [...new Uint8Array(hash)]
     .map((value) => value.toString(16).padStart(2, "0"))

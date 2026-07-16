@@ -16,6 +16,7 @@ import {
   AssetService,
   createAssetRouter,
   DrizzleAssetRepository,
+  MAX_THUMBNAIL_BYTES,
   type AssetAccessRole,
   type AssetRecord,
   type AssetRepository,
@@ -39,14 +40,27 @@ const DIFFERENT_PNG = Buffer.concat([PNG, Buffer.from([0])]);
 class MemoryAssetRepository implements AssetRepository {
   readonly access = new Map<string, AssetAccessRole>();
   readonly assets = new Map<string, AssetRecord>();
+  readonly thumbnails = new Map<string, Date | null>();
   commitThenFail = false;
   failFind = false;
   failFindAfter: number | null = null;
   failInsert = false;
+  failThumbnailUpdate = false;
   findCalls = 0;
 
   public setAccess(drawingId: string, userId: string, role: AssetAccessRole) {
     this.access.set(`${drawingId}:${userId}`, role);
+  }
+
+  public setThumbnailUpdatedAt(drawingId: string, when: Date | null) {
+    const known = [...this.access.keys()].some((key) =>
+      key.startsWith(`${drawingId}:`),
+    );
+    if (!known || this.failThumbnailUpdate) {
+      return Promise.resolve(false);
+    }
+    this.thumbnails.set(drawingId, when);
+    return Promise.resolve(true);
   }
 
   public getDrawingAccess(drawingId: string, userId: string) {
@@ -93,6 +107,26 @@ class MemoryAssetRepository implements AssetRepository {
       asset: created,
       created: true,
     });
+  }
+}
+
+class FailingDeleteStorage implements ObjectStorage {
+  public constructor(private readonly delegate: ObjectStorage) {}
+
+  public put(...args: Parameters<ObjectStorage["put"]>) {
+    return this.delegate.put(...args);
+  }
+
+  public get(...args: Parameters<ObjectStorage["get"]>) {
+    return this.delegate.get(...args);
+  }
+
+  public stat(...args: Parameters<ObjectStorage["stat"]>) {
+    return this.delegate.stat(...args);
+  }
+
+  public delete(): ReturnType<ObjectStorage["delete"]> {
+    return Promise.reject(new Error("disk offline"));
   }
 }
 
@@ -306,6 +340,150 @@ describe("asset HTTP boundary", () => {
     expect(response.status).toBe(201);
     expect(response.body.mimeType).toBe("image/svg+xml");
   });
+
+  it("stores, replaces, and serves the thumbnail with safe headers", async () => {
+    const app = createTestApp(repository, storage);
+
+    expect((await putThumbnail(app, OWNER_ID, PNG)).status).toBe(204);
+    expect(repository.thumbnails.get(DRAWING_A)).toBeInstanceOf(Date);
+
+    const download = await request(app)
+      .get(`/api/v1/drawings/${DRAWING_A}/thumbnail`)
+      .set("x-test-user-id", VIEWER_ID);
+    expect(download.status).toBe(200);
+    expect(download.body).toEqual(PNG);
+    expect(download.headers["content-type"]).toMatch(/^image\/png/);
+    expect(download.headers["cache-control"]).toBe(
+      "private, max-age=31536000, immutable",
+    );
+    expect(download.headers["x-content-type-options"]).toBe("nosniff");
+    expect(download.headers["content-security-policy"]).toBe("sandbox");
+
+    // Unlike asset uploads, new bytes replace the previous thumbnail.
+    expect((await putThumbnail(app, EDITOR_ID, DIFFERENT_PNG)).status).toBe(
+      204,
+    );
+    const replaced = await request(app)
+      .get(`/api/v1/drawings/${DRAWING_A}/thumbnail`)
+      .set("x-test-user-id", VIEWER_ID);
+    expect(replaced.body).toEqual(DIFFERENT_PNG);
+  });
+
+  it("rejects thumbnail writes from viewers and outsiders", async () => {
+    const app = createTestApp(repository, storage);
+
+    const viewer = await putThumbnail(app, VIEWER_ID, PNG);
+    expect(viewer.status).toBe(403);
+    expect(viewer.body.code).toBe("THUMBNAIL_WRITE_FORBIDDEN");
+
+    const outsider = await putThumbnail(app, OUTSIDER_ID, PNG);
+    expect(outsider.status).toBe(404);
+    expect(outsider.body.code).toBe("DRAWING_NOT_FOUND");
+  });
+
+  it("treats a missing thumbnail and missing access identically on download", async () => {
+    const app = createTestApp(repository, storage);
+
+    const missing = await request(app)
+      .get(`/api/v1/drawings/${DRAWING_A}/thumbnail`)
+      .set("x-test-user-id", VIEWER_ID);
+    expect(missing.status).toBe(404);
+    expect(missing.body.code).toBe("THUMBNAIL_NOT_FOUND");
+
+    expect((await putThumbnail(app, OWNER_ID, PNG)).status).toBe(204);
+    const outsider = await request(app)
+      .get(`/api/v1/drawings/${DRAWING_A}/thumbnail`)
+      .set("x-test-user-id", OUTSIDER_ID);
+    expect(outsider.status).toBe(404);
+    expect(outsider.body.code).toBe("THUMBNAIL_NOT_FOUND");
+  });
+
+  it("validates thumbnail type, bytes, checksum, and size", async () => {
+    const app = createTestApp(repository, storage);
+
+    const declaredJpeg = await putThumbnail(app, OWNER_ID, PNG, "image/jpeg");
+    expect(declaredJpeg.status).toBe(415);
+    expect(declaredJpeg.body.code).toBe("UNSUPPORTED_THUMBNAIL_TYPE");
+
+    const jpegBytes = Buffer.from([
+      0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
+    ]);
+    const spoofed = await putThumbnail(app, OWNER_ID, jpegBytes);
+    expect(spoofed.status).toBe(415);
+    expect(spoofed.body.code).toBe("ASSET_MIME_MISMATCH");
+
+    const badChecksum = await putThumbnail(
+      app,
+      OWNER_ID,
+      PNG,
+      "image/png",
+      "0".repeat(64),
+    );
+    expect(badChecksum.status).toBe(422);
+    expect(badChecksum.body.code).toBe("ASSET_CHECKSUM_MISMATCH");
+
+    const oversized = Buffer.concat([PNG, Buffer.alloc(MAX_THUMBNAIL_BYTES)]);
+    const tooLarge = await putThumbnail(app, OWNER_ID, oversized);
+    expect(tooLarge.status).toBe(413);
+    expect(tooLarge.body.code).toBe("THUMBNAIL_TOO_LARGE");
+
+    expect(repository.thumbnails.size).toBe(0);
+    await expect(
+      storage.stat(`drawings/${DRAWING_A}/thumbnail`),
+    ).rejects.toMatchObject({ name: "StorageNotFoundError" });
+  });
+
+  it("removes the blob when the drawing vanishes during thumbnail upload", async () => {
+    repository.failThumbnailUpdate = true;
+    const app = createTestApp(repository, storage);
+
+    const response = await putThumbnail(app, OWNER_ID, PNG);
+    expect(response.status).toBe(404);
+    expect(response.body.code).toBe("DRAWING_NOT_FOUND");
+    await expect(
+      storage.stat(`drawings/${DRAWING_A}/thumbnail`),
+    ).rejects.toMatchObject({ name: "StorageNotFoundError" });
+  });
+
+  it("keeps thumbnail metadata when storage deletion fails", async () => {
+    const app = createTestApp(repository, storage);
+    expect((await putThumbnail(app, OWNER_ID, PNG)).status).toBe(204);
+
+    const failingApp = createTestApp(
+      repository,
+      new FailingDeleteStorage(storage),
+    );
+    const failed = await request(failingApp)
+      .delete(`/api/v1/drawings/${DRAWING_A}/thumbnail`)
+      .set("x-test-user-id", OWNER_ID);
+    expect(failed.status).toBe(503);
+    // The summary still advertises the thumbnail, which remains downloadable.
+    expect(repository.thumbnails.get(DRAWING_A)).toBeInstanceOf(Date);
+    await expect(
+      storage.stat(`drawings/${DRAWING_A}/thumbnail`),
+    ).resolves.toMatchObject({ sha256: checksum(PNG) });
+  });
+
+  it("lets editors clear the thumbnail while rejecting viewers", async () => {
+    const app = createTestApp(repository, storage);
+    expect((await putThumbnail(app, OWNER_ID, PNG)).status).toBe(204);
+
+    const viewer = await request(app)
+      .delete(`/api/v1/drawings/${DRAWING_A}/thumbnail`)
+      .set("x-test-user-id", VIEWER_ID);
+    expect(viewer.status).toBe(403);
+
+    const editor = await request(app)
+      .delete(`/api/v1/drawings/${DRAWING_A}/thumbnail`)
+      .set("x-test-user-id", EDITOR_ID);
+    expect(editor.status).toBe(204);
+    expect(repository.thumbnails.get(DRAWING_A)).toBeNull();
+
+    const download = await request(app)
+      .get(`/api/v1/drawings/${DRAWING_A}/thumbnail`)
+      .set("x-test-user-id", OWNER_ID);
+    expect(download.status).toBe(404);
+  });
 });
 
 function createTestApp(
@@ -343,6 +521,21 @@ function upload(
     .put(`/api/v1/drawings/${DRAWING_A}/assets/${fileId}`)
     .set("x-test-user-id", userId)
     .set("x-content-sha256", checksum(body))
+    .set("content-type", mimeType)
+    .send(body);
+}
+
+function putThumbnail(
+  app: express.Express,
+  userId: string,
+  body: Buffer,
+  mimeType = "image/png",
+  sha256 = checksum(body),
+) {
+  return request(app)
+    .put(`/api/v1/drawings/${DRAWING_A}/thumbnail`)
+    .set("x-test-user-id", userId)
+    .set("x-content-sha256", sha256)
     .set("content-type", mimeType)
     .send(body);
 }

@@ -738,6 +738,81 @@ export const openApiDocument = {
         },
       },
     },
+    "/api/v1/drawings/{drawingId}/thumbnail": {
+      parameters: [drawingIdParameter],
+      put: {
+        tags: ["Assets"],
+        summary: "Replace the dashboard thumbnail",
+        description:
+          "Raw PNG bytes (512 KiB max) rendered client-side from the scene. " +
+          "The body must match the declared SHA-256. Replaces the previous " +
+          "thumbnail; the summary's `thumbnailUpdatedAt` is bumped.",
+        parameters: [
+          {
+            name: "x-content-sha256",
+            in: "header",
+            required: true,
+            description: "Hex SHA-256 digest of the request body.",
+            schema: { type: "string", pattern: "^[a-f0-9]{64}$" },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "image/png": { schema: { type: "string", format: "binary" } },
+          },
+        },
+        responses: {
+          "204": { description: "Thumbnail stored." },
+          "400": problem("Invalid body or checksum."),
+          "401": unauthorized,
+          "403": forbidden,
+          "404": notFound,
+          "409": problem(
+            "`THUMBNAIL_WRITE_CONFLICT`: a concurrent writer replaced the " +
+              "thumbnail; retry after the next edit.",
+          ),
+          "413": problem("`THUMBNAIL_TOO_LARGE`: exceeds 512 KiB."),
+          "415": problem(
+            "`UNSUPPORTED_THUMBNAIL_TYPE`: not image/png, or " +
+              "`ASSET_MIME_MISMATCH`: the bytes are not PNG.",
+          ),
+          "422": problem(
+            "`ASSET_CHECKSUM_MISMATCH`: the body does not match the " +
+              "declared checksum.",
+          ),
+        },
+      },
+      get: {
+        tags: ["Assets"],
+        summary: "Download the dashboard thumbnail",
+        responses: {
+          "200": {
+            description:
+              "The PNG bytes with immutable caching; clients bust the URL " +
+              "with `?v=<thumbnailUpdatedAt>`.",
+            content: {
+              "image/png": { schema: { type: "string", format: "binary" } },
+            },
+          },
+          "401": unauthorized,
+          "404": problem(
+            "`THUMBNAIL_NOT_FOUND`: no thumbnail yet, or no access.",
+          ),
+        },
+      },
+      delete: {
+        tags: ["Assets"],
+        summary: "Remove the dashboard thumbnail",
+        description: "Used when the scene becomes empty.",
+        responses: {
+          "204": { description: "Thumbnail removed." },
+          "401": unauthorized,
+          "403": forbidden,
+          "404": notFound,
+        },
+      },
+    },
   },
   components: {
     securitySchemes: {
@@ -866,6 +941,13 @@ export const openApiDocument = {
           metadataRevision: revision,
           createdAt: isoDateTime,
           updatedAt: isoDateTime,
+          thumbnailUpdatedAt: {
+            ...isoDateTime,
+            nullable: true,
+            description:
+              "When the dashboard thumbnail was last replaced; null until " +
+              "a client has rendered one.",
+          },
         },
       },
       DrawingListResponse: {

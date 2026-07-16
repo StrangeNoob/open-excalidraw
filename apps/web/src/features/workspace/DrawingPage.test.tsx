@@ -107,6 +107,7 @@ const drawing = (
   ownerUserId: USER,
   role,
   tags: [],
+  thumbnailUpdatedAt: null,
   title,
   updatedAt: "2026-07-11T00:00:00.000Z",
 });
@@ -164,11 +165,13 @@ const createDependencies = (options?: {
     }),
   };
   const assets = {
+    deleteThumbnail: vi.fn(() => Promise.resolve()),
     download: vi.fn(() => Promise.resolve(imageFile("image_1"))),
     upload: vi.fn(() => {
       order.push("upload");
       return Promise.resolve({} as never);
     }),
+    uploadThumbnail: vi.fn(() => Promise.resolve()),
   };
   const metadata = {
     load: vi.fn((id: string) =>
@@ -615,5 +618,183 @@ describe("DrawingPage", () => {
         screen.getByRole("button", { name: "Chat" }),
       ).not.toHaveTextContent("1"),
     );
+  });
+
+  it("captures on the idle window once, then re-arms threading the last sha", async () => {
+    const user = userEvent.setup();
+    const capture = vi.fn(() => Promise.resolve("sha-1"));
+    const fixture = createDependencies();
+    render(
+      <DrawingPage
+        autosaveDebounceMs={1}
+        collaborationEnabled={false}
+        dependencies={{ ...fixture.dependencies, captureThumbnail: capture }}
+        drawingId={DRAWING_A}
+        thumbnailDebounceMs={30}
+        userId={USER}
+      />,
+    );
+
+    // The initial editor event arms the first capture: pre-feature drawings
+    // get a thumbnail backfilled on their next open.
+    const edit = await screen.findByRole("button", { name: "Make edit" });
+    await waitFor(() => expect(capture).toHaveBeenCalledTimes(1));
+    expect(capture).toHaveBeenCalledWith(
+      editorApi,
+      DRAWING_A,
+      fixture.sources.assets,
+      undefined,
+    );
+
+    // A fired timer does not re-arm itself without another edit.
+    await act(() => new Promise((resolve) => setTimeout(resolve, 60)));
+    expect(capture).toHaveBeenCalledTimes(1);
+
+    await user.click(edit);
+    await waitFor(() => expect(capture).toHaveBeenCalledTimes(2));
+    expect(capture).toHaveBeenLastCalledWith(
+      editorApi,
+      DRAWING_A,
+      fixture.sources.assets,
+      "sha-1",
+    );
+  });
+
+  it("ignores a late capture from a previous drawing", async () => {
+    const user = userEvent.setup();
+    let resolveFirst!: (sha256: string | null) => void;
+    const capture = vi
+      .fn<
+        (
+          api: unknown,
+          drawingId: string,
+          client: unknown,
+          previousSha256?: string | null,
+        ) => Promise<string | null>
+      >(() => Promise.resolve("sha-b"))
+      .mockImplementationOnce(
+        () =>
+          new Promise<string | null>((resolve) => {
+            resolveFirst = resolve;
+          }),
+      );
+    const fixture = createDependencies();
+    const view = render(
+      <DrawingPage
+        collaborationEnabled={false}
+        dependencies={{ ...fixture.dependencies, captureThumbnail: capture }}
+        drawingId={DRAWING_A}
+        thumbnailDebounceMs={10}
+        userId={USER}
+      />,
+    );
+    await waitFor(() => expect(capture).toHaveBeenCalledTimes(1));
+
+    view.rerender(
+      <DrawingPage
+        collaborationEnabled={false}
+        dependencies={{ ...fixture.dependencies, captureThumbnail: capture }}
+        drawingId={DRAWING_B}
+        thumbnailDebounceMs={10}
+        userId={USER}
+      />,
+    );
+    // Drawing B's own first capture starts with unknown server state.
+    await waitFor(() => expect(capture).toHaveBeenCalledTimes(2));
+    expect(capture.mock.calls[1]?.[1]).toBe(DRAWING_B);
+    expect(capture.mock.calls[1]?.[3]).toBeUndefined();
+
+    // Drawing A's capture settles late; its sha must not leak into B.
+    await act(async () => {
+      resolveFirst("sha-a");
+      await Promise.resolve();
+    });
+    await user.click(await screen.findByRole("button", { name: "Make edit" }));
+    await waitFor(() => expect(capture).toHaveBeenCalledTimes(3));
+    expect(capture.mock.calls[2]?.[3]).toBe("sha-b");
+  });
+
+  it("never lets a failed capture disturb the save status", async () => {
+    const user = userEvent.setup();
+    const capture = vi.fn(() => Promise.reject(new Error("canvas exploded")));
+    const fixture = createDependencies();
+    render(
+      <DrawingPage
+        autosaveDebounceMs={1}
+        collaborationEnabled={false}
+        dependencies={{ ...fixture.dependencies, captureThumbnail: capture }}
+        drawingId={DRAWING_A}
+        thumbnailDebounceMs={1}
+        userId={USER}
+      />,
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Make edit" }));
+    await waitFor(() => expect(capture).toHaveBeenCalled());
+    expect(await screen.findByText("Saved")).toBeVisible();
+  });
+
+  it("never schedules a capture for viewers", async () => {
+    const capture = vi.fn(() => Promise.resolve(null));
+    const fixture = createDependencies({ role: "viewer" });
+    render(
+      <DrawingPage
+        collaborationEnabled={false}
+        dependencies={{ ...fixture.dependencies, captureThumbnail: capture }}
+        drawingId={DRAWING_A}
+        thumbnailDebounceMs={1}
+        userId={USER}
+      />,
+    );
+
+    await screen.findByRole("status", { name: "View-only access" });
+    await act(() => new Promise((resolve) => setTimeout(resolve, 10)));
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  it("cancels a pending capture on unmount", async () => {
+    const capture = vi.fn(() => Promise.resolve(null));
+    const fixture = createDependencies();
+    const view = render(
+      <DrawingPage
+        collaborationEnabled={false}
+        dependencies={{ ...fixture.dependencies, captureThumbnail: capture }}
+        drawingId={DRAWING_A}
+        thumbnailDebounceMs={20}
+        userId={USER}
+      />,
+    );
+
+    await screen.findByRole("heading", { name: "Architecture" });
+    view.unmount();
+    await act(() => new Promise((resolve) => setTimeout(resolve, 60)));
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  it("flushes a pending capture when the page becomes hidden", async () => {
+    const user = userEvent.setup();
+    const capture = vi.fn(() => Promise.resolve(null));
+    const fixture = createDependencies();
+    render(
+      <DrawingPage
+        collaborationEnabled={false}
+        dependencies={{ ...fixture.dependencies, captureThumbnail: capture }}
+        drawingId={DRAWING_A}
+        thumbnailDebounceMs={60_000}
+        userId={USER}
+      />,
+    );
+
+    // The click arms the 60 s timer; hiding the page must not wait for it.
+    await user.click(await screen.findByRole("button", { name: "Make edit" }));
+    const visibility = vi
+      .spyOn(document, "visibilityState", "get")
+      .mockReturnValue("hidden");
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    visibility.mockRestore();
+
+    expect(capture).toHaveBeenCalledTimes(1);
   });
 });

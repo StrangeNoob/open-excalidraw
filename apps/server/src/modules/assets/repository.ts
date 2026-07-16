@@ -63,6 +63,18 @@ export class DrizzleAssetRepository implements AssetRepository {
       : null;
   }
 
+  public async setThumbnailUpdatedAt(
+    drawingId: string,
+    when: Date | null,
+  ): Promise<boolean> {
+    const updated = await this.database
+      .update(drawings)
+      .set({ thumbnailUpdatedAt: when })
+      .where(and(eq(drawings.id, drawingId), isNull(drawings.deletedAt)))
+      .returning({ id: drawings.id });
+    return updated.length === 1;
+  }
+
   public async findAsset(
     drawingId: string,
     fileId: string,

@@ -19,6 +19,7 @@ import {
 import type { AssetIdentity, AssetRecord, AssetRepository } from "./types.js";
 
 export const DEFAULT_MAX_ASSET_BYTES = 4 * 1024 * 1024;
+export const MAX_THUMBNAIL_BYTES = 512 * 1024;
 export const ASSET_CHECKSUM_HEADER = "x-content-sha256";
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
@@ -263,6 +264,168 @@ export class AssetService {
     return this.#streamAsset(input.drawingId, input.fileId);
   }
 
+  /**
+   * Replaces the drawing's dashboard thumbnail. The blob lives at one fixed
+   * key per drawing; storage is create-if-absent, so replacement is a delete
+   * followed by a put.
+   */
+  // ponytail: delete-then-put race between concurrent editors can 409 one
+  // writer; the client ignores it and the next edit refreshes. Versioned
+  // keys if this ever matters.
+  public async uploadThumbnail(input: {
+    identity: AssetIdentity;
+    drawingId: string;
+    declaredMimeType: string;
+    expectedSha256: string;
+    bytes: Buffer;
+  }): Promise<void> {
+    const storageKey = thumbnailStorageKey(input.drawingId);
+    await this.#requireThumbnailWriteAccess(
+      input.drawingId,
+      input.identity.userId,
+    );
+
+    if (input.bytes.byteLength === 0) {
+      throw assetError(
+        400,
+        "EMPTY_THUMBNAIL",
+        "Empty thumbnail",
+        "A thumbnail must contain at least one byte.",
+      );
+    }
+    if (input.bytes.byteLength > MAX_THUMBNAIL_BYTES) {
+      throw assetError(
+        413,
+        "THUMBNAIL_TOO_LARGE",
+        "Thumbnail too large",
+        `Thumbnails may not exceed ${MAX_THUMBNAIL_BYTES} bytes.`,
+      );
+    }
+
+    const expectedSha256 = normalizeChecksum(input.expectedSha256);
+    const actualSha256 = createHash("sha256").update(input.bytes).digest("hex");
+    if (actualSha256 !== expectedSha256) {
+      throw assetError(
+        422,
+        "ASSET_CHECKSUM_MISMATCH",
+        "Asset checksum mismatch",
+        "The request checksum does not match the uploaded bytes.",
+      );
+    }
+
+    const mimeType =
+      input.declaredMimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+    if (mimeType !== "image/png") {
+      throw assetError(
+        415,
+        "UNSUPPORTED_THUMBNAIL_TYPE",
+        "Unsupported thumbnail type",
+        "Thumbnails must be image/png.",
+      );
+    }
+    await assertMimeMatchesBytes(mimeType, input.bytes);
+
+    try {
+      await this.#storage.delete(storageKey);
+      await this.#storage.put(storageKey, bufferBody(input.bytes), {
+        expectedSha256: actualSha256,
+        maxBytes: MAX_THUMBNAIL_BYTES,
+      });
+    } catch (error) {
+      if (error instanceof StorageConflictError) {
+        throw assetError(
+          409,
+          "THUMBNAIL_WRITE_CONFLICT",
+          "Thumbnail write conflict",
+          "Another writer replaced the thumbnail concurrently.",
+          { cause: error },
+        );
+      }
+      throw mapStorageError(error, MAX_THUMBNAIL_BYTES);
+    }
+
+    if (
+      !(await this.#repository.setThumbnailUpdatedAt(
+        input.drawingId,
+        new Date(),
+      ))
+    ) {
+      // The drawing vanished mid-upload. Drop the just-written blob instead
+      // of relying only on the drawing-purge backstop.
+      try {
+        await this.#storage.delete(storageKey);
+      } catch {
+        // Purge deletes the fixed key when the drawing row goes away.
+      }
+      throw drawingNotFound();
+    }
+  }
+
+  public async downloadThumbnail(input: {
+    identity: AssetIdentity;
+    drawingId: string;
+  }): Promise<Readable> {
+    const storageKey = thumbnailStorageKey(input.drawingId);
+    const role = await this.#repository.getDrawingAccess(
+      input.drawingId,
+      input.identity.userId,
+    );
+    if (!role) {
+      throw thumbnailNotFound();
+    }
+
+    try {
+      return await this.#storage.get(storageKey);
+    } catch (error) {
+      if (error instanceof StorageNotFoundError) {
+        // Absence is the normal "no thumbnail yet" state, unlike asset blobs
+        // which always have a metadata row pointing at committed bytes.
+        throw thumbnailNotFound();
+      }
+      throw mapStorageError(error, MAX_THUMBNAIL_BYTES);
+    }
+  }
+
+  public async deleteThumbnail(input: {
+    identity: AssetIdentity;
+    drawingId: string;
+  }): Promise<void> {
+    const storageKey = thumbnailStorageKey(input.drawingId);
+    await this.#requireThumbnailWriteAccess(
+      input.drawingId,
+      input.identity.userId,
+    );
+
+    // Storage first: a transient deletion failure surfaces as an error
+    // instead of a 204 that leaves the blob downloadable while the summary
+    // claims no thumbnail exists. A missing key deletes as a no-op.
+    try {
+      await this.#storage.delete(storageKey);
+    } catch (error) {
+      throw mapStorageError(error, MAX_THUMBNAIL_BYTES);
+    }
+    if (
+      !(await this.#repository.setThumbnailUpdatedAt(input.drawingId, null))
+    ) {
+      throw drawingNotFound();
+    }
+  }
+
+  async #requireThumbnailWriteAccess(drawingId: string, userId: string) {
+    const role = await this.#repository.getDrawingAccess(drawingId, userId);
+    if (!role) {
+      throw drawingNotFound();
+    }
+    if (role === "viewer") {
+      throw assetError(
+        403,
+        "THUMBNAIL_WRITE_FORBIDDEN",
+        "Thumbnail write forbidden",
+        "Viewer access does not allow thumbnail writes.",
+      );
+    }
+  }
+
   async #streamAsset(
     drawingId: string,
     fileId: string,
@@ -299,6 +462,12 @@ export function assetStorageKey(drawingId: string, fileId: string) {
   return `drawings/${drawingId}/assets/${fileId}`;
 }
 
+/** One fixed key per drawing; distinct from the assets/ prefix by design. */
+export function thumbnailStorageKey(drawingId: string) {
+  validateDrawingId(drawingId);
+  return `drawings/${drawingId}/thumbnail`;
+}
+
 export function normalizeChecksum(value: string) {
   const checksum = value.trim().toLowerCase();
   if (!SHA256_PATTERN.test(checksum)) {
@@ -312,7 +481,7 @@ export function normalizeChecksum(value: string) {
   return checksum;
 }
 
-function validateIdentifiers(drawingId: string, fileId: string) {
+function validateDrawingId(drawingId: string) {
   if (
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
       drawingId,
@@ -325,6 +494,10 @@ function validateIdentifiers(drawingId: string, fileId: string) {
       "drawingId must be a UUID.",
     );
   }
+}
+
+function validateIdentifiers(drawingId: string, fileId: string) {
+  validateDrawingId(drawingId);
   if (!fileIdSchema.safeParse(fileId).success) {
     throw assetError(
       400,
@@ -396,6 +569,24 @@ function assetConflict() {
     "ASSET_FILE_ID_CONFLICT",
     "Asset file ID conflict",
     "The file ID already belongs to different asset bytes.",
+  );
+}
+
+function drawingNotFound() {
+  return assetError(
+    404,
+    "DRAWING_NOT_FOUND",
+    "Drawing not found",
+    "The drawing is unavailable.",
+  );
+}
+
+function thumbnailNotFound() {
+  return assetError(
+    404,
+    "THUMBNAIL_NOT_FOUND",
+    "Thumbnail not found",
+    "The drawing has no thumbnail.",
   );
 }
 

@@ -5,6 +5,7 @@ import type {
 } from "@excalidraw/excalidraw/types";
 
 import {
+  AssetClient,
   AssetUploadManager,
   collectAssetReferences,
   hydrateAssets,
@@ -112,6 +113,51 @@ describe("asset pipeline", () => {
       loaded: [],
     });
     expect(api.addFiles).not.toHaveBeenCalled();
+  });
+
+  it("uploads and deletes thumbnails with checksum, type, and credentials", async () => {
+    const fetch = vi.fn(() =>
+      Promise.resolve(new Response(null, { status: 204 })),
+    );
+    const client = new AssetClient({
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      sha256: () => Promise.resolve("ab".repeat(32)),
+    });
+
+    await client.uploadThumbnail(
+      "10000000-0000-4000-8000-000000000001",
+      new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }),
+    );
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/v1/drawings/10000000-0000-4000-8000-000000000001/thumbnail",
+      expect.objectContaining({
+        credentials: "include",
+        headers: {
+          "content-type": "image/png",
+          "x-content-sha256": "ab".repeat(32),
+        },
+        method: "PUT",
+      }),
+    );
+
+    await client.deleteThumbnail("10000000-0000-4000-8000-000000000001");
+    expect(fetch).toHaveBeenLastCalledWith(
+      "/api/v1/drawings/10000000-0000-4000-8000-000000000001/thumbnail",
+      expect.objectContaining({ credentials: "include", method: "DELETE" }),
+    );
+
+    fetch.mockResolvedValueOnce(new Response(null, { status: 403 }));
+    await expect(
+      client.uploadThumbnail(
+        "10000000-0000-4000-8000-000000000001",
+        new Blob([new Uint8Array([1])], { type: "image/png" }),
+      ),
+    ).rejects.toMatchObject({ status: 403 });
+
+    fetch.mockResolvedValueOnce(new Response(null, { status: 503 }));
+    await expect(
+      client.deleteThumbnail("10000000-0000-4000-8000-000000000001"),
+    ).rejects.toThrow("thumbnail delete failed (503)");
   });
 
   it("collects image references from live elements and retained tombstones", () => {

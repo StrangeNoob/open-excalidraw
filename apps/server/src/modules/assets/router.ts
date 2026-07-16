@@ -10,7 +10,11 @@ import express, {
 import { requestIdFor } from "../../http/request-context.js";
 
 import { AssetError, assetError } from "./errors.js";
-import { ASSET_CHECKSUM_HEADER, DEFAULT_MAX_ASSET_BYTES } from "./service.js";
+import {
+  ASSET_CHECKSUM_HEADER,
+  DEFAULT_MAX_ASSET_BYTES,
+  MAX_THUMBNAIL_BYTES,
+} from "./service.js";
 import type { AssetService } from "./service.js";
 import type { AssetIdentityResolver, AssetRecord } from "./types.js";
 
@@ -27,6 +31,13 @@ export function createAssetRouter(options: CreateAssetRouterOptions): Router {
   const router = express.Router();
   const rawBody = express.raw({
     limit: options.service.maxAssetBytes,
+    type: () => true,
+  });
+  // Transport guard only, decoupled from the configurable asset limit so a
+  // small maxAssetBytes cannot reject valid thumbnails. The service enforces
+  // MAX_THUMBNAIL_BYTES exactly, with the precise error code.
+  const thumbnailRawBody = express.raw({
+    limit: 2 * MAX_THUMBNAIL_BYTES,
     type: () => true,
   });
 
@@ -79,6 +90,60 @@ export function createAssetRouter(options: CreateAssetRouterOptions): Router {
       await pipeline(result.body, response);
     },
   );
+
+  router.put(
+    "/drawings/:drawingId/thumbnail",
+    thumbnailRawBody,
+    async (request, response) => {
+      const identity = await requireIdentity(request, options.resolveIdentity);
+      const bytes = request.body as unknown;
+      if (!Buffer.isBuffer(bytes)) {
+        throw assetError(
+          400,
+          "INVALID_THUMBNAIL_BODY",
+          "Invalid thumbnail body",
+          "The request body must contain raw PNG bytes.",
+        );
+      }
+
+      await options.service.uploadThumbnail({
+        identity,
+        drawingId: request.params.drawingId ?? "",
+        declaredMimeType: request.get("content-type") ?? "",
+        expectedSha256: request.get(ASSET_CHECKSUM_HEADER) ?? "",
+        bytes,
+      });
+      response.sendStatus(204);
+    },
+  );
+
+  router.get("/drawings/:drawingId/thumbnail", async (request, response) => {
+    const identity = await requireIdentity(request, options.resolveIdentity);
+    const body = await options.service.downloadThumbnail({
+      identity,
+      drawingId: request.params.drawingId ?? "",
+    });
+
+    response.status(200);
+    response.set({
+      // Immutable is safe: the dashboard busts the URL with ?v=<timestamp>.
+      "cache-control": "private, max-age=31536000, immutable",
+      "content-security-policy": "sandbox",
+      "content-type": "image/png",
+      "cross-origin-resource-policy": "same-origin",
+      "x-content-type-options": "nosniff",
+    });
+    await pipeline(body, response);
+  });
+
+  router.delete("/drawings/:drawingId/thumbnail", async (request, response) => {
+    const identity = await requireIdentity(request, options.resolveIdentity);
+    await options.service.deleteThumbnail({
+      identity,
+      drawingId: request.params.drawingId ?? "",
+    });
+    response.sendStatus(204);
+  });
 
   router.get("/share/:token/assets/:fileId", async (request, response) => {
     const token = request.params.token ?? "";

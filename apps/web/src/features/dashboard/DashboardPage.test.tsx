@@ -24,6 +24,7 @@ const createDrawing = (
   ownerUserId: `10000000-0000-4000-8000-${String(offset).padStart(12, "0")}`,
   role,
   tags,
+  thumbnailUpdatedAt: null,
   title,
   updatedAt: "2026-07-10T12:30:00.000Z",
 });
@@ -110,6 +111,36 @@ describe("DashboardPage", () => {
     expect(screen.getAllByText("viewer")).toHaveLength(1);
     expect(screen.getAllByText("Grace")).toHaveLength(2);
     expect(screen.getAllByRole("time")).toHaveLength(3);
+  });
+
+  it("shows a cache-busted thumbnail when one exists and hides it on load failure", async () => {
+    const thumbed = {
+      ...createDrawing("owner", "Thumbed board", 1),
+      thumbnailUpdatedAt: "2026-07-15T09:30:00.000Z",
+    };
+    const bare = createDrawing("owner", "Bare board", 2);
+    const api = new FakeDashboardApi({
+      nextCursor: null,
+      owned: [thumbed, bare],
+      shared: [],
+    });
+    renderDashboard(api);
+
+    const thumbedCard = (await screen.findByText("Thumbed board")).closest(
+      "article",
+    )!;
+    const bareCard = screen.getByText("Bare board").closest("article")!;
+    const image = thumbedCard.querySelector("img")!;
+    expect(image).not.toBeNull();
+    expect(image.getAttribute("src")).toBe(
+      `/api/v1/drawings/${thumbed.id}/thumbnail?v=${encodeURIComponent(
+        "2026-07-15T09:30:00.000Z",
+      )}`,
+    );
+    expect(bareCard.querySelector("img")).toBeNull();
+
+    image.dispatchEvent(new Event("error"));
+    await waitFor(() => expect(image).not.toBeVisible());
   });
 
   it("allows owner and editor rename controls but only owner deletion", async () => {
