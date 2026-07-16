@@ -41,6 +41,72 @@ before scaling out), provide `DATABASE_URL`, `BETTER_AUTH_SECRET`,
 volume at the `STORAGE_LOCAL_PATH` asset path, and probe `/health/live` and
 `/health/ready`.
 
+## One-click Railway template
+
+The prebuilt image also powers a Railway template, so a deployment needs no
+VPS: an `app` service running
+`ghcr.io/strangenoob/open-excalidraw:latest` with a volume mounted at
+`/data/assets`, plus Railway's managed PostgreSQL. The `app` service is
+exposed publicly with the domain's target port set to 3000 explicitly — the
+image listens on `APP_PORT` (default 3000), not the `PORT` variable Railway
+auto-detects — and must stay at one replica (the collaboration registry is
+in-process).
+
+Template variables on the `app` service:
+
+```dotenv
+APP_BASE_URL=https://${{RAILWAY_PUBLIC_DOMAIN}}
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+BETTER_AUTH_SECRET=${{secret(32)}}
+ADMIN_RESET_TOKEN=${{secret(32)}}
+STORAGE_DRIVER=local
+STORAGE_LOCAL_PATH=/data/assets
+PORT=3000
+```
+
+`PORT` does not configure the application — it tells Railway which port to
+probe for the `/health/ready` deployment healthcheck (without it every
+healthcheck attempt returns `service unavailable` and the deploy fails after
+the five-minute window).
+
+`${{secret(32)}}` generates a fresh value for each deployment, and
+`RAILWAY_PUBLIC_DOMAIN` resolves to the deployment's generated domain, so
+authentication and socket-origin checks work without manual configuration.
+The `${{Postgres.DATABASE_URL}}` reference is case-sensitive and resolves
+only while the database service is named exactly `Postgres`; rename the
+reference if the service is renamed.
+Leave the OAuth, OIDC, SMTP, and S3 variables out of the template; deployers
+add them afterwards following this runbook. Without SMTP, invitation links
+remain copyable, and the loopback recovery flow runs from a shell inside the
+container (`railway ssh`).
+
+Maintainers create and publish the template from the production project:
+
+```sh
+railway templates create --project open-excalidraw --json
+```
+
+Template generation blanks every literal variable value on **all** services
+(only `${{...}}` references survive). Before publishing, open the template in
+the dashboard composer and, on `app`, set the definitions above and delete
+the instance-specific OAuth/OIDC/SMTP entries. On `Postgres`, restore the
+blanked literals — `POSTGRES_USER=postgres`, `POSTGRES_DB=railway`,
+`PGDATA=/var/lib/postgresql/data/pgdata`, `PGPORT=5432`, `SSL_CERT_DAYS=820`
+— or the deployed database boots with an empty username and the app fails
+its migrations. Then:
+
+```sh
+railway templates publish <template-id> --category Starters \
+  --description "Self-hostable collaborative drawing built on Excalidraw" \
+  --readme-file docs/operations/railway-template-overview.md --json
+```
+
+Publishing returns the template code; link it from the README:
+
+```md
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/<template-code>)
+```
+
 ## Configure
 
 Clone a tagged release, copy `.env.example` to `.env`, set mode `0600`, and
