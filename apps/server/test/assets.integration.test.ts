@@ -464,7 +464,7 @@ describe("asset HTTP boundary", () => {
     ).resolves.toMatchObject({ sha256: checksum(PNG) });
   });
 
-  it("clears the thumbnail on delete for editors only", async () => {
+  it("lets editors clear the thumbnail while rejecting viewers", async () => {
     const app = createTestApp(repository, storage);
     expect((await putThumbnail(app, OWNER_ID, PNG)).status).toBe(204);
 
@@ -473,10 +473,10 @@ describe("asset HTTP boundary", () => {
       .set("x-test-user-id", VIEWER_ID);
     expect(viewer.status).toBe(403);
 
-    const owner = await request(app)
+    const editor = await request(app)
       .delete(`/api/v1/drawings/${DRAWING_A}/thumbnail`)
-      .set("x-test-user-id", OWNER_ID);
-    expect(owner.status).toBe(204);
+      .set("x-test-user-id", EDITOR_ID);
+    expect(editor.status).toBe(204);
     expect(repository.thumbnails.get(DRAWING_A)).toBeNull();
 
     const download = await request(app)
