@@ -68,7 +68,7 @@ See the
 [deployment runbook](docs/operations/deployment.md) for HTTPS, managed
 database, and one-click Railway template options.
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/JMmFfP)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/open-excalidraw)
 
 ## Local development
 
