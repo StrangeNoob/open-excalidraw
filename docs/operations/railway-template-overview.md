@@ -16,6 +16,10 @@ references the private database URL, and mounts a persistent volume at
 before each start. No user-entered variables are required. SMTP is optional:
 without it, owners copy invitation links for manual delivery.
 
+The application service must run as exactly one replica: real-time
+collaboration state lives in-process, and the asset volume mounts to a
+single instance. Scaling out is unsupported.
+
 ## Why Deploy Open Excalidraw on Railway
 
 - Keep drawings, revision history, and uploaded assets in a database and
