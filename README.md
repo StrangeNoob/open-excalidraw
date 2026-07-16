@@ -65,8 +65,8 @@ owners can copy invitation links for manual delivery. Email verification and
 ordinary reset-email delivery require SMTP; a loopback-only operator recovery
 flow is documented for SMTP-disabled installations.
 See the
-[deployment runbook](docs/operations/deployment.md) for HTTPS and managed
-database options.
+[deployment runbook](docs/operations/deployment.md) for HTTPS, managed
+database, and one-click Railway template options.
 
 ## Local development
 

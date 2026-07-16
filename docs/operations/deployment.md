@@ -41,6 +41,57 @@ before scaling out), provide `DATABASE_URL`, `BETTER_AUTH_SECRET`,
 volume at the `STORAGE_LOCAL_PATH` asset path, and probe `/health/live` and
 `/health/ready`.
 
+## One-click Railway template
+
+The prebuilt image also powers a Railway template, so a deployment needs no
+VPS: an `app` service running
+`ghcr.io/strangenoob/open-excalidraw:latest` with a volume mounted at
+`/data/assets`, plus Railway's managed PostgreSQL. The `app` service is
+exposed publicly on port 3000 and must stay at one replica (the
+collaboration registry is in-process).
+
+Template variables on the `app` service:
+
+```dotenv
+APP_BASE_URL=https://${{RAILWAY_PUBLIC_DOMAIN}}
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+BETTER_AUTH_SECRET=${{secret(32)}}
+ADMIN_RESET_TOKEN=${{secret(32)}}
+STORAGE_DRIVER=local
+STORAGE_LOCAL_PATH=/data/assets
+```
+
+`${{secret(32)}}` generates a fresh value for each deployment, and
+`RAILWAY_PUBLIC_DOMAIN` resolves to the deployment's generated domain, so
+authentication and socket-origin checks work without manual configuration.
+Leave the OAuth, OIDC, SMTP, and S3 variables out of the template; deployers
+add them afterwards following this runbook. Without SMTP, invitation links
+remain copyable, and the loopback recovery flow runs from a shell inside the
+container (`railway ssh`).
+
+Maintainers create and publish the template from the production project:
+
+```sh
+railway templates create --project open-excalidraw --json
+```
+
+Creating from a project copies the production variable **values** into the
+draft. Before publishing, open the template in the dashboard composer and
+replace every copied value with the definitions above, deleting the
+instance-specific OAuth/OIDC/SMTP entries. Then:
+
+```sh
+railway templates publish <template-id> --category Starters \
+  --description "Self-hostable collaborative drawing built on Excalidraw" \
+  --readme-file README.md --json
+```
+
+Publishing returns the template code; link it from the README:
+
+```md
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/<template-code>)
+```
+
 ## Configure
 
 Clone a tagged release, copy `.env.example` to `.env`, set mode `0600`, and
