@@ -10,6 +10,11 @@ import helmet from "helmet";
 import { safeRequestId } from "./http/request-context.js";
 import { requireSameOrigin } from "./http/same-origin.js";
 
+// Brand assets that third-party sites (template galleries, link previews)
+// must be able to embed; everything else stays CORP same-origin.
+const PUBLIC_BRAND_ASSET =
+  /^\/(?:favicon\.svg|icon-\d+\.png|apple-touch-icon\.png)$/;
+
 export interface CreateAppOptions {
   allowedOrigins?: readonly string[];
   readiness?: () => Promise<void>;
@@ -48,6 +53,12 @@ export const createApp = ({
       strictTransportSecurity: false,
     }),
   );
+  app.use((request, response, next) => {
+    if (PUBLIC_BRAND_ASSET.test(request.path)) {
+      response.set("cross-origin-resource-policy", "cross-origin");
+    }
+    next();
+  });
   app.use((request, response, next) => {
     const requestId = safeRequestId(request.get("x-request-id"));
     response.locals.requestId = requestId;
