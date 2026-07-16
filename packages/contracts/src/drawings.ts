@@ -41,6 +41,8 @@ export const drawingSummarySchema = z
     updatedAt: isoDateTimeSchema,
     // Null until a client rendered a thumbnail; defaulted for older servers.
     thumbnailUpdatedAt: isoDateTimeSchema.nullable().default(null),
+    // Defaulted for older server responses that predate templates.
+    isTemplate: z.boolean().default(false),
   })
   .strict();
 
@@ -63,6 +65,7 @@ export const updateDrawingRequestSchema = z
   .object({
     title: drawingTitleSchema,
     metadataRevision: revisionSchema,
+    isTemplate: z.boolean().optional(),
   })
   .strict();
 

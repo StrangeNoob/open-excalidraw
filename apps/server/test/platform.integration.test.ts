@@ -30,6 +30,7 @@ import {
   createDrawingRouter,
   DrawingService,
   PostgresDrawingRepository,
+  storageDrawingBlobStore,
 } from "../src/modules/drawings/index.js";
 import {
   ContentService,
@@ -96,8 +97,12 @@ describe("Wave 2 platform flow", () => {
         smtpEnabled: false,
       });
       const identity = createIdentityService(auth);
+      const storage = new LocalObjectStorage({ rootDirectory: assetDirectory });
       const drawingService = new DrawingService(
-        new PostgresDrawingRepository(database.pool),
+        new PostgresDrawingRepository(
+          database.pool,
+          storageDrawingBlobStore(storage),
+        ),
       );
       const contentService = new ContentService(
         new PostgresContentRepository(database.pool),
@@ -110,7 +115,7 @@ describe("Wave 2 platform flow", () => {
       });
       const assetService = new AssetService({
         repository: new DrizzleAssetRepository(database.db),
-        storage: new LocalObjectStorage({ rootDirectory: assetDirectory }),
+        storage,
       });
       const assetRouter = Router().use(
         "/api/v1",
@@ -245,6 +250,34 @@ describe("Wave 2 platform flow", () => {
         .expect(200);
       expect(sharedContent.headers.etag).toBe('"1"');
       expect(sharedContent.body.assetIds).toEqual(["platform-image"]);
+
+      // Duplicating copies the scene, asset rows, and asset blobs into a
+      // drawing owned by the caller, with revisions reset.
+      const duplicated = await editor
+        .post(`/api/v1/drawings/${drawingId}/duplicate`)
+        .expect(201);
+      expect(duplicated.body).toMatchObject({
+        title: "Platform flow drawing copy",
+        role: "owner",
+        contentRevision: "0",
+        isTemplate: false,
+      });
+      const copyId = String(duplicated.body.id);
+      expect(copyId).not.toBe(drawingId);
+
+      const copyContent = await editor
+        .get(`/api/v1/drawings/${copyId}/content`)
+        .expect(200);
+      expect(copyContent.headers.etag).toBe('"0"');
+      expect(copyContent.body.scene.elements).toHaveLength(1);
+
+      const copyAsset = await editor
+        .get(`/api/v1/drawings/${copyId}/assets/platform-image`)
+        .expect(200);
+      expect(copyAsset.body).toEqual(PNG);
+
+      // The owner cannot reach the copy; it belongs to the duplicator.
+      await agent.get(`/api/v1/drawings/${copyId}`).expect(404);
     } finally {
       await database.close();
       await rm(assetDirectory, { force: true, recursive: true });

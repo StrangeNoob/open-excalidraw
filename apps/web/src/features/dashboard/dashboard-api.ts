@@ -20,12 +20,17 @@ const unwrapDrawing = (
 export interface DashboardApi {
   createDrawing(title: string): Promise<DrawingSummary>;
   deleteDrawing(drawing: DrawingSummary): Promise<void>;
+  duplicateDrawing(drawing: DrawingSummary): Promise<DrawingSummary>;
   listDrawings(): Promise<DrawingListResponse>;
   renameDrawing(
     drawing: DrawingSummary,
     title: string,
   ): Promise<DrawingSummary>;
   setTags(drawing: DrawingSummary, tags: string[]): Promise<DrawingSummary>;
+  setTemplate(
+    drawing: DrawingSummary,
+    isTemplate: boolean,
+  ): Promise<DrawingSummary>;
 }
 
 export class DashboardApiClient implements DashboardApi {
@@ -45,6 +50,16 @@ export class DashboardApiClient implements DashboardApi {
         }),
         method: "POST",
       },
+      drawingMutationResponseSchema,
+    );
+
+    return unwrapDrawing(response);
+  }
+
+  async duplicateDrawing(drawing: DrawingSummary): Promise<DrawingSummary> {
+    const response = await this.#api.request(
+      `/v1/drawings/${drawing.id}/duplicate`,
+      { method: "POST" },
       drawingMutationResponseSchema,
     );
 
@@ -87,6 +102,26 @@ export class DashboardApiClient implements DashboardApi {
       {
         body: JSON.stringify({ tags }),
         method: "PUT",
+      },
+      drawingMutationResponseSchema,
+    );
+
+    return unwrapDrawing(response);
+  }
+
+  async setTemplate(
+    drawing: DrawingSummary,
+    isTemplate: boolean,
+  ): Promise<DrawingSummary> {
+    const response = await this.#api.request(
+      `/v1/drawings/${drawing.id}`,
+      {
+        body: JSON.stringify({
+          isTemplate,
+          metadataRevision: drawing.metadataRevision,
+          title: drawing.title,
+        }),
+        method: "PATCH",
       },
       drawingMutationResponseSchema,
     );

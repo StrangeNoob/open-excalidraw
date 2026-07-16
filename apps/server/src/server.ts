@@ -36,6 +36,7 @@ import {
   createDrawingRouter,
   DrawingService,
   PostgresDrawingRepository,
+  storageDrawingBlobStore,
 } from "./modules/drawings/index.js";
 import { MutationService } from "./modules/collaboration/mutation-service.js";
 import { PostgresMutationRepository } from "./modules/collaboration/persistence/index.js";
@@ -104,9 +105,6 @@ const auth = createOpenExcalidrawAuth({
   ...(oidc ? { oidc } : {}),
 });
 const identity = createIdentityService(auth);
-const drawingService = new DrawingService(
-  new PostgresDrawingRepository(database.pool),
-);
 const roomRegistry = new RoomRegistry();
 const contentService = new ContentService(
   new PostgresContentRepository(database.pool),
@@ -151,6 +149,12 @@ const shareLinkResolver = {
 
 const storage: ObjectStorage = createStorageFromEnvironment(
   process.env.STORAGE_DRIVER?.trim() || "local",
+);
+const drawingService = new DrawingService(
+  new PostgresDrawingRepository(
+    database.pool,
+    storageDrawingBlobStore(storage),
+  ),
 );
 const maintenanceJobs = new MaintenanceJobs(database.pool, storage);
 const maintenanceIntervalMs = positiveEnvironmentInteger(

@@ -61,17 +61,21 @@ const useOnlineStatus = () => {
 const DrawingCard = ({
   drawing,
   onDelete,
+  onDuplicate,
   onEditTags,
   onOpen,
   onRename,
+  onSetTemplate,
   offline,
   pending,
 }: {
   drawing: DrawingSummary;
   onDelete: (drawing: DrawingSummary) => void;
+  onDuplicate: (drawing: DrawingSummary) => void;
   onEditTags: (drawing: DrawingSummary, tags: string[]) => void;
   onOpen: (drawing: DrawingSummary) => void;
   onRename: (drawing: DrawingSummary, title: string) => void;
+  onSetTemplate: (drawing: DrawingSummary, isTemplate: boolean) => void;
   offline: boolean;
   pending: boolean;
 }) => {
@@ -167,6 +171,9 @@ const DrawingCard = ({
         <span className={`role-badge role-badge-${drawing.role}`}>
           {drawing.role}
         </span>
+        {drawing.isTemplate ? (
+          <span className="role-badge template-badge">template</span>
+        ) : null}
       </div>
 
       <dl>
@@ -245,6 +252,24 @@ const DrawingCard = ({
         ) : null}
         <button
           disabled={pending || offline}
+          onClick={() => onDuplicate(drawing)}
+          type="button"
+        >
+          Duplicate
+        </button>
+        {/* The template flag is drawing-level metadata, so it follows the
+            same capability as renaming. */}
+        {capabilities.renameDrawing ? (
+          <button
+            disabled={pending || offline}
+            onClick={() => onSetTemplate(drawing, !drawing.isTemplate)}
+            type="button"
+          >
+            {drawing.isTemplate ? "Remove template" : "Make template"}
+          </button>
+        ) : null}
+        <button
+          disabled={pending || offline}
           onClick={() => {
             setTagsInput(drawing.tags.join(", "));
             setTagsError(null);
@@ -273,9 +298,11 @@ const DrawingSection = ({
   drawings,
   emptyMessage,
   onDelete,
+  onDuplicate,
   onEditTags,
   onOpen,
   onRename,
+  onSetTemplate,
   offline,
   pending,
   title,
@@ -283,9 +310,11 @@ const DrawingSection = ({
   drawings: DrawingSummary[];
   emptyMessage: string;
   onDelete: (drawing: DrawingSummary) => void;
+  onDuplicate: (drawing: DrawingSummary) => void;
   onEditTags: (drawing: DrawingSummary, tags: string[]) => void;
   onOpen: (drawing: DrawingSummary) => void;
   onRename: (drawing: DrawingSummary, title: string) => void;
+  onSetTemplate: (drawing: DrawingSummary, isTemplate: boolean) => void;
   offline: boolean;
   pending: boolean;
   title: string;
@@ -301,9 +330,11 @@ const DrawingSection = ({
             drawing={drawing}
             key={drawing.id}
             onDelete={onDelete}
+            onDuplicate={onDuplicate}
             onEditTags={onEditTags}
             onOpen={onOpen}
             onRename={onRename}
+            onSetTemplate={onSetTemplate}
             offline={offline}
             pending={pending}
           />
@@ -328,6 +359,7 @@ export const DashboardPage = ({
   const [newTitle, setNewTitle] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [templateId, setTemplateId] = useState("");
   const dashboard = useQuery({
     queryFn: () => api.listDrawings(),
     queryKey: DASHBOARD_QUERY_KEY,
@@ -347,6 +379,40 @@ export const DashboardPage = ({
             : { nextCursor: null, owned: [drawing], shared: [] },
       );
       (onOpenDrawing ?? ((next) => navigate(`/drawings/${next.id}`)))(drawing);
+    },
+  });
+
+  const duplicateDrawing = useMutation({
+    mutationFn: (drawing: DrawingSummary) => api.duplicateDrawing(drawing),
+    onError: (error) => setActionError(error.message),
+    onSuccess: (drawing) => {
+      setActionError(null);
+      queryClient.setQueryData<DrawingListResponse>(
+        DASHBOARD_QUERY_KEY,
+        (current) =>
+          current
+            ? { ...current, owned: [drawing, ...current.owned] }
+            : { nextCursor: null, owned: [drawing], shared: [] },
+      );
+      (onOpenDrawing ?? ((next) => navigate(`/drawings/${next.id}`)))(drawing);
+    },
+  });
+
+  const setTemplate = useMutation({
+    mutationFn: ({
+      drawing,
+      isTemplate,
+    }: {
+      drawing: DrawingSummary;
+      isTemplate: boolean;
+    }) => api.setTemplate(drawing, isTemplate),
+    onError: (error) => setActionError(error.message),
+    onSuccess: (drawing) => {
+      setActionError(null);
+      queryClient.setQueryData<DrawingListResponse>(
+        DASHBOARD_QUERY_KEY,
+        (current) => replaceDrawing(current, drawing),
+      );
     },
   });
 
@@ -407,8 +473,10 @@ export const DashboardPage = ({
 
   const pending =
     createDrawing.isPending ||
+    duplicateDrawing.isPending ||
     renameDrawing.isPending ||
     setTags.isPending ||
+    setTemplate.isPending ||
     deleteDrawing.isPending;
 
   const submitCreate = (event: FormEvent<HTMLFormElement>) => {
@@ -428,6 +496,21 @@ export const DashboardPage = ({
       globalThis.confirm(`Delete “${drawing.title}”? This cannot be undone.`)
     ) {
       deleteDrawing.mutate(drawing);
+    }
+  };
+
+  const templates = dashboard.data
+    ? [...dashboard.data.owned, ...dashboard.data.shared].filter(
+        (drawing) => drawing.isTemplate,
+      )
+    : [];
+
+  const submitFromTemplate = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const template =
+      templates.find((drawing) => drawing.id === templateId) ?? templates[0];
+    if (template) {
+      duplicateDrawing.mutate(template);
     }
   };
 
@@ -469,6 +552,30 @@ export const DashboardPage = ({
             Create drawing
           </button>
         </form>
+        {templates.length > 0 ? (
+          <form className="create-drawing" onSubmit={submitFromTemplate}>
+            <label>
+              New from template
+              <select
+                onChange={(event) => setTemplateId(event.target.value)}
+                value={
+                  templates.some((drawing) => drawing.id === templateId)
+                    ? templateId
+                    : (templates[0]?.id ?? "")
+                }
+              >
+                {templates.map((template) => (
+                  <option key={template.id} value={template.id}>
+                    {template.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button disabled={pending || !online} type="submit">
+              Create from template
+            </button>
+          </form>
+        ) : null}
       </header>
 
       {!online ? (
@@ -525,6 +632,7 @@ export const DashboardPage = ({
                   : "Create your first drawing to get started."
               }
               onDelete={requestDelete}
+              onDuplicate={(drawing) => duplicateDrawing.mutate(drawing)}
               onEditTags={(drawing, tags) => setTags.mutate({ drawing, tags })}
               onOpen={(drawing) =>
                 (onOpenDrawing ?? ((next) => navigate(`/drawings/${next.id}`)))(
@@ -533,6 +641,9 @@ export const DashboardPage = ({
               }
               onRename={(drawing, title) =>
                 renameDrawing.mutate({ drawing, title })
+              }
+              onSetTemplate={(drawing, isTemplate) =>
+                setTemplate.mutate({ drawing, isTemplate })
               }
               offline={!online}
               pending={pending}
@@ -546,6 +657,7 @@ export const DashboardPage = ({
                   : "Drawings shared with you will appear here."
               }
               onDelete={requestDelete}
+              onDuplicate={(drawing) => duplicateDrawing.mutate(drawing)}
               onEditTags={(drawing, tags) => setTags.mutate({ drawing, tags })}
               onOpen={(drawing) =>
                 (onOpenDrawing ?? ((next) => navigate(`/drawings/${next.id}`)))(
@@ -554,6 +666,9 @@ export const DashboardPage = ({
               }
               onRename={(drawing, title) =>
                 renameDrawing.mutate({ drawing, title })
+              }
+              onSetTemplate={(drawing, isTemplate) =>
+                setTemplate.mutate({ drawing, isTemplate })
               }
               offline={!online}
               pending={pending}

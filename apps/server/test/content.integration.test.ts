@@ -210,7 +210,11 @@ describeDatabase("content persistence", () => {
 
   it("serializes self-leave before a queued content save", async () => {
     const drawingService = new DrawingService(
-      new PostgresDrawingRepository(database.pool),
+      // This test never duplicates, so blobs are irrelevant.
+      new PostgresDrawingRepository(database.pool, {
+        copy: () => Promise.resolve("missing" as const),
+        remove: () => Promise.resolve(),
+      }),
     );
     const before = await service.load(leavingEditorId, drawingId);
     const blocker = await database.pool.connect();

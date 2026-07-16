@@ -251,6 +251,65 @@ describe("drawing HTTP domain", () => {
     expect(outsider.status).toBe(404);
   });
 
+  it("duplicates accessible drawings into the caller's account", async () => {
+    const fixture = createFixture();
+    const shared = fixture.repository.seed(
+      randomUUID(),
+      "Shared sketch",
+      "viewer",
+      viewerId,
+    );
+
+    const duplicated = await request(fixture.app)
+      .post(`/api/v1/drawings/${shared.id}/duplicate`)
+      .set("x-test-user", viewerId);
+    expect(duplicated.status).toBe(201);
+    expect(duplicated.body).toMatchObject({
+      title: "Shared sketch copy",
+      ownerUserId: viewerId,
+      role: "owner",
+      isTemplate: false,
+    });
+    expect(duplicated.body.id).not.toBe(shared.id);
+
+    const outsider = await request(fixture.app)
+      .post(`/api/v1/drawings/${shared.id}/duplicate`)
+      .set("x-test-user", outsiderId);
+    expect(outsider.status).toBe(404);
+
+    const missing = await request(fixture.app)
+      .post(`/api/v1/drawings/${randomUUID()}/duplicate`)
+      .set("x-test-user", viewerId);
+    expect(missing.status).toBe(404);
+  });
+
+  it("toggles the template flag through PATCH with rename semantics", async () => {
+    const fixture = createFixture();
+    const drawing = fixture.repository.seed(ownerId, "Base", "owner");
+    fixture.repository.members.set(`${drawing.id}:${viewerId}`, "viewer");
+
+    const marked = await request(fixture.app)
+      .patch(`/api/v1/drawings/${drawing.id}`)
+      .set("x-test-user", ownerId)
+      .send({ title: "Base", metadataRevision: "0", isTemplate: true });
+    expect(marked.status).toBe(200);
+    expect(marked.body.isTemplate).toBe(true);
+
+    // Omitting the flag leaves it untouched.
+    const renamed = await request(fixture.app)
+      .patch(`/api/v1/drawings/${drawing.id}`)
+      .set("x-test-user", ownerId)
+      .send({ title: "Renamed base", metadataRevision: "1" });
+    expect(renamed.status).toBe(200);
+    expect(renamed.body.isTemplate).toBe(true);
+
+    const viewer = await request(fixture.app)
+      .patch(`/api/v1/drawings/${drawing.id}`)
+      .set("x-test-user", viewerId)
+      .send({ title: "Nope", metadataRevision: "2", isTemplate: false });
+    expect(viewer.status).toBe(403);
+  });
+
   it("requires a valid session on every route", async () => {
     const fixture = createFixture();
     const response = await request(fixture.app).get("/api/v1/drawings");
@@ -335,6 +394,7 @@ class InMemoryDrawingRepository implements DrawingRepository {
       createdAt: now,
       updatedAt: now,
       thumbnailUpdatedAt: null,
+      isTemplate: false,
     };
     this.drawings.set(drawing.id, drawing);
     if (role !== "owner") {
@@ -388,11 +448,25 @@ class InMemoryDrawingRepository implements DrawingRepository {
     return Promise.resolve(this.seed(input.ownerUserId, input.title, "owner"));
   }
 
+  public duplicate(input: {
+    sourceDrawingId: string;
+    ownerUserId: string;
+  }): Promise<AccessibleDrawing | null> {
+    const source = this.drawings.get(input.sourceDrawingId);
+    if (!source || this.deleted.has(input.sourceDrawingId)) {
+      return Promise.resolve(null);
+    }
+    return Promise.resolve(
+      this.seed(input.ownerUserId, `${source.title} copy`, "owner"),
+    );
+  }
+
   public async rename(input: {
     drawingId: string;
     actorUserId: string;
     title: string;
     expectedMetadataRevision: bigint;
+    isTemplate?: boolean;
   }): Promise<RenameDrawingResult> {
     const accessible = await this.findAccessible(
       input.drawingId,
@@ -407,6 +481,7 @@ class InMemoryDrawingRepository implements DrawingRepository {
       };
     }
     current.title = input.title;
+    current.isTemplate = input.isTemplate ?? current.isTemplate;
     current.metadataRevision += 1n;
     return {
       status: "updated",

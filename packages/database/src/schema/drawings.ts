@@ -1,6 +1,7 @@
 import { isNull, sql } from "drizzle-orm";
 import {
   bigint,
+  boolean,
   check,
   customType,
   index,
@@ -54,6 +55,7 @@ export const drawings = pgTable(
       .defaultNow()
       .notNull(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    isTemplate: boolean("is_template").notNull().default(false),
     lastCheckpointAt: timestamp("last_checkpoint_at", { withTimezone: true }),
     thumbnailUpdatedAt: timestamp("thumbnail_updated_at", {
       withTimezone: true,

@@ -161,6 +161,11 @@
   color: var(--blue-ink);
 }
 
+.template-badge {
+  background: var(--highlight-wash);
+  rotate: 1.5deg;
+}
+
 .dashboard-page .danger-button {
   color: var(--danger-ink);
 }

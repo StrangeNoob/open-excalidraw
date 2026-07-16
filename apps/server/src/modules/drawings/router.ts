@@ -74,6 +74,16 @@ export function createDrawingRouter(input: CreateDrawingRouterInput): Router {
     });
   });
 
+  router.post(
+    "/api/v1/drawings/:drawingId/duplicate",
+    async (request, response) => {
+      await handle(request, response, input.identity, async (userId) => ({
+        status: 201,
+        body: await input.service.duplicate(userId, drawingId(request)),
+      }));
+    },
+  );
+
   router.delete("/api/v1/drawings/:drawingId", async (request, response) => {
     await handle(
       request,
