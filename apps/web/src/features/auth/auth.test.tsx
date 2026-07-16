@@ -34,6 +34,8 @@ const anonymousSession: SessionResponse = {
     emailPassword: true,
     github: true,
     google: false,
+    oidc: true,
+    oidcProviderName: "Keycloak",
     smtp: false,
   },
   user: null,
@@ -189,6 +191,66 @@ describe("auth pages", () => {
       email: "ada@example.com",
       password: "correct-horse",
     });
+  });
+
+  it("starts single sign-on with the provider named by the deployment", async () => {
+    const user = userEvent.setup();
+    const client = new FakeAuthClient();
+    client.getSession.mockResolvedValue(anonymousSession);
+    client.startOAuth.mockResolvedValue();
+    renderAuthRoute("/login?returnTo=%2Finvite%2Fpending-token", client);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Continue with Keycloak" }),
+    );
+
+    await waitFor(() =>
+      expect(client.startOAuth).toHaveBeenCalledWith(
+        "oidc",
+        "/invite/pending-token",
+      ),
+    );
+  });
+
+  it("hides the single sign-on button when the deployment disables it", async () => {
+    const client = new FakeAuthClient();
+    client.getSession.mockResolvedValue({
+      ...anonymousSession,
+      capabilities: { ...anonymousSession.capabilities, oidc: false },
+    });
+    renderAuthRoute("/login", client);
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /github/i }),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole("button", { name: /continue with keycloak/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the single sign-on button when it is the only provider", async () => {
+    const client = new FakeAuthClient();
+    client.getSession.mockResolvedValue({
+      ...anonymousSession,
+      capabilities: {
+        ...anonymousSession.capabilities,
+        github: false,
+        google: false,
+      },
+    });
+    renderAuthRoute("/login", client);
+
+    expect(
+      await screen.findByRole("button", { name: "Continue with Keycloak" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /github/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /google/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("validates sign-up names and falls back from an unsafe return path", async () => {
@@ -476,6 +538,77 @@ describe("cookie auth state", () => {
       callbackURL: "/app",
     });
     storageWrite.mockRestore();
+  });
+
+  it("starts and links single sign-on through the oauth2 endpoints", async () => {
+    const navigate = vi.fn();
+    const bodies = new Map<string, unknown>();
+    const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      const body = init?.body;
+      bodies.set(url, JSON.parse(typeof body === "string" ? body : "{}"));
+      return Promise.resolve(
+        new Response(JSON.stringify({ url: "https://sso.example/authorize" }), {
+          status: 200,
+        }),
+      );
+    });
+    const client = new CookieAuthClient({
+      api: new HttpApiClient({ fetch }),
+      navigate,
+    });
+
+    await client.startOAuth("oidc", "/invite/token");
+    await client.linkSocial("oidc", "/app/settings");
+
+    expect(bodies.get("/api/auth/sign-in/oauth2")).toEqual({
+      callbackURL: "/invite/token",
+      providerId: "oidc",
+    });
+    expect(bodies.get("/api/auth/oauth2/link")).toEqual({
+      callbackURL: "/app/settings",
+      providerId: "oidc",
+    });
+    expect(navigate).toHaveBeenCalledTimes(2);
+    expect(navigate).toHaveBeenCalledWith("https://sso.example/authorize");
+  });
+
+  it("links a social provider through the link-social endpoint", async () => {
+    const navigate = vi.fn();
+    const bodies = new Map<string, unknown>();
+    const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      const body = init?.body;
+      bodies.set(url, JSON.parse(typeof body === "string" ? body : "{}"));
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ url: "https://github.example/authorize" }),
+          { status: 200 },
+        ),
+      );
+    });
+    const client = new CookieAuthClient({
+      api: new HttpApiClient({ fetch }),
+      navigate,
+    });
+
+    await client.linkSocial("github", "/app/settings");
+
+    expect(bodies.get("/api/auth/link-social")).toEqual({
+      callbackURL: "/app/settings",
+      provider: "github",
+    });
+    expect(navigate).toHaveBeenCalledWith("https://github.example/authorize");
   });
 
   it("purges protected queries and editor state on logout", async () => {

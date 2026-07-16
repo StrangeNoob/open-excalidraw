@@ -14,6 +14,7 @@ import {
   type DBAdapterInstance,
 } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { genericOAuth } from "better-auth/plugins";
 
 import {
   DisabledManualResetLinkSink,
@@ -23,10 +24,20 @@ import { withHashedSessionTokens } from "./session-token-adapter.js";
 
 const DEFAULT_SESSION_SECONDS = 60 * 60 * 24 * 7;
 const DEFAULT_RESET_SECONDS = 60 * 60;
+const OIDC_DISCOVERY_SUFFIX = "/.well-known/openid-configuration";
 
 export interface OAuthProviderCredentials {
   clientId: string;
   clientSecret: string;
+}
+
+export interface OidcProviderConfig {
+  /** Issuer URL or full discovery document URL. */
+  issuerUrl: string;
+  clientId: string;
+  clientSecret: string;
+  /** Button label shown to users; defaults to "SSO". */
+  providerName?: string;
 }
 
 export interface CreateAuthInput {
@@ -41,6 +52,7 @@ export interface CreateAuthInput {
   smtpEnabled: boolean;
   google?: OAuthProviderCredentials;
   github?: OAuthProviderCredentials;
+  oidc?: OidcProviderConfig;
   sessionExpiresInSeconds?: number;
   manualResetLinks?: ManualResetLinkSink;
   productName?: string;
@@ -162,6 +174,24 @@ export function buildBetterAuthOptions(
       },
     },
     socialProviders,
+    ...(hasCompleteOidc(input.oidc)
+      ? {
+          plugins: [
+            genericOAuth({
+              config: [
+                {
+                  providerId: "oidc",
+                  discoveryUrl: oidcDiscoveryUrl(input.oidc.issuerUrl),
+                  clientId: input.oidc.clientId,
+                  clientSecret: input.oidc.clientSecret,
+                  scopes: ["openid", "profile", "email"],
+                  pkce: true,
+                },
+              ],
+            }),
+          ],
+        }
+      : {}),
     rateLimit: {
       enabled: true,
       storage: "memory",
@@ -216,11 +246,14 @@ export function authCapabilities(input: {
   smtpEnabled: boolean;
   google?: OAuthProviderCredentials;
   github?: OAuthProviderCredentials;
+  oidc?: OidcProviderConfig;
 }): AuthCapabilities {
   return {
     emailPassword: true,
     google: hasCompleteCredentials(input.google),
     github: hasCompleteCredentials(input.github),
+    oidc: hasCompleteOidc(input.oidc),
+    oidcProviderName: input.oidc?.providerName?.trim() || "SSO",
     smtp: input.smtpEnabled,
   };
 }
@@ -229,6 +262,27 @@ function hasCompleteCredentials(
   value: OAuthProviderCredentials | undefined,
 ): value is OAuthProviderCredentials {
   return Boolean(value?.clientId.trim() && value.clientSecret.trim());
+}
+
+function hasCompleteOidc(
+  value: OidcProviderConfig | undefined,
+): value is OidcProviderConfig {
+  return Boolean(
+    value?.issuerUrl.trim() &&
+    value.clientId.trim() &&
+    value.clientSecret.trim(),
+  );
+}
+
+function oidcDiscoveryUrl(issuerUrl: string): string {
+  const trimmed = issuerUrl.trim();
+  // Decide from the parsed pathname so query strings and trailing slashes
+  // on an already-complete discovery URL do not get the suffix re-appended.
+  const pathname = new URL(trimmed).pathname.replace(/\/+$/, "");
+  if (pathname.endsWith(OIDC_DISCOVERY_SUFFIX)) {
+    return trimmed;
+  }
+  return `${trimmed.replace(/\/+$/, "")}${OIDC_DISCOVERY_SUFFIX}`;
 }
 
 function isHttps(value: string): boolean {

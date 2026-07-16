@@ -20,6 +20,8 @@ const session = (emailVerified: boolean): SessionResponse => ({
     emailPassword: true,
     github: false,
     google: false,
+    oidc: false,
+    oidcProviderName: "SSO",
     smtp: true,
   },
   user: {

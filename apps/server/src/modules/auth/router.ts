@@ -155,6 +155,35 @@ export function createAuthRouter(input: CreateAuthRouterInput): Router {
     },
   );
 
+  // better-auth's generic OAuth link route has no email-verification gate of
+  // its own, so enforce the same invariant as core social linking here.
+  router.post("/api/auth/oauth2/link", async (request, response, next) => {
+    try {
+      const identity = await input.identity.resolve(request.headers);
+      if (!identity) {
+        response.status(401).type("application/problem+json").json({
+          code: "AUTHENTICATION_REQUIRED",
+          status: 401,
+          title: "Authentication is required",
+          requestId: randomUUID(),
+        });
+        return;
+      }
+      if (!identity.emailVerified) {
+        response.status(403).type("application/problem+json").json({
+          code: "EMAIL_VERIFICATION_REQUIRED",
+          status: 403,
+          title: "Verify your email before linking an account",
+          requestId: randomUUID(),
+        });
+        return;
+      }
+      next();
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.all(["/api/auth", "/api/auth/{*path}"], authHandler);
   return router;
 }

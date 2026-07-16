@@ -71,6 +71,17 @@ Provider callback URLs must use the final `APP_BASE_URL`:
 `https://draw.example.com/api/auth/callback/github`. Keep the UI, REST API,
 and collaboration socket on the same canonical origin.
 
+A generic OIDC provider (Keycloak, Authentik, Authelia, ...) is configured
+with `OIDC_ISSUER_URL` (issuer base URL or full discovery URL),
+`OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, and the optional
+`OIDC_PROVIDER_NAME` sign-in button label. The redirect URI to register at
+the identity provider is
+`https://draw.example.com/api/auth/oauth2/callback/oidc` — note it differs
+from the `/api/auth/callback/<provider>` pattern used by Google and GitHub.
+The provider is disabled when the issuer URL, client ID, or secret is blank.
+Discovery is fetched at each sign-in start, so identity-provider downtime
+only fails new sign-ins.
+
 ## S3-compatible object storage
 
 Assets default to the local volume at `STORAGE_LOCAL_PATH`. Set

@@ -28,6 +28,8 @@ const NO_AUTH_CAPABILITIES: AuthCapabilities = {
   emailPassword: false,
   github: false,
   google: false,
+  oidc: false,
+  oidcProviderName: "SSO",
   smtp: false,
 };
 

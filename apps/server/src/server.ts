@@ -30,6 +30,7 @@ import {
   createOpenExcalidrawAuth,
   OneTimeManualResetLinkStore,
   type OAuthProviderCredentials,
+  type OidcProviderConfig,
 } from "./modules/auth/index.js";
 import {
   createDrawingRouter,
@@ -81,6 +82,7 @@ if (!smtpEnabled && (!adminResetToken || adminResetToken.length < 32)) {
 }
 const google = oauthCredentials("GOOGLE");
 const github = oauthCredentials("GITHUB");
+const oidc = oidcConfig();
 const database = createDatabase(databaseUrl);
 const mailer = createMailer();
 const manualResetLinks = new OneTimeManualResetLinkStore();
@@ -99,6 +101,7 @@ const auth = createOpenExcalidrawAuth({
   ),
   ...(google ? { google } : {}),
   ...(github ? { github } : {}),
+  ...(oidc ? { oidc } : {}),
 });
 const identity = createIdentityService(auth);
 const drawingService = new DrawingService(
@@ -309,6 +312,7 @@ const app = createApp({
         smtpEnabled,
         ...(google ? { google } : {}),
         ...(github ? { github } : {}),
+        ...(oidc ? { oidc } : {}),
       }),
       manualResetLinks,
       ...(adminResetToken ? { adminResetToken } : {}),
@@ -472,6 +476,22 @@ function oauthCredentials(
   const clientId = process.env[`${provider}_CLIENT_ID`]?.trim();
   const clientSecret = process.env[`${provider}_CLIENT_SECRET`]?.trim();
   return clientId && clientSecret ? { clientId, clientSecret } : undefined;
+}
+
+function oidcConfig(): OidcProviderConfig | undefined {
+  const issuerUrl = process.env.OIDC_ISSUER_URL?.trim();
+  const clientId = process.env.OIDC_CLIENT_ID?.trim();
+  const clientSecret = process.env.OIDC_CLIENT_SECRET?.trim();
+  if (!issuerUrl || !clientId || !clientSecret) {
+    return undefined;
+  }
+  const providerName = process.env.OIDC_PROVIDER_NAME?.trim();
+  return {
+    issuerUrl,
+    clientId,
+    clientSecret,
+    ...(providerName ? { providerName } : {}),
+  };
 }
 
 function createMailer(): Mailer {

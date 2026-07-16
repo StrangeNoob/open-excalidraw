@@ -7,6 +7,8 @@ export const authCapabilitiesSchema = z
     emailPassword: z.boolean(),
     google: z.boolean(),
     github: z.boolean(),
+    oidc: z.boolean(),
+    oidcProviderName: z.string().min(1),
     smtp: z.boolean(),
   })
   .strict();
