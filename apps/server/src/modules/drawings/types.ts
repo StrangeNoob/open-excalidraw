@@ -17,6 +17,21 @@ export interface AccessibleDrawing {
   createdAt: Date;
   updatedAt: Date;
   thumbnailUpdatedAt: Date | null;
+  isTemplate: boolean;
+}
+
+/**
+ * Copies asset/thumbnail blobs when a drawing is duplicated. A missing or
+ * corrupt source blob is reported (not thrown) so a duplicate mirrors its
+ * source, broken images included; hard storage failures still throw.
+ */
+export interface DrawingBlobStore {
+  copy(input: {
+    sourceKey: string;
+    targetKey: string;
+    expectedSha256?: string;
+  }): Promise<"copied" | "missing">;
+  remove(key: string): Promise<void>;
 }
 
 export type RenameDrawingResult =
@@ -51,7 +66,13 @@ export interface DrawingRepository {
     actorUserId: string;
     title: string;
     expectedMetadataRevision: bigint;
+    isTemplate?: boolean;
   }): Promise<RenameDrawingResult>;
+  duplicate(input: {
+    sourceDrawingId: string;
+    ownerUserId: string;
+    idempotencyKey?: string;
+  }): Promise<AccessibleDrawing | null>;
   softDelete(input: {
     drawingId: string;
     ownerUserId: string;
@@ -88,6 +109,7 @@ export const toDrawingSummary = (
   createdAt: drawing.createdAt.toISOString(),
   updatedAt: drawing.updatedAt.toISOString(),
   thumbnailUpdatedAt: drawing.thumbnailUpdatedAt?.toISOString() ?? null,
+  isTemplate: drawing.isTemplate,
 });
 
 export const toDrawingListResponse = (input: {

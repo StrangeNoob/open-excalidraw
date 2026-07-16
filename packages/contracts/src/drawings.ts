@@ -41,6 +41,8 @@ export const drawingSummarySchema = z
     updatedAt: isoDateTimeSchema,
     // Null until a client rendered a thumbnail; defaulted for older servers.
     thumbnailUpdatedAt: isoDateTimeSchema.nullable().default(null),
+    // Defaulted for older server responses that predate templates.
+    isTemplate: z.boolean().default(false),
   })
   .strict();
 
@@ -59,10 +61,17 @@ export const createDrawingRequestSchema = z
   })
   .strict();
 
+export const duplicateDrawingRequestSchema = z
+  .object({
+    idempotencyKey: uuidSchema.optional(),
+  })
+  .strict();
+
 export const updateDrawingRequestSchema = z
   .object({
     title: drawingTitleSchema,
     metadataRevision: revisionSchema,
+    isTemplate: z.boolean().optional(),
   })
   .strict();
 
@@ -75,4 +84,7 @@ export const setDrawingTagsRequestSchema = z
 export type DrawingSummary = z.infer<typeof drawingSummarySchema>;
 export type DrawingListResponse = z.infer<typeof drawingListResponseSchema>;
 export type CreateDrawingRequest = z.infer<typeof createDrawingRequestSchema>;
+export type DuplicateDrawingRequest = z.infer<
+  typeof duplicateDrawingRequestSchema
+>;
 export type SetDrawingTagsRequest = z.infer<typeof setDrawingTagsRequestSchema>;

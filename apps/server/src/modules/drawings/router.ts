@@ -1,5 +1,6 @@
 import {
   createDrawingRequestSchema,
+  duplicateDrawingRequestSchema,
   setDrawingTagsRequestSchema,
   updateDrawingRequestSchema,
   uuidSchema,
@@ -73,6 +74,20 @@ export function createDrawingRouter(input: CreateDrawingRouterInput): Router {
       };
     });
   });
+
+  router.post(
+    "/api/v1/drawings/:drawingId/duplicate",
+    async (request, response) => {
+      await handle(request, response, input.identity, async (userId) => ({
+        status: 201,
+        body: await input.service.duplicate(
+          userId,
+          drawingId(request),
+          duplicateDrawingRequestSchema.parse(request.body ?? {}),
+        ),
+      }));
+    },
+  );
 
   router.delete("/api/v1/drawings/:drawingId", async (request, response) => {
     await handle(

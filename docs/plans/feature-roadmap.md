@@ -9,6 +9,9 @@ is ranked by value against effort for a self-hosted collaboration tool.
 
 ## Recently shipped
 
+- **Duplicate drawing and templates** — `POST /api/v1/drawings/:drawingId/duplicate`
+  copies the scene, assets, and thumbnail for any member; an `is_template`
+  flag feeds the dashboard's "New from template" picker.
 - **Public share links** (v0.7.0) — one revocable link per drawing; anyone
   with `/s/:token` gets a live read-only view without an account.
 - **Dashboard thumbnails** — small PNGs rendered client-side after edits and
@@ -19,25 +22,19 @@ is ranked by value against effort for a self-hosted collaboration tool.
 
 ## Next up
 
-### 1. Duplicate drawing and templates
-
-Duplicating is nearly free: copy the scene and asset references, both owned
-by the server. Templates then fall out of it — a boolean flag plus a "New
-from template" list on the dashboard.
-
-### 2. Trash and soft delete
+### 1. Trash and soft delete
 
 Deleting a drawing today is forever. A `deleted_at` column already exists on
 `drawings`; what is missing is a trash view, a restore action, and a purge
 job. Small diff that prevents the worst kind of support request.
 
-### 3. Persistent shape libraries
+### 2. Persistent shape libraries
 
 The editor supports `.excalidrawlib` libraries but keeps them in
 localStorage, so they do not follow users across devices. Persisting them
 per-account is a natural fit for the existing storage layer.
 
-### 4. Minimal admin page
+### 3. Minimal admin page
 
 Operators currently manage users with `ADMIN_RESET_TOKEN` and SQL. A user
 list with disable/delete plus instance counts (users, drawings, storage)

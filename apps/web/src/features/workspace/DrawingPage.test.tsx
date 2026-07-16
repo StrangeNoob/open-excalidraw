@@ -102,6 +102,7 @@ const drawing = (
   contentRevision: "3",
   createdAt: "2026-07-11T00:00:00.000Z",
   id,
+  isTemplate: false,
   metadataRevision: "1",
   ownerName: "Ada",
   ownerUserId: USER,

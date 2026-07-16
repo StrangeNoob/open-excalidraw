@@ -48,10 +48,28 @@ export class DrawingService {
     return this.requireAccess(userId, drawingId, "read");
   }
 
+  public async duplicate(
+    userId: string,
+    drawingId: string,
+    input: { idempotencyKey?: string } = {},
+  ): Promise<DrawingSummary> {
+    // Anyone who can read a drawing may copy it into their own account.
+    await this.requireAccess(userId, drawingId, "read");
+    const drawing = await this.repository.duplicate({
+      sourceDrawingId: drawingId,
+      ownerUserId: userId,
+      ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+    });
+    if (!drawing) {
+      throw notFound();
+    }
+    return toDrawingSummary(drawing);
+  }
+
   public async rename(
     userId: string,
     drawingId: string,
-    input: { title: string; metadataRevision: string },
+    input: { title: string; metadataRevision: string; isTemplate?: boolean },
   ): Promise<DrawingSummary> {
     await this.requireAccess(userId, drawingId, "rename");
     const result = await this.repository.rename({
@@ -59,6 +77,9 @@ export class DrawingService {
       actorUserId: userId,
       title: input.title,
       expectedMetadataRevision: BigInt(input.metadataRevision),
+      ...(input.isTemplate === undefined
+        ? {}
+        : { isTemplate: input.isTemplate }),
     });
 
     if (result.status === "not-found") {

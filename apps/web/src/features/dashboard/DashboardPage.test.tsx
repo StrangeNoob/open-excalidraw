@@ -19,6 +19,7 @@ const createDrawing = (
   contentRevision: "1",
   createdAt: "2026-07-10T10:00:00.000Z",
   id: `00000000-0000-4000-8000-${String(offset).padStart(12, "0")}`,
+  isTemplate: false,
   metadataRevision: "1",
   ownerName: role === "owner" ? "Ada" : "Grace",
   ownerUserId: `10000000-0000-4000-8000-${String(offset).padStart(12, "0")}`,
@@ -40,6 +41,9 @@ class FakeDashboardApi implements DashboardApi {
     this.data.owned = this.data.owned.filter(({ id }) => id !== drawing.id);
     return Promise.resolve();
   });
+  readonly duplicateDrawing = vi.fn((drawing: DrawingSummary) =>
+    Promise.resolve(createDrawing("owner", `${drawing.title} copy`, 98)),
+  );
   readonly listDrawings = vi.fn(() => Promise.resolve(this.data));
   readonly renameDrawing = vi.fn((drawing: DrawingSummary, title: string) => {
     const renamed = {
@@ -65,6 +69,23 @@ class FakeDashboardApi implements DashboardApi {
     );
     return Promise.resolve(tagged);
   });
+
+  readonly setTemplate = vi.fn(
+    (drawing: DrawingSummary, isTemplate: boolean) => {
+      const updated = {
+        ...drawing,
+        isTemplate,
+        metadataRevision: String(Number(drawing.metadataRevision) + 1),
+      };
+      this.data.owned = this.data.owned.map((candidate) =>
+        candidate.id === drawing.id ? updated : candidate,
+      );
+      this.data.shared = this.data.shared.map((candidate) =>
+        candidate.id === drawing.id ? updated : candidate,
+      );
+      return Promise.resolve(updated);
+    },
+  );
 
   constructor(data: DrawingListResponse) {
     this.data = data;
@@ -226,6 +247,106 @@ describe("DashboardPage", () => {
       expect(api.deleteDrawing).toHaveBeenCalledWith(existing),
     );
     expect(screen.queryByText("Old board")).not.toBeInTheDocument();
+  });
+
+  it("duplicates any accessible drawing and opens the copy", async () => {
+    const user = userEvent.setup();
+    const viewer = createDrawing("viewer", "Viewer board", 1);
+    const api = new FakeDashboardApi({
+      nextCursor: null,
+      owned: [],
+      shared: [viewer],
+    });
+    const onOpen = vi.fn();
+    renderDashboard(api, onOpen);
+
+    const card = (await screen.findByText("Viewer board")).closest("article")!;
+    await user.click(within(card).getByRole("button", { name: "Duplicate" }));
+
+    await waitFor(() =>
+      expect(api.duplicateDrawing).toHaveBeenCalledWith(viewer),
+    );
+    expect(onOpen).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Viewer board copy" }),
+    );
+    expect(await screen.findByText("Viewer board copy")).toBeInTheDocument();
+  });
+
+  it("toggles the template flag where renaming is allowed", async () => {
+    const user = userEvent.setup();
+    const owner = createDrawing("owner", "Owner board", 1);
+    const viewer = createDrawing("viewer", "Viewer board", 2);
+    const api = new FakeDashboardApi({
+      nextCursor: null,
+      owned: [owner],
+      shared: [viewer],
+    });
+    renderDashboard(api);
+
+    const ownerCard = (await screen.findByText("Owner board")).closest(
+      "article",
+    )!;
+    const viewerCard = screen.getByText("Viewer board").closest("article")!;
+    expect(
+      within(viewerCard).queryByRole("button", { name: "Make template" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(
+      within(ownerCard).getByRole("button", { name: "Make template" }),
+    );
+    await waitFor(() =>
+      expect(api.setTemplate).toHaveBeenCalledWith(owner, true),
+    );
+    expect(within(ownerCard).getByText("template")).toBeInTheDocument();
+    expect(
+      within(ownerCard).getByRole("button", { name: "Remove template" }),
+    ).toBeVisible();
+  });
+
+  it("creates a drawing from a template via the header picker", async () => {
+    const user = userEvent.setup();
+    const template = {
+      ...createDrawing("owner", "Retro template", 1),
+      isTemplate: true,
+    };
+    const plain = createDrawing("owner", "Plain board", 2);
+    const api = new FakeDashboardApi({
+      nextCursor: null,
+      owned: [template, plain],
+      shared: [],
+    });
+    const onOpen = vi.fn();
+    renderDashboard(api, onOpen);
+
+    const picker = await screen.findByLabelText("New from template");
+    expect(within(picker).queryByRole("option", { name: "Plain board" })).toBe(
+      null,
+    );
+    await user.selectOptions(picker, template.id);
+    await user.click(
+      screen.getByRole("button", { name: "Create from template" }),
+    );
+
+    await waitFor(() =>
+      expect(api.duplicateDrawing).toHaveBeenCalledWith(template),
+    );
+    expect(onOpen).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Retro template copy" }),
+    );
+  });
+
+  it("hides the template picker when no templates exist", async () => {
+    const api = new FakeDashboardApi({
+      nextCursor: null,
+      owned: [createDrawing("owner", "Plain board", 1)],
+      shared: [],
+    });
+    renderDashboard(api);
+
+    await screen.findByText("Plain board");
+    expect(
+      screen.queryByLabelText("New from template"),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps mutation controls disabled while offline", async () => {

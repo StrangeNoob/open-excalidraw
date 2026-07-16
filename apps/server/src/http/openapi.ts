@@ -225,7 +225,7 @@ export const openApiDocument = {
       },
       patch: {
         tags: ["Drawings"],
-        summary: "Rename a drawing",
+        summary: "Update a drawing's metadata (title, template flag)",
         description:
           "Optimistic concurrency: the request carries the last seen " +
           "`metadataRevision` and fails with `412 METADATA_VERSION_CONFLICT` " +
@@ -262,6 +262,29 @@ export const openApiDocument = {
         requestBody: jsonBody(ref("SetDrawingTagsRequest")),
         responses: {
           "200": json("The drawing with updated tags.", ref("DrawingSummary")),
+          "400": invalidRequest,
+          "401": unauthorized,
+          "404": notFound,
+        },
+      },
+    },
+    "/api/v1/drawings/{drawingId}/duplicate": {
+      parameters: [drawingIdParameter],
+      post: {
+        tags: ["Drawings"],
+        summary: "Duplicate a drawing into the caller's account",
+        description:
+          "Copies the scene, asset references, asset blobs, and thumbnail " +
+          "into a new drawing owned by the caller. Any member (including " +
+          "viewers) may duplicate. History, members, share links, tags, and " +
+          "the template flag are not copied. Retrying with the same " +
+          "`idempotencyKey` returns the copy already made for that key.",
+        requestBody: {
+          ...jsonBody(ref("DuplicateDrawingRequest")),
+          required: false,
+        },
+        responses: {
+          "201": json("The new copy.", ref("DrawingSummary")),
           "400": invalidRequest,
           "401": unauthorized,
           "404": notFound,
@@ -960,6 +983,12 @@ export const openApiDocument = {
               "When the dashboard thumbnail was last replaced; null until " +
               "a client has rendered one.",
           },
+          isTemplate: {
+            type: "boolean",
+            description:
+              "Templates appear in the dashboard's " +
+              "“New from template” list.",
+          },
         },
       },
       DrawingListResponse: {
@@ -980,6 +1009,13 @@ export const openApiDocument = {
           idempotencyKey: uuid,
         },
       },
+      DuplicateDrawingRequest: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          idempotencyKey: uuid,
+        },
+      },
       UpdateDrawingRequest: {
         type: "object",
         required: ["title", "metadataRevision"],
@@ -987,6 +1023,7 @@ export const openApiDocument = {
         properties: {
           title: { type: "string", minLength: 1, maxLength: 120 },
           metadataRevision: revision,
+          isTemplate: { type: "boolean" },
         },
       },
       SetDrawingTagsRequest: {
