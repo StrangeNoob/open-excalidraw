@@ -59,7 +59,10 @@ export class DashboardApiClient implements DashboardApi {
   async duplicateDrawing(drawing: DrawingSummary): Promise<DrawingSummary> {
     const response = await this.#api.request(
       `/v1/drawings/${drawing.id}/duplicate`,
-      { method: "POST" },
+      {
+        body: JSON.stringify({ idempotencyKey: crypto.randomUUID() }),
+        method: "POST",
+      },
       drawingMutationResponseSchema,
     );
 

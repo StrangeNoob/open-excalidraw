@@ -147,11 +147,19 @@ export class PostgresDrawingRepository implements DrawingRepository {
   public async duplicate(input: {
     sourceDrawingId: string;
     ownerUserId: string;
+    idempotencyKey?: string;
   }): Promise<AccessibleDrawing | null> {
     // Phase 1: copy the rows in one short SQL-only transaction. Blob I/O is
     // deliberately kept outside so the FOR SHARE lock (which blocks content
     // saves on the source) is held for milliseconds, not for the copy.
-    const newId = randomUUID();
+    // The "duplicate\0" prefix domain-separates duplicate keys from create
+    // keys, which share the same owner-scoped id derivation.
+    const newId = input.idempotencyKey
+      ? deterministicDrawingId(
+          input.ownerUserId,
+          `duplicate\0${input.idempotencyKey}`,
+        )
+      : randomUUID();
     const client = await this.pool.connect();
     let drawing: AccessibleDrawing;
     let assets: { file_id: string; sha256: Buffer }[];
@@ -193,14 +201,18 @@ export class PostgresDrawingRepository implements DrawingRepository {
       );
 
       // Scene copied in SQL so the payload never round-trips through JS.
-      await client.query(
+      // ON CONFLICT makes idempotency-key replays no-ops: the insert waits
+      // out any concurrent winner, then falls through to the replay path.
+      const inserted = await client.query(
         `INSERT INTO drawings (
            id, owner_user_id, title, scene, scene_format_version, scene_bytes,
            thumbnail_updated_at
          )
          SELECT $2::uuid, $3, $4, s.scene, s.scene_format_version,
                 s.scene_bytes, $5::timestamptz
-         FROM drawings s WHERE s.id = $1`,
+         FROM drawings s WHERE s.id = $1
+         ON CONFLICT (id) DO NOTHING
+         RETURNING id`,
         [
           input.sourceDrawingId,
           newId,
@@ -209,6 +221,13 @@ export class PostgresDrawingRepository implements DrawingRepository {
           src.thumbnail_updated_at,
         ],
       );
+      if (inserted.rowCount === 0) {
+        // Replay: the winner already inserted rows and copies the blobs.
+        // A null here means the replayed copy was deleted since; 404 beats
+        // silently minting another copy under the same key.
+        await client.query("ROLLBACK");
+        return findAccessibleWith(this.pool, newId, input.ownerUserId);
+      }
       await client.query(
         `INSERT INTO drawing_assets (
            drawing_id, file_id, storage_key, mime_type, byte_size, sha256,

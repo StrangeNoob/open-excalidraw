@@ -1,5 +1,6 @@
 import {
   createDrawingRequestSchema,
+  duplicateDrawingRequestSchema,
   setDrawingTagsRequestSchema,
   updateDrawingRequestSchema,
   uuidSchema,
@@ -79,7 +80,11 @@ export function createDrawingRouter(input: CreateDrawingRouterInput): Router {
     async (request, response) => {
       await handle(request, response, input.identity, async (userId) => ({
         status: 201,
-        body: await input.service.duplicate(userId, drawingId(request)),
+        body: await input.service.duplicate(
+          userId,
+          drawingId(request),
+          duplicateDrawingRequestSchema.parse(request.body ?? {}),
+        ),
       }));
     },
   );

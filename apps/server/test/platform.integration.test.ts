@@ -252,10 +252,18 @@ describe("Wave 2 platform flow", () => {
       expect(sharedContent.body.assetIds).toEqual(["platform-image"]);
 
       // Duplicating copies the scene, asset rows, and asset blobs into a
-      // drawing owned by the caller, with revisions reset.
+      // drawing owned by the caller, with revisions reset. Same-key retries
+      // replay the first copy instead of stacking new ones.
+      const duplicateKey = "b7fbe6bc-6a3f-4f30-9f0a-2f3f13a7f0d1";
       const duplicated = await editor
         .post(`/api/v1/drawings/${drawingId}/duplicate`)
+        .send({ idempotencyKey: duplicateKey })
         .expect(201);
+      const replayedDuplicate = await editor
+        .post(`/api/v1/drawings/${drawingId}/duplicate`)
+        .send({ idempotencyKey: duplicateKey })
+        .expect(201);
+      expect(replayedDuplicate.body.id).toBe(duplicated.body.id);
       expect(duplicated.body).toMatchObject({
         title: "Platform flow drawing copy",
         role: "owner",

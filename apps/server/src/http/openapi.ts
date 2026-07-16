@@ -277,9 +277,15 @@ export const openApiDocument = {
           "Copies the scene, asset references, asset blobs, and thumbnail " +
           "into a new drawing owned by the caller. Any member (including " +
           "viewers) may duplicate. History, members, share links, tags, and " +
-          "the template flag are not copied.",
+          "the template flag are not copied. Retrying with the same " +
+          "`idempotencyKey` returns the copy already made for that key.",
+        requestBody: {
+          ...jsonBody(ref("DuplicateDrawingRequest")),
+          required: false,
+        },
         responses: {
           "201": json("The new copy.", ref("DrawingSummary")),
+          "400": invalidRequest,
           "401": unauthorized,
           "404": notFound,
         },
@@ -1000,6 +1006,13 @@ export const openApiDocument = {
         additionalProperties: false,
         properties: {
           title: { type: "string", minLength: 1, maxLength: 120 },
+          idempotencyKey: uuid,
+        },
+      },
+      DuplicateDrawingRequest: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
           idempotencyKey: uuid,
         },
       },

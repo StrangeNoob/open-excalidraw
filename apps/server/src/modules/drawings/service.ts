@@ -51,12 +51,14 @@ export class DrawingService {
   public async duplicate(
     userId: string,
     drawingId: string,
+    input: { idempotencyKey?: string } = {},
   ): Promise<DrawingSummary> {
     // Anyone who can read a drawing may copy it into their own account.
     await this.requireAccess(userId, drawingId, "read");
     const drawing = await this.repository.duplicate({
       sourceDrawingId: drawingId,
       ownerUserId: userId,
+      ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
     });
     if (!drawing) {
       throw notFound();

@@ -71,6 +71,7 @@ export interface DrawingRepository {
   duplicate(input: {
     sourceDrawingId: string;
     ownerUserId: string;
+    idempotencyKey?: string;
   }): Promise<AccessibleDrawing | null>;
   softDelete(input: {
     drawingId: string;

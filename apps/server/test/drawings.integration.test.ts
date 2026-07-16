@@ -283,6 +283,32 @@ describe("drawing HTTP domain", () => {
     expect(missing.status).toBe(404);
   });
 
+  it("replays a duplicate instead of stacking copies for the same idempotency key", async () => {
+    const fixture = createFixture();
+    const drawing = fixture.repository.seed(ownerId, "Base", "owner");
+    const idempotencyKey = randomUUID();
+
+    const first = await request(fixture.app)
+      .post(`/api/v1/drawings/${drawing.id}/duplicate`)
+      .set("x-test-user", ownerId)
+      .send({ idempotencyKey });
+    const replayed = await request(fixture.app)
+      .post(`/api/v1/drawings/${drawing.id}/duplicate`)
+      .set("x-test-user", ownerId)
+      .send({ idempotencyKey });
+
+    expect(first.status).toBe(201);
+    expect(replayed.status).toBe(201);
+    expect(replayed.body.id).toBe(first.body.id);
+
+    const fresh = await request(fixture.app)
+      .post(`/api/v1/drawings/${drawing.id}/duplicate`)
+      .set("x-test-user", ownerId)
+      .send({ idempotencyKey: randomUUID() });
+    expect(fresh.status).toBe(201);
+    expect(fresh.body.id).not.toBe(first.body.id);
+  });
+
   it("toggles the template flag through PATCH with rename semantics", async () => {
     const fixture = createFixture();
     const drawing = fixture.repository.seed(ownerId, "Base", "owner");
@@ -448,17 +474,31 @@ class InMemoryDrawingRepository implements DrawingRepository {
     return Promise.resolve(this.seed(input.ownerUserId, input.title, "owner"));
   }
 
+  public readonly duplicatesByKey = new Map<string, string>();
+
   public duplicate(input: {
     sourceDrawingId: string;
     ownerUserId: string;
+    idempotencyKey?: string;
   }): Promise<AccessibleDrawing | null> {
     const source = this.drawings.get(input.sourceDrawingId);
     if (!source || this.deleted.has(input.sourceDrawingId)) {
       return Promise.resolve(null);
     }
-    return Promise.resolve(
-      this.seed(input.ownerUserId, `${source.title} copy`, "owner"),
-    );
+    const replayKey = input.idempotencyKey
+      ? `${input.ownerUserId}:${input.idempotencyKey}`
+      : null;
+    if (replayKey) {
+      const existingId = this.duplicatesByKey.get(replayKey);
+      if (existingId) {
+        return this.findAccessible(existingId, input.ownerUserId);
+      }
+    }
+    const copy = this.seed(input.ownerUserId, `${source.title} copy`, "owner");
+    if (replayKey) {
+      this.duplicatesByKey.set(replayKey, copy.id);
+    }
+    return Promise.resolve(copy);
   }
 
   public async rename(input: {

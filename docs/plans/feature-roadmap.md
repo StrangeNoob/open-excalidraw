@@ -9,7 +9,7 @@ is ranked by value against effort for a self-hosted collaboration tool.
 
 ## Recently shipped
 
-- **Duplicate drawing and templates** — `POST /drawings/:id/duplicate`
+- **Duplicate drawing and templates** — `POST /api/v1/drawings/:drawingId/duplicate`
   copies the scene, assets, and thumbnail for any member; an `is_template`
   flag feeds the dashboard's "New from template" picker.
 - **Public share links** (v0.7.0) — one revocable link per drawing; anyone

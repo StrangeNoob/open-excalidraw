@@ -61,6 +61,12 @@ export const createDrawingRequestSchema = z
   })
   .strict();
 
+export const duplicateDrawingRequestSchema = z
+  .object({
+    idempotencyKey: uuidSchema.optional(),
+  })
+  .strict();
+
 export const updateDrawingRequestSchema = z
   .object({
     title: drawingTitleSchema,
@@ -78,4 +84,7 @@ export const setDrawingTagsRequestSchema = z
 export type DrawingSummary = z.infer<typeof drawingSummarySchema>;
 export type DrawingListResponse = z.infer<typeof drawingListResponseSchema>;
 export type CreateDrawingRequest = z.infer<typeof createDrawingRequestSchema>;
+export type DuplicateDrawingRequest = z.infer<
+  typeof duplicateDrawingRequestSchema
+>;
 export type SetDrawingTagsRequest = z.infer<typeof setDrawingTagsRequestSchema>;
