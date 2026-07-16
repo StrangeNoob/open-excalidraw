@@ -9,7 +9,7 @@ import {
 import { BrandMark } from "../brand";
 import { useAuth } from "./AuthProvider";
 import type { OAuthProvider } from "./auth-client";
-import { githubIcon, googleIcon } from "./provider-icons";
+import { githubIcon, googleIcon, ssoIcon } from "./provider-icons";
 import { getSafeReturnPath } from "./return-path";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -277,7 +277,9 @@ const AuthPage = ({ mode }: { mode: AuthPageMode }) => {
         )}
 
         {!signupNextStep &&
-        (auth.capabilities.google || auth.capabilities.github) ? (
+        (auth.capabilities.google ||
+          auth.capabilities.github ||
+          auth.capabilities.oidc) ? (
           <div aria-label="Social sign in" className="auth-social">
             <p className="auth-divider">
               <span>or</span>
@@ -302,6 +304,17 @@ const AuthPage = ({ mode }: { mode: AuthPageMode }) => {
               >
                 {githubIcon}
                 Continue with GitHub
+              </button>
+            ) : null}
+            {auth.capabilities.oidc ? (
+              <button
+                className="auth-provider"
+                disabled={submitting || auth.status === "loading"}
+                onClick={() => void startOAuth("oidc")}
+                type="button"
+              >
+                {ssoIcon}
+                Continue with {auth.capabilities.oidcProviderName}
               </button>
             ) : null}
           </div>

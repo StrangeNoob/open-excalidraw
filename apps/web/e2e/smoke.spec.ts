@@ -43,6 +43,8 @@ test("renders the application shell", async ({ page }) => {
           emailPassword: true,
           github: false,
           google: false,
+          oidc: false,
+          oidcProviderName: "SSO",
           smtp: false,
         },
         user: null,

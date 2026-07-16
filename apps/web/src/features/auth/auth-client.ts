@@ -7,7 +7,7 @@ import { z } from "zod";
 import { HttpApiClient } from "../../shared/api";
 import { getSafeReturnPath } from "./return-path";
 
-export type OAuthProvider = "github" | "google";
+export type OAuthProvider = "github" | "google" | "oidc";
 
 export interface EmailSignInInput {
   email: string;
@@ -150,10 +150,19 @@ export class CookieAuthClient implements AuthClient {
 
   async linkSocial(provider: OAuthProvider, returnPath: string): Promise<void> {
     const callbackURL = getSafeReturnPath(returnPath);
+    // The generic OIDC provider lives behind Better Auth's genericOAuth
+    // plugin, which uses oauth2 routes keyed by providerId instead.
+    const [path, body] =
+      provider === "oidc"
+        ? ([
+            "/auth/oauth2/link",
+            { callbackURL, providerId: provider },
+          ] as const)
+        : (["/auth/link-social", { callbackURL, provider }] as const);
     const response = await this.#api.request(
-      "/auth/link-social",
+      path,
       {
-        body: JSON.stringify({ callbackURL, provider }),
+        body: JSON.stringify(body),
         method: "POST",
       },
       oauthStartResponseSchema,
@@ -175,10 +184,17 @@ export class CookieAuthClient implements AuthClient {
 
   async startOAuth(provider: OAuthProvider, returnPath: string): Promise<void> {
     const callbackURL = getSafeReturnPath(returnPath);
+    const [path, body] =
+      provider === "oidc"
+        ? ([
+            "/auth/sign-in/oauth2",
+            { callbackURL, providerId: provider },
+          ] as const)
+        : (["/auth/sign-in/social", { callbackURL, provider }] as const);
     const response = await this.#api.request(
-      "/auth/sign-in/social",
+      path,
       {
-        body: JSON.stringify({ callbackURL, provider }),
+        body: JSON.stringify(body),
         method: "POST",
       },
       oauthStartResponseSchema,

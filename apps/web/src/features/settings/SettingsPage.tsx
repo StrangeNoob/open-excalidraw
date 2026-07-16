@@ -4,7 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../auth";
 import type { OAuthProvider } from "../auth";
-import { githubIcon, googleIcon } from "../auth/provider-icons";
+import { githubIcon, googleIcon, ssoIcon } from "../auth/provider-icons";
 
 const MINIMUM_PASSWORD_LENGTH = 12;
 const MAXIMUM_PASSWORD_LENGTH = 128;
@@ -118,9 +118,19 @@ const ProvidersSection = ({
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [busyProvider, setBusyProvider] = useState<string | null>(null);
+  // The OIDC provider is labelled by the deployment, so its row cannot live
+  // in the static list.
+  const providers = [
+    ...PROVIDERS,
+    {
+      id: "oidc" as const,
+      label: auth.capabilities.oidcProviderName || "SSO",
+      icon: ssoIcon,
+    },
+  ];
   // Linked providers stay visible even if their capability was disabled
   // later, so the user can still disconnect them.
-  const available = PROVIDERS.filter(
+  const available = providers.filter(
     ({ id }) => auth.capabilities[id] || linkedProviderIds.includes(id),
   );
   // Keep at least one way to sign in; the server enforces this too.

@@ -12,7 +12,8 @@ Open Excalidraw is a self-hostable collaboration and persistence layer built
 around the published `@excalidraw/excalidraw` React package.
 
 The current implementation includes guest IndexedDB persistence, email/password
-authentication, optional Google and GitHub OAuth configuration, named drawing
+authentication, optional Google, GitHub, and generic OIDC
+(Keycloak/Authentik/Authelia) sign-in configuration, named drawing
 dashboards with private per-user tags, email-based invitations,
 owner/editor/viewer permissions, PostgreSQL persistence, binary asset storage
 (local volume or any S3-compatible bucket, with a migration CLI between them),

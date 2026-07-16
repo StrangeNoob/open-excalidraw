@@ -11,41 +11,33 @@ is ranked by value against effort for a self-hosted collaboration tool.
 
 - **Public share links** (v0.7.0) — one revocable link per drawing; anyone
   with `/s/:token` gets a live read-only view without an account.
+- **Dashboard thumbnails** — small PNGs rendered client-side after edits and
+  stored through the existing asset pipeline.
+- **Generic OIDC single sign-on** — Keycloak, Authentik, Authelia, or any
+  OIDC provider via Better Auth's generic OAuth plugin; configured with
+  `OIDC_*` environment variables.
 
 ## Next up
 
-### 1. Dashboard thumbnails
-
-The dashboard is text-only cards. Excalidraw ships `exportToBlob`; render a
-small PNG client-side on save and store it through the existing asset
-pipeline. Cheap to build, and it transforms how the dashboard feels.
-
-### 2. Generic OIDC single sign-on
-
-Google and GitHub OAuth exist, but the self-hosting audience runs Keycloak,
-Authentik, or Authelia. Better Auth has a generic OIDC plugin, so this is
-mostly configuration plumbing — and it is one of the most-requested
-capabilities for any self-hosted product.
-
-### 3. Duplicate drawing and templates
+### 1. Duplicate drawing and templates
 
 Duplicating is nearly free: copy the scene and asset references, both owned
 by the server. Templates then fall out of it — a boolean flag plus a "New
 from template" list on the dashboard.
 
-### 4. Trash and soft delete
+### 2. Trash and soft delete
 
 Deleting a drawing today is forever. A `deleted_at` column already exists on
 `drawings`; what is missing is a trash view, a restore action, and a purge
 job. Small diff that prevents the worst kind of support request.
 
-### 5. Persistent shape libraries
+### 3. Persistent shape libraries
 
 The editor supports `.excalidrawlib` libraries but keeps them in
 localStorage, so they do not follow users across devices. Persisting them
 per-account is a natural fit for the existing storage layer.
 
-### 6. Minimal admin page
+### 4. Minimal admin page
 
 Operators currently manage users with `ADMIN_RESET_TOKEN` and SQL. A user
 list with disable/delete plus instance counts (users, drawings, storage)

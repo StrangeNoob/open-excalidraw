@@ -1,6 +1,6 @@
 import type { SessionResponse } from "@open-excalidraw/contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 
@@ -19,6 +19,8 @@ const session: SessionResponse = {
     emailPassword: true,
     github: true,
     google: false,
+    oidc: true,
+    oidcProviderName: "Keycloak",
     smtp: false,
   },
   user: {
@@ -124,6 +126,35 @@ describe("SettingsPage", () => {
     expect(
       await screen.findByRole("button", { name: "Disconnect" }),
     ).toBeDisabled();
+  });
+
+  it("connects the OIDC provider named by the deployment", async () => {
+    const client = renderSettings([{ providerId: "credential" }]);
+
+    const row = (await screen.findByText("Keycloak")).closest("li");
+    if (!row) {
+      throw new Error("Missing the OIDC provider row.");
+    }
+    const user = userEvent.setup();
+    await user.click(within(row).getByRole("button", { name: "Connect" }));
+
+    await waitFor(() =>
+      expect(client.linkSocial).toHaveBeenCalledWith("oidc", "/app/settings"),
+    );
+  });
+
+  it("disconnects a linked OIDC account", async () => {
+    const client = renderSettings([
+      { providerId: "credential" },
+      { providerId: "oidc" },
+    ]);
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Disconnect" }));
+
+    await waitFor(() =>
+      expect(client.unlinkAccount).toHaveBeenCalledWith("oidc"),
+    );
   });
 
   it("signs the user out", async () => {

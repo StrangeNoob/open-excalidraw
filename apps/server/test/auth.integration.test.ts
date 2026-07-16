@@ -60,8 +60,157 @@ describe("Better Auth configuration", () => {
       emailPassword: true,
       google: true,
       github: false,
+      oidc: false,
+      oidcProviderName: "SSO",
       smtp: false,
     });
+  });
+
+  it("registers the generic OAuth plugin when OIDC is fully configured", () => {
+    const options = buildBetterAuthOptions({
+      database: {} as never,
+      mailer: new DisabledMailer(),
+      baseUrl: BASE_URL,
+      secret: SECRET,
+      smtpEnabled: false,
+      oidc: {
+        issuerUrl: "https://idp.example.test/realms/main/",
+        clientId: "oidc-id",
+        clientSecret: "oidc-secret",
+      },
+    });
+
+    expect(options.plugins).toHaveLength(1);
+    const plugin = options.plugins?.[0] as unknown as {
+      id: string;
+      options: { config: Array<Record<string, unknown>> };
+    };
+    expect(plugin.id).toBe("generic-oauth");
+    expect(plugin.options.config[0]).toMatchObject({
+      providerId: "oidc",
+      discoveryUrl:
+        "https://idp.example.test/realms/main/.well-known/openid-configuration",
+      clientId: "oidc-id",
+      clientSecret: "oidc-secret",
+      scopes: ["openid", "profile", "email"],
+      pkce: true,
+    });
+  });
+
+  it("accepts a full discovery URL and omits the plugin without complete OIDC config", () => {
+    const base = {
+      database: {} as never,
+      mailer: new DisabledMailer(),
+      baseUrl: BASE_URL,
+      secret: SECRET,
+      smtpEnabled: false,
+    };
+    const discoveryUrl =
+      "https://idp.example.test/.well-known/openid-configuration";
+    const options = buildBetterAuthOptions({
+      ...base,
+      oidc: {
+        issuerUrl: discoveryUrl,
+        clientId: "oidc-id",
+        clientSecret: "oidc-secret",
+      },
+    });
+    const plugin = options.plugins?.[0] as unknown as {
+      options: { config: Array<Record<string, unknown>> };
+    };
+    expect(plugin.options.config[0]?.discoveryUrl).toBe(discoveryUrl);
+
+    expect(buildBetterAuthOptions(base).plugins).toBeUndefined();
+    expect(
+      buildBetterAuthOptions({
+        ...base,
+        oidc: {
+          issuerUrl: "https://idp.example.test",
+          clientId: "oidc-id",
+          clientSecret: "",
+        },
+      }).plugins,
+    ).toBeUndefined();
+  });
+
+  it("passes through discovery URLs with query strings or trailing slashes", () => {
+    for (const issuerUrl of [
+      "https://idp.example.test/tenant/.well-known/openid-configuration?appid=xyz",
+      "https://idp.example.test/.well-known/openid-configuration/",
+    ]) {
+      const options = buildBetterAuthOptions({
+        database: {} as never,
+        mailer: new DisabledMailer(),
+        baseUrl: BASE_URL,
+        secret: SECRET,
+        smtpEnabled: false,
+        oidc: { issuerUrl, clientId: "oidc-id", clientSecret: "oidc-secret" },
+      });
+      const plugin = options.plugins?.[0] as unknown as {
+        options: { config: Array<Record<string, unknown>> };
+      };
+      expect(plugin.options.config[0]?.discoveryUrl).toBe(issuerUrl);
+    }
+  });
+
+  it("requires HTTPS issuer URLs except for loopback hosts", () => {
+    const base = {
+      database: {} as never,
+      mailer: new DisabledMailer(),
+      baseUrl: BASE_URL,
+      secret: SECRET,
+      smtpEnabled: false,
+    };
+    const oidc = { clientId: "oidc-id", clientSecret: "oidc-secret" };
+
+    expect(() =>
+      buildBetterAuthOptions({
+        ...base,
+        oidc: { ...oidc, issuerUrl: "http://idp.example.test/realms/main" },
+      }),
+    ).toThrow("OIDC_ISSUER_URL must use HTTPS");
+
+    const options = buildBetterAuthOptions({
+      ...base,
+      oidc: { ...oidc, issuerUrl: "http://localhost:8080/realms/main" },
+    });
+    const plugin = options.plugins?.[0] as unknown as {
+      options: { config: Array<Record<string, unknown>> };
+    };
+    expect(plugin.options.config[0]?.discoveryUrl).toBe(
+      "http://localhost:8080/realms/main/.well-known/openid-configuration",
+    );
+  });
+
+  it("reports OIDC capability with the configured or default provider name", () => {
+    const oidc = {
+      issuerUrl: "https://idp.example.test",
+      clientId: "oidc-id",
+      clientSecret: "oidc-secret",
+    };
+    expect(
+      authCapabilities({
+        smtpEnabled: false,
+        oidc: { ...oidc, providerName: "Keycloak" },
+      }),
+    ).toEqual({
+      emailPassword: true,
+      google: false,
+      github: false,
+      oidc: true,
+      oidcProviderName: "Keycloak",
+      smtp: false,
+    });
+    expect(authCapabilities({ smtpEnabled: false, oidc })).toMatchObject({
+      oidc: true,
+      oidcProviderName: "SSO",
+    });
+    expect(
+      authCapabilities({
+        smtpEnabled: false,
+        oidc: { ...oidc, clientSecret: "" },
+      }),
+    ).toMatchObject({ oidc: false, oidcProviderName: "SSO" });
   });
 });
 
@@ -320,6 +469,166 @@ describe("auth HTTP boundary", () => {
       .set("origin", BASE_URL)
       .send({ provider: "google", callbackURL: "/dashboard" });
     expect(oauth.status).toBeGreaterThanOrEqual(400);
+
+    const oidcSignIn = await request(app)
+      .post("/api/auth/sign-in/oauth2")
+      .set("origin", BASE_URL)
+      .send({ providerId: "oidc", callbackURL: "/dashboard" });
+    expect(oidcSignIn.status).toBe(404);
+  });
+
+  it("starts OIDC sign-in through the discovery document without network access", async () => {
+    const memory = createMemoryAdapter();
+    const auth = createOpenExcalidrawAuth({
+      database: {} as never,
+      databaseAdapter: memory.factory,
+      mailer: new DisabledMailer(),
+      baseUrl: BASE_URL,
+      secret: SECRET,
+      smtpEnabled: false,
+      secureCookies: true,
+      oidc: {
+        issuerUrl: "https://idp.example.test",
+        clientId: "oidc-id",
+        clientSecret: "oidc-secret",
+      },
+    });
+    const app = express();
+    app.use(express.json());
+    app.use(
+      createAuthRouter({
+        auth,
+        identity: createIdentityService(auth),
+        capabilities: authCapabilities({ smtpEnabled: false }),
+      }),
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              issuer: "https://idp.example.test",
+              authorization_endpoint: "https://idp.example.test/authorize",
+              token_endpoint: "https://idp.example.test/token",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        ),
+      ),
+    );
+
+    try {
+      const signIn = await request(app)
+        .post("/api/auth/sign-in/oauth2")
+        .set("origin", BASE_URL)
+        .send({ providerId: "oidc", callbackURL: "/dashboard" });
+      expect(signIn.status).toBe(200);
+      const authorizeUrl = new URL(signIn.body.url as string);
+      expect(authorizeUrl.origin + authorizeUrl.pathname).toBe(
+        "https://idp.example.test/authorize",
+      );
+      expect(authorizeUrl.searchParams.get("client_id")).toBe("oidc-id");
+      expect(authorizeUrl.searchParams.get("code_challenge")).toBeTruthy();
+      expect(authorizeUrl.searchParams.get("redirect_uri")).toContain(
+        "/api/auth/oauth2/callback/oidc",
+      );
+
+      const unknown = await request(app)
+        .post("/api/auth/sign-in/oauth2")
+        .set("origin", BASE_URL)
+        .send({ providerId: "unknown", callbackURL: "/dashboard" });
+      expect(unknown.status).toBe(400);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("gates OIDC account linking on session and email verification", async () => {
+    const memory = createMemoryAdapter();
+    const auth = createOpenExcalidrawAuth({
+      database: {} as never,
+      databaseAdapter: memory.factory,
+      mailer: new DisabledMailer(),
+      baseUrl: BASE_URL,
+      secret: SECRET,
+      smtpEnabled: false,
+      secureCookies: false,
+      oidc: {
+        issuerUrl: "https://idp.example.test",
+        clientId: "oidc-id",
+        clientSecret: "oidc-secret",
+      },
+    });
+    const app = express();
+    app.use(express.json());
+    app.use(
+      createAuthRouter({
+        auth,
+        identity: createIdentityService(auth),
+        capabilities: authCapabilities({ smtpEnabled: false }),
+      }),
+    );
+
+    const anonymous = await request(app)
+      .post("/api/auth/oauth2/link")
+      .set("origin", BASE_URL)
+      .send({ providerId: "oidc", callbackURL: "/dashboard" });
+    expect(anonymous.status).toBe(401);
+    expect(anonymous.body.code).toBe("AUTHENTICATION_REQUIRED");
+
+    const signup = await request(app)
+      .post("/api/auth/sign-up/email")
+      .set("origin", BASE_URL)
+      .send({
+        name: "Linking User",
+        email: "linker@example.test",
+        password: "correct-horse-battery-staple",
+      });
+    expect(signup.status).toBe(200);
+    const cookie = sessionCookie(signup.headers["set-cookie"]);
+
+    const unverified = await request(app)
+      .post("/api/auth/oauth2/link")
+      .set("cookie", cookie)
+      .set("origin", BASE_URL)
+      .send({ providerId: "oidc", callbackURL: "/dashboard" });
+    expect(unverified.status).toBe(403);
+    expect(unverified.body.code).toBe("EMAIL_VERIFICATION_REQUIRED");
+
+    memory.rows.user!.find(
+      (user) => user.email === "linker@example.test",
+    )!.emailVerified = true;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              issuer: "https://idp.example.test",
+              authorization_endpoint: "https://idp.example.test/authorize",
+              token_endpoint: "https://idp.example.test/token",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        ),
+      ),
+    );
+
+    try {
+      const verified = await request(app)
+        .post("/api/auth/oauth2/link")
+        .set("cookie", cookie)
+        .set("origin", BASE_URL)
+        .send({ providerId: "oidc", callbackURL: "/dashboard" });
+      expect(verified.status).toBe(200);
+      const authorizeUrl = new URL(verified.body.url as string);
+      expect(authorizeUrl.origin + authorizeUrl.pathname).toBe(
+        "https://idp.example.test/authorize",
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 
