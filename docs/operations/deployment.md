@@ -47,8 +47,10 @@ The prebuilt image also powers a Railway template, so a deployment needs no
 VPS: an `app` service running
 `ghcr.io/strangenoob/open-excalidraw:latest` with a volume mounted at
 `/data/assets`, plus Railway's managed PostgreSQL. The `app` service is
-exposed publicly on port 3000 and must stay at one replica (the
-collaboration registry is in-process).
+exposed publicly with the domain's target port set to 3000 explicitly — the
+image listens on `APP_PORT` (default 3000), not the `PORT` variable Railway
+auto-detects — and must stay at one replica (the collaboration registry is
+in-process).
 
 Template variables on the `app` service:
 
@@ -64,6 +66,9 @@ STORAGE_LOCAL_PATH=/data/assets
 `${{secret(32)}}` generates a fresh value for each deployment, and
 `RAILWAY_PUBLIC_DOMAIN` resolves to the deployment's generated domain, so
 authentication and socket-origin checks work without manual configuration.
+The `${{Postgres.DATABASE_URL}}` reference is case-sensitive and resolves
+only while the database service is named exactly `Postgres`; rename the
+reference if the service is renamed.
 Leave the OAuth, OIDC, SMTP, and S3 variables out of the template; deployers
 add them afterwards following this runbook. Without SMTP, invitation links
 remain copyable, and the loopback recovery flow runs from a shell inside the
