@@ -153,6 +153,35 @@ describe("Better Auth configuration", () => {
     }
   });
 
+  it("requires HTTPS issuer URLs except for loopback hosts", () => {
+    const base = {
+      database: {} as never,
+      mailer: new DisabledMailer(),
+      baseUrl: BASE_URL,
+      secret: SECRET,
+      smtpEnabled: false,
+    };
+    const oidc = { clientId: "oidc-id", clientSecret: "oidc-secret" };
+
+    expect(() =>
+      buildBetterAuthOptions({
+        ...base,
+        oidc: { ...oidc, issuerUrl: "http://idp.example.test/realms/main" },
+      }),
+    ).toThrow("OIDC_ISSUER_URL must use HTTPS");
+
+    const options = buildBetterAuthOptions({
+      ...base,
+      oidc: { ...oidc, issuerUrl: "http://localhost:8080/realms/main" },
+    });
+    const plugin = options.plugins?.[0] as unknown as {
+      options: { config: Array<Record<string, unknown>> };
+    };
+    expect(plugin.options.config[0]?.discoveryUrl).toBe(
+      "http://localhost:8080/realms/main/.well-known/openid-configuration",
+    );
+  });
+
   it("reports OIDC capability with the configured or default provider name", () => {
     const oidc = {
       issuerUrl: "https://idp.example.test",

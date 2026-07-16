@@ -79,8 +79,10 @@ the identity provider is
 `https://draw.example.com/api/auth/oauth2/callback/oidc` — note it differs
 from the `/api/auth/callback/<provider>` pattern used by Google and GitHub.
 The provider is disabled when the issuer URL, client ID, or secret is blank.
-Discovery is fetched at each sign-in start, so identity-provider downtime
-only fails new sign-ins.
+The issuer URL must use HTTPS; plain HTTP is accepted only for loopback
+hosts so a local identity provider works in development. Discovery is
+fetched at each sign-in start, so identity-provider downtime only fails new
+sign-ins.
 
 ## S3-compatible object storage
 

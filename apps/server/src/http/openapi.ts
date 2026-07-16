@@ -892,7 +892,7 @@ export const openApiDocument = {
           google: { type: "boolean" },
           github: { type: "boolean" },
           oidc: { type: "boolean" },
-          oidcProviderName: { type: "string" },
+          oidcProviderName: { type: "string", minLength: 1 },
           smtp: { type: "boolean" },
         },
       },

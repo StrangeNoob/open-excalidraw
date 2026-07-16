@@ -124,7 +124,7 @@ const ProvidersSection = ({
     ...PROVIDERS,
     {
       id: "oidc" as const,
-      label: auth.capabilities.oidcProviderName,
+      label: auth.capabilities.oidcProviderName || "SSO",
       icon: ssoIcon,
     },
   ];

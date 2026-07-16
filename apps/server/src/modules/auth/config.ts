@@ -275,14 +275,26 @@ function hasCompleteOidc(
 }
 
 function oidcDiscoveryUrl(issuerUrl: string): string {
-  const trimmed = issuerUrl.trim();
+  const url = new URL(issuerUrl.trim());
+  // Plain HTTP would expose authorization codes and tokens; loopback hosts
+  // are exempt so a local identity provider works in development.
+  if (url.protocol !== "https:" && !isLoopbackHost(url.hostname)) {
+    throw new TypeError("OIDC_ISSUER_URL must use HTTPS");
+  }
   // Decide from the parsed pathname so query strings and trailing slashes
   // on an already-complete discovery URL do not get the suffix re-appended.
-  const pathname = new URL(trimmed).pathname.replace(/\/+$/, "");
+  const pathname = url.pathname.replace(/\/+$/, "");
   if (pathname.endsWith(OIDC_DISCOVERY_SUFFIX)) {
-    return trimmed;
+    return url.toString();
   }
-  return `${trimmed.replace(/\/+$/, "")}${OIDC_DISCOVERY_SUFFIX}`;
+  url.pathname = `${pathname}${OIDC_DISCOVERY_SUFFIX}`;
+  return url.toString();
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  return (
+    hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]"
+  );
 }
 
 function isHttps(value: string): boolean {
