@@ -68,6 +68,31 @@ describe("drawing HTTP domain", () => {
     expect(JSON.stringify(response.body)).not.toContain("Deleted");
   });
 
+  it("carries thumbnailUpdatedAt through summaries", async () => {
+    const fixture = createFixture();
+    const bare = fixture.repository.seed(ownerId, "Bare", "owner");
+    const thumbed = fixture.repository.seed(ownerId, "Thumbed", "owner");
+    const stored = fixture.repository.drawings.get(thumbed.id);
+    if (stored) {
+      stored.thumbnailUpdatedAt = new Date("2026-07-15T09:30:00.000Z");
+    }
+
+    const response = await request(fixture.app)
+      .get("/api/v1/drawings")
+      .set("x-test-user", ownerId);
+
+    expect(response.status).toBe(200);
+    const owned = response.body.owned as Array<{
+      id: string;
+      thumbnailUpdatedAt: string | null;
+    }>;
+    const byId = new Map(
+      owned.map((drawing) => [drawing.id, drawing.thumbnailUpdatedAt]),
+    );
+    expect(byId.get(bare.id)).toBeNull();
+    expect(byId.get(thumbed.id)).toBe("2026-07-15T09:30:00.000Z");
+  });
+
   it("allows owners and editors to rename, rejects viewers, and detects stale revisions", async () => {
     const fixture = createFixture();
     const ownerDrawing = fixture.repository.seed(ownerId, "Owner", "owner");
@@ -309,6 +334,7 @@ class InMemoryDrawingRepository implements DrawingRepository {
       metadataRevision: 0n,
       createdAt: now,
       updatedAt: now,
+      thumbnailUpdatedAt: null,
     };
     this.drawings.set(drawing.id, drawing);
     if (role !== "owner") {

@@ -39,6 +39,8 @@ export const drawingSummarySchema = z
     metadataRevision: revisionSchema,
     createdAt: isoDateTimeSchema,
     updatedAt: isoDateTimeSchema,
+    // Null until a client rendered a thumbnail; defaulted for older servers.
+    thumbnailUpdatedAt: isoDateTimeSchema.nullable().default(null),
   })
   .strict();
 

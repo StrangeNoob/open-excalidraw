@@ -103,6 +103,7 @@ describe("initial PostgreSQL migration", () => {
       "0004_drawing_user_tags.sql",
       "0005_chat_messages.sql",
       "0006_drawing_share_links.sql",
+      "0007_drawing_thumbnail.sql",
     ]);
     expect(second.alreadyApplied).toEqual(first.applied);
     expect(record.rows).toEqual(first.applied);

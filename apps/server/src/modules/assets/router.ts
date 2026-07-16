@@ -80,6 +80,60 @@ export function createAssetRouter(options: CreateAssetRouterOptions): Router {
     },
   );
 
+  router.put(
+    "/drawings/:drawingId/thumbnail",
+    rawBody,
+    async (request, response) => {
+      const identity = await requireIdentity(request, options.resolveIdentity);
+      const bytes = request.body as unknown;
+      if (!Buffer.isBuffer(bytes)) {
+        throw assetError(
+          400,
+          "INVALID_THUMBNAIL_BODY",
+          "Invalid thumbnail body",
+          "The request body must contain raw PNG bytes.",
+        );
+      }
+
+      await options.service.uploadThumbnail({
+        identity,
+        drawingId: request.params.drawingId ?? "",
+        declaredMimeType: request.get("content-type") ?? "",
+        expectedSha256: request.get(ASSET_CHECKSUM_HEADER) ?? "",
+        bytes,
+      });
+      response.sendStatus(204);
+    },
+  );
+
+  router.get("/drawings/:drawingId/thumbnail", async (request, response) => {
+    const identity = await requireIdentity(request, options.resolveIdentity);
+    const body = await options.service.downloadThumbnail({
+      identity,
+      drawingId: request.params.drawingId ?? "",
+    });
+
+    response.status(200);
+    response.set({
+      // Immutable is safe: the dashboard busts the URL with ?v=<timestamp>.
+      "cache-control": "private, max-age=31536000, immutable",
+      "content-security-policy": "sandbox",
+      "content-type": "image/png",
+      "cross-origin-resource-policy": "same-origin",
+      "x-content-type-options": "nosniff",
+    });
+    await pipeline(body, response);
+  });
+
+  router.delete("/drawings/:drawingId/thumbnail", async (request, response) => {
+    const identity = await requireIdentity(request, options.resolveIdentity);
+    await options.service.deleteThumbnail({
+      identity,
+      drawingId: request.params.drawingId ?? "",
+    });
+    response.sendStatus(204);
+  });
+
   router.get("/share/:token/assets/:fileId", async (request, response) => {
     const token = request.params.token ?? "";
     const drawingId =

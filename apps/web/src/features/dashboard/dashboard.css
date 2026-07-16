@@ -84,6 +84,19 @@
   margin: 0;
 }
 
+.drawing-card-thumbnail {
+  aspect-ratio: 16 / 10;
+  /* Thumbnails are canonical light-mode exports; keep their backdrop light
+     in both dashboard themes. */
+  background: #fff;
+  border: 1.5px solid var(--line);
+  border-radius: var(--wobble);
+  display: block;
+  margin-bottom: 0.75rem;
+  object-fit: contain;
+  width: 100%;
+}
+
 .drawing-card-heading,
 .drawing-card-actions {
   align-items: center;

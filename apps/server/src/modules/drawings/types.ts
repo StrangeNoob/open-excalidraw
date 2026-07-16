@@ -16,6 +16,7 @@ export interface AccessibleDrawing {
   metadataRevision: bigint;
   createdAt: Date;
   updatedAt: Date;
+  thumbnailUpdatedAt: Date | null;
 }
 
 export type RenameDrawingResult =
@@ -86,6 +87,7 @@ export const toDrawingSummary = (
   metadataRevision: drawing.metadataRevision.toString(),
   createdAt: drawing.createdAt.toISOString(),
   updatedAt: drawing.updatedAt.toISOString(),
+  thumbnailUpdatedAt: drawing.thumbnailUpdatedAt?.toISOString() ?? null,
 });
 
 export const toDrawingListResponse = (input: {

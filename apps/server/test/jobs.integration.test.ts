@@ -356,6 +356,19 @@ describeDatabase("maintenance jobs", () => {
     expect(storage.has(storageKey(recent, "recent"))).toBe(true);
   });
 
+  it("purges the drawing's thumbnail blob even though it has no asset row", async () => {
+    const drawingId = await createDrawing(ownerId, emptyScene(), {
+      deletedAt: ago(DEFAULT_DELETED_DRAWING_RETENTION_MS + 1),
+    });
+    storage.seed(`drawings/${drawingId}/thumbnail`);
+
+    expect(await jobs.purgeDeletedDrawings()).toEqual({
+      deleted: 1,
+      failures: [],
+    });
+    expect(storage.has(`drawings/${drawingId}/thumbnail`)).toBe(false);
+  });
+
   async function createDrawing(
     owner: string,
     scene = emptyScene(),

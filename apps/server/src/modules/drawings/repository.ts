@@ -28,6 +28,7 @@ interface AccessibleDrawingRow extends QueryResultRow {
   metadata_revision: string;
   created_at: Date;
   updated_at: Date;
+  thumbnail_updated_at: Date | null;
 }
 
 /** The requesting user's private tags, aggregated per drawing. */
@@ -49,7 +50,8 @@ export class PostgresDrawingRepository implements DrawingRepository {
           SELECT
             d.id, d.title, d.owner_user_id, u.name AS owner_name,
             'owner'::text AS role, d.content_revision, d.metadata_revision,
-            d.created_at, d.updated_at, ${tagsSelect("$1")}
+            d.created_at, d.updated_at, d.thumbnail_updated_at,
+            ${tagsSelect("$1")}
           FROM drawings d
           JOIN "user" u ON u.id = d.owner_user_id
           WHERE d.owner_user_id = $1 AND d.deleted_at IS NULL
@@ -62,7 +64,8 @@ export class PostgresDrawingRepository implements DrawingRepository {
           SELECT
             d.id, d.title, d.owner_user_id, u.name AS owner_name,
             m.role, d.content_revision, d.metadata_revision,
-            d.created_at, d.updated_at, ${tagsSelect("$1")}
+            d.created_at, d.updated_at, d.thumbnail_updated_at,
+            ${tagsSelect("$1")}
           FROM drawing_members m
           JOIN drawings d ON d.id = m.drawing_id
           JOIN "user" u ON u.id = d.owner_user_id
@@ -108,7 +111,8 @@ export class PostgresDrawingRepository implements DrawingRepository {
         SELECT
           d.id, d.title, d.owner_user_id, u.name AS owner_name,
           'owner'::text AS role, d.content_revision, d.metadata_revision,
-          d.created_at, d.updated_at, '{}'::text[] AS tags
+          d.created_at, d.updated_at, d.thumbnail_updated_at,
+          '{}'::text[] AS tags
         FROM created d
         JOIN "user" u ON u.id = d.owner_user_id
       `,
@@ -381,7 +385,7 @@ async function findAccessibleWith(
         d.id, d.title, d.owner_user_id, u.name AS owner_name,
         CASE WHEN d.owner_user_id = $2 THEN 'owner' ELSE m.role END AS role,
         d.content_revision, d.metadata_revision, d.created_at, d.updated_at,
-        ${tagsSelect("$2")}
+        d.thumbnail_updated_at, ${tagsSelect("$2")}
       FROM drawings d
       JOIN "user" u ON u.id = d.owner_user_id
       LEFT JOIN drawing_members m
@@ -411,5 +415,6 @@ function mapAccessible(row: AccessibleDrawingRow): AccessibleDrawing {
     metadataRevision: BigInt(row.metadata_revision),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    thumbnailUpdatedAt: row.thumbnail_updated_at,
   };
 }

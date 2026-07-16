@@ -49,6 +49,8 @@ export interface AssetRepository {
     userId: string,
   ): Promise<AssetAccessRole | null>;
   findAsset(drawingId: string, fileId: string): Promise<AssetRecord | null>;
+  /** Sets or clears drawings.thumbnail_updated_at; false if drawing missing/deleted. */
+  setThumbnailUpdatedAt(drawingId: string, when: Date | null): Promise<boolean>;
   /**
    * Rechecks upload authorization while holding the drawing lock, then commits
    * metadata in the same transaction. Implementations must acquire the drawing

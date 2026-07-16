@@ -70,11 +70,15 @@ import { SharingClient, SharingDialog, type SharingSource } from "../sharing";
 import { DrawingMetadataClient, type DrawingMetadataSource } from "./api";
 import { effectiveWorkspaceRole, isMembershipRevoked } from "./access-state";
 import { restoreWithRealtimeBoundary } from "./restore-boundary";
+import { captureThumbnail } from "./thumbnail";
 
 import "./workspace.css";
 
 type ContentSource = Pick<ContentClient, "load" | "save">;
-type AssetSource = Pick<AssetClient, "download" | "upload">;
+type AssetSource = Pick<
+  AssetClient,
+  "deleteThumbnail" | "download" | "upload" | "uploadThumbnail"
+>;
 type RecoverySource = Pick<CloudRecoveryRepository, "put">;
 type UpdateSceneData = Parameters<ExcalidrawImperativeAPI["updateScene"]>[0];
 type PendingRealtimeChange = {
@@ -86,6 +90,7 @@ type PendingRealtimeChange = {
 
 export interface DrawingWorkspaceDependencies {
   assets?: AssetSource;
+  captureThumbnail?: typeof captureThumbnail;
   chat?: ChatSource;
   connectivity?: ConnectivitySource;
   content?: ContentSource;
@@ -106,6 +111,7 @@ export interface DrawingPageProps {
   drawingId: string;
   onCreatePrivateCopy?: (drawingId: string, snapshot: AutosaveSnapshot) => void;
   onExportLocal?: (drawingId: string, snapshot: AutosaveSnapshot) => void;
+  thumbnailDebounceMs?: number;
   userId: string;
 }
 
@@ -145,6 +151,7 @@ export const DrawingPage = ({
   drawingId,
   onCreatePrivateCopy,
   onExportLocal,
+  thumbnailDebounceMs = 10_000,
   userId,
 }: DrawingPageProps) => {
   const [ownedDefaults] = useState(() => ({
@@ -160,6 +167,7 @@ export const DrawingPage = ({
   const resolved = useMemo(
     () => ({
       assets: dependencies?.assets ?? ownedDefaults.assets,
+      captureThumbnail: dependencies?.captureThumbnail ?? captureThumbnail,
       chat: dependencies?.chat ?? ownedDefaults.chat,
       connectivity: dependencies?.connectivity ?? browserConnectivity,
       content: dependencies?.content ?? ownedDefaults.content,
@@ -231,6 +239,74 @@ export const DrawingPage = ({
     ReadonlyMap<string, Error>
   >(new Map());
   const hydrationGeneration = useRef(0);
+  const editorApiRef = useRef<ExcalidrawImperativeAPI | null>(null);
+  const thumbnailTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // undefined = unknown server state, null = known cleared, string = last sha.
+  const thumbnailShaRef = useRef<string | null | undefined>(undefined);
+
+  useEffect(() => {
+    editorApiRef.current = editorApi;
+  }, [editorApi]);
+
+  const captureThumbnailNow = useCallback(() => {
+    thumbnailTimerRef.current = null;
+    const api = editorApiRef.current;
+    if (!api) {
+      return;
+    }
+    // Fire-and-forget: thumbnail failures must never surface or touch
+    // autosave/collaboration state.
+    void resolved
+      .captureThumbnail(
+        api,
+        drawingId,
+        resolved.assets,
+        thumbnailShaRef.current,
+      )
+      .then((sha256) => {
+        thumbnailShaRef.current = sha256;
+      })
+      .catch(() => undefined);
+  }, [drawingId, resolved]);
+
+  // Trailing throttle: at most one capture per window, of the scene as it
+  // is at fire time. Continuous drawing keeps refreshing instead of being
+  // starved by a reset-on-change debounce.
+  const scheduleThumbnail = useCallback(() => {
+    thumbnailTimerRef.current ??= setTimeout(
+      captureThumbnailNow,
+      thumbnailDebounceMs,
+    );
+  }, [captureThumbnailNow, thumbnailDebounceMs]);
+
+  // ponytail: no pagehide/keepalive; worst case the thumbnail is one
+  // editing session stale.
+  useEffect(() => {
+    const flushWhenHidden = () => {
+      if (
+        document.visibilityState === "hidden" &&
+        thumbnailTimerRef.current !== null
+      ) {
+        clearTimeout(thumbnailTimerRef.current);
+        captureThumbnailNow();
+      }
+    };
+    document.addEventListener("visibilitychange", flushWhenHidden);
+    return () => {
+      document.removeEventListener("visibilitychange", flushWhenHidden);
+    };
+  }, [captureThumbnailNow]);
+
+  useEffect(
+    () => () => {
+      if (thumbnailTimerRef.current !== null) {
+        clearTimeout(thumbnailTimerRef.current);
+        thumbnailTimerRef.current = null;
+      }
+      thumbnailShaRef.current = undefined;
+    },
+    [drawingId],
+  );
   const workspace =
     load?.drawingId === drawingId && load.userId === userId ? load : null;
   const workspaceLoadError =
@@ -464,6 +540,9 @@ export const DrawingPage = ({
         return;
       }
 
+      // Covers both persistence paths below; only rearms a timer.
+      scheduleThumbnail();
+
       const collaborationController = collaborationControllerRef.current;
       if (collaborationEnabled) {
         if (collaborationController) {
@@ -498,6 +577,7 @@ export const DrawingPage = ({
       collaborationEnabled,
       controller,
       drawingId,
+      scheduleThumbnail,
       workspace,
     ],
   );
