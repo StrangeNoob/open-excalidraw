@@ -37,7 +37,12 @@ export const createApp = ({
         directives: {
           baseUri: ["'self'"],
           childSrc: ["'self'", "blob:"],
-          connectSrc: ["'self'", "ws:", "wss:"],
+          connectSrc: [
+            "'self'",
+            "ws:",
+            "wss:",
+            "https://libraries.excalidraw.com",
+          ],
           defaultSrc: ["'self'"],
           fontSrc: ["'self'", "data:"],
           formAction: ["'self'"],

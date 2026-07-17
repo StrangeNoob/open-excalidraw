@@ -18,6 +18,11 @@ describe("health endpoint", () => {
     expect(response.headers["content-security-policy"]).toContain(
       "worker-src 'self' blob:",
     );
+    // Guards the public-library import flow: the web bundle fetches
+    // .excalidrawlib JSON from libraries.excalidraw.com under this CSP.
+    expect(response.headers["content-security-policy"]).toContain(
+      "connect-src 'self' ws: wss: https://libraries.excalidraw.com",
+    );
     expect(response.headers["x-request-id"]).toMatch(/^[A-Za-z0-9-]+$/);
   });
 

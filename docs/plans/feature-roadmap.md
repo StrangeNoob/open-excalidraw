@@ -26,7 +26,9 @@ is ranked by value against effort for a self-hosted collaboration tool.
   `OIDC_*` environment variables.
 - **Persistent shape libraries** — the editor's `.excalidrawlib` items now
   persist per account (`GET`/`PUT /api/v1/library`) instead of only in
-  localStorage, so they follow users across devices.
+  localStorage, so they follow users across devices. Public libraries from
+  libraries.excalidraw.com can be browsed and imported straight into the
+  editor, and those imports persist to the account like any other item.
 
 ## Next up
 

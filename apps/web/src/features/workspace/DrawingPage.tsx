@@ -1,4 +1,8 @@
-import { CaptureUpdateAction, MainMenu } from "@excalidraw/excalidraw";
+import {
+  CaptureUpdateAction,
+  MainMenu,
+  useHandleLibrary,
+} from "@excalidraw/excalidraw";
 import type {
   ExcalidrawImperativeAPI,
   ExcalidrawInitialDataState,
@@ -619,6 +623,12 @@ export const DrawingPage = ({
   const onLibraryChange = useLibrarySync(editorApi, {
     client: resolved.library,
   });
+
+  // Consumes the #addLibrary=... hash after "Browse libraries" redirects back
+  // from libraries.excalidraw.com: it prompts, then merges the public library
+  // into the editor. No adapter — the merge fires onLibraryChange, and
+  // useLibrarySync above persists it to the account.
+  useHandleLibrary({ excalidrawAPI: editorApi });
 
   const reloadServer = useCallback(
     (server: LoadedContent) => {
