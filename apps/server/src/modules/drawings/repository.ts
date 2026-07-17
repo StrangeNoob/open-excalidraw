@@ -413,6 +413,7 @@ export class PostgresDrawingRepository implements DrawingRepository {
         FROM drawings d
         JOIN "user" u ON u.id = d.owner_user_id
         WHERE d.owner_user_id = $1 AND d.deleted_at IS NOT NULL
+          AND d.purge_started_at IS NULL
         ORDER BY d.deleted_at DESC, d.id
       `,
       [userId],
@@ -435,6 +436,7 @@ export class PostgresDrawingRepository implements DrawingRepository {
              SET deleted_at = NULL, updated_at = now(),
                  metadata_revision = metadata_revision + 1
              WHERE id = $1 AND owner_user_id = $2 AND deleted_at IS NOT NULL
+               AND purge_started_at IS NULL
              RETURNING id
            )
            INSERT INTO audit_events
@@ -452,6 +454,7 @@ export class PostgresDrawingRepository implements DrawingRepository {
           updated_at = now(),
           metadata_revision = metadata_revision + 1
         WHERE id = $1 AND owner_user_id = $2 AND deleted_at IS NOT NULL
+          AND purge_started_at IS NULL
       `,
           [input.drawingId, input.ownerUserId],
         );

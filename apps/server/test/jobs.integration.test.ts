@@ -16,6 +16,7 @@ import {
 } from "../src/modules/content/index.js";
 import {
   PostgresDrawingRepository,
+  prepareDrawingPurge,
   storageDrawingBlobStore,
 } from "../src/modules/drawings/index.js";
 
@@ -416,6 +417,38 @@ describeDatabase("maintenance jobs", () => {
     expect(audit.rows).toHaveLength(1);
     expect(audit.rows[0]?.drawing_id).toBeNull();
     expect(audit.rows[0]?.metadata).toEqual({ drawingId: trashed });
+  });
+
+  it("blocks restore and hides the trash entry once a purge starts, then reclaims it", async () => {
+    const repository = new PostgresDrawingRepository(
+      database.pool,
+      storageDrawingBlobStore(storage),
+    );
+    const drawingId = await createDrawing(ownerId, emptyScene(), {
+      deletedAt: NOW,
+    });
+    await insertAsset(drawingId, "marked", NOW);
+
+    // A purge that dies right after prepare leaves only the durable marker.
+    expect(
+      await prepareDrawingPurge(database.pool, drawingId, {
+        ownerUserId: ownerId,
+      }),
+    ).not.toBeNull();
+
+    expect(await repository.restore({ drawingId, ownerUserId: ownerId })).toBe(
+      "not-found",
+    );
+    expect(await repository.listTrashedForUser(ownerId)).toEqual([]);
+
+    // The next maintenance run completes the crashed purge even though
+    // deleted_at is far younger than the retention cutoff.
+    expect(await jobs.purgeDeletedDrawings()).toEqual({
+      deleted: 1,
+      failures: [],
+    });
+    expect(await drawingIds([drawingId])).toEqual([]);
+    expect(storage.has(storageKey(drawingId, "marked"))).toBe(false);
   });
 
   async function createDrawing(

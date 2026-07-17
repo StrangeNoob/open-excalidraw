@@ -313,13 +313,15 @@ export const openApiDocument = {
         description:
           "Moves a drawing out of the trash. Members and share links were " +
           "never removed by the soft delete, so access resumes exactly as " +
-          "before the deletion. Distinct from the revision-restore endpoint, " +
-          "which restores a drawing's content to an earlier revision.",
+          "before the deletion. A drawing whose permanent deletion has " +
+          "already begun can no longer be restored. Distinct from the " +
+          "revision-restore endpoint, which restores a drawing's content " +
+          "to an earlier revision.",
         responses: {
           "200": json("The restored drawing.", ref("DrawingSummary")),
           "401": unauthorized,
           "404": problem(
-            "Not trashed, not owned by the caller, or already purged.",
+            "Not trashed, not owned by the caller, or its purge has begun.",
           ),
         },
       },

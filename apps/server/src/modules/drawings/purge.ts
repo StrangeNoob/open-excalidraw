@@ -6,23 +6,31 @@ import { thumbnailStorageKey } from "../assets/service.js";
  * Guard deciding which trashed drawings a purge may touch: the maintenance
  * job's retention cutoff, or the owner of a user-initiated "delete forever".
  *
- * Callers run prepare → delete blobs → finalize. Blobs are deliberately
- * deleted outside the row lock, so a restore that commits inside that window
- * survives with its blobs already gone (scene intact, images broken) — an
- * accepted seconds-wide race at the retention boundary.
+ * Callers run prepare → delete blobs → finalize. Prepare durably marks the
+ * row with purge_started_at inside its transaction, which blocks restore and
+ * hides the drawing from the trash before any blob is deleted — a restore
+ * can never resurrect a drawing with partially deleted assets. A purge that
+ * dies before finalize leaves the marker behind; the retention guard accepts
+ * marked rows regardless of age, so the next maintenance run completes it.
  */
 export type DrawingPurgeGuard =
   { deletedBefore: Date } | { ownerUserId: string };
 
 const guardClause = (guard: DrawingPurgeGuard) =>
   "deletedBefore" in guard
-    ? { sql: "deleted_at < $2", param: guard.deletedBefore }
+    ? {
+        sql: "(deleted_at < $2 OR purge_started_at IS NOT NULL)",
+        param: guard.deletedBefore,
+      }
     : {
         sql: "owner_user_id = $2 AND deleted_at IS NOT NULL",
         param: guard.ownerUserId,
       };
 
-/** Phase 1: lock the row, collect every blob key. Null when the guard misses. */
+/**
+ * Phase 1: mark the row as purge-in-progress and collect every blob key.
+ * Null when the guard misses.
+ */
 export async function prepareDrawingPurge(
   pool: Pool,
   drawingId: string,
@@ -31,9 +39,9 @@ export async function prepareDrawingPurge(
   const clause = guardClause(guard);
   return transaction(pool, async (client) => {
     const locked = await client.query<{ id: string }>(
-      `SELECT id FROM drawings
+      `UPDATE drawings SET purge_started_at = now()
        WHERE id = $1 AND ${clause.sql}
-       FOR UPDATE`,
+       RETURNING id`,
       [drawingId, clause.param],
     );
     if (!locked.rows[0]) return null;

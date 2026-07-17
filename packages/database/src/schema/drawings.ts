@@ -55,6 +55,11 @@ export const drawings = pgTable(
       .defaultNow()
       .notNull(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    /**
+     * Set inside a purge's prepare transaction; blocks restore and hides the
+     * row from the trash while (or after) its blobs are deleted.
+     */
+    purgeStartedAt: timestamp("purge_started_at", { withTimezone: true }),
     isTemplate: boolean("is_template").notNull().default(false),
     lastCheckpointAt: timestamp("last_checkpoint_at", { withTimezone: true }),
     thumbnailUpdatedAt: timestamp("thumbnail_updated_at", {
@@ -67,6 +72,9 @@ export const drawings = pgTable(
       .on(table.updatedAt)
       .where(sql`${table.deletedAt} is null`),
     index("drawings_deleted_at_idx").on(table.deletedAt),
+    index("drawings_purge_started_at_idx")
+      .on(table.purgeStartedAt)
+      .where(sql`${table.purgeStartedAt} is not null`),
     check(
       "drawings_scene_format_version_positive",
       sql`${table.sceneFormatVersion} > 0`,

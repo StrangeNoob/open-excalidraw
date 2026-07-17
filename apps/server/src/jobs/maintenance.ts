@@ -271,7 +271,7 @@ export class MaintenanceJobs {
     const cutoff = before(now, this.#deletedDrawingRetentionMs);
     const candidates = await this.pool.query<DrawingCandidate>(
       `SELECT id FROM drawings
-       WHERE deleted_at < $1
+       WHERE deleted_at < $1 OR purge_started_at IS NOT NULL
        ORDER BY deleted_at, id
        LIMIT $2`,
       [cutoff, this.#candidateBatchSize],
