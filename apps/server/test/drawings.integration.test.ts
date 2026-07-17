@@ -51,7 +51,10 @@ describe("drawing HTTP domain", () => {
     );
     fixture.repository.seed(randomUUID(), "Inaccessible", "owner");
     const deleted = fixture.repository.seed(ownerId, "Deleted", "owner");
-    fixture.repository.deleted.add(deleted.id);
+    fixture.repository.deleted.set(
+      deleted.id,
+      new Date("2026-01-02T00:00:00.000Z"),
+    );
 
     const response = await request(fixture.app)
       .get("/api/v1/drawings")
@@ -336,6 +339,114 @@ describe("drawing HTTP domain", () => {
     expect(viewer.status).toBe(403);
   });
 
+  it("lists only the caller's trashed drawings, newest deletion first", async () => {
+    const fixture = createFixture();
+    const older = fixture.repository.seed(ownerId, "Older trash", "owner");
+    const newer = fixture.repository.seed(ownerId, "Newer trash", "owner");
+    fixture.repository.seed(ownerId, "Active", "owner");
+    const foreign = fixture.repository.seed(randomUUID(), "Foreign", "owner");
+    fixture.repository.deleted.set(
+      older.id,
+      new Date("2026-01-02T00:00:00.000Z"),
+    );
+    fixture.repository.deleted.set(
+      newer.id,
+      new Date("2026-01-03T00:00:00.000Z"),
+    );
+    fixture.repository.deleted.set(
+      foreign.id,
+      new Date("2026-01-04T00:00:00.000Z"),
+    );
+
+    const response = await request(fixture.app)
+      .get("/api/v1/drawings/trash")
+      .set("x-test-user", ownerId);
+
+    expect(response.status).toBe(200);
+    expect(
+      response.body.drawings.map((drawing: { id: string }) => drawing.id),
+    ).toEqual([newer.id, older.id]);
+    expect(response.body.drawings[0].deletedAt).toBe(
+      "2026-01-03T00:00:00.000Z",
+    );
+    expect(JSON.stringify(response.body)).not.toContain("Active");
+    expect(JSON.stringify(response.body)).not.toContain("Foreign");
+  });
+
+  it("restores a trashed drawing for its owner only", async () => {
+    const fixture = createFixture();
+    const drawing = fixture.repository.seed(ownerId, "Restore me", "owner");
+    fixture.repository.members.set(`${drawing.id}:${editorId}`, "editor");
+
+    // Active drawings cannot be restored.
+    const active = await request(fixture.app)
+      .post(`/api/v1/drawings/${drawing.id}/restore`)
+      .set("x-test-user", ownerId);
+    expect(active.status).toBe(404);
+
+    await request(fixture.app)
+      .delete(`/api/v1/drawings/${drawing.id}`)
+      .set("x-test-user", ownerId);
+
+    const byEditor = await request(fixture.app)
+      .post(`/api/v1/drawings/${drawing.id}/restore`)
+      .set("x-test-user", editorId);
+    expect(byEditor.status).toBe(404);
+
+    const restored = await request(fixture.app)
+      .post(`/api/v1/drawings/${drawing.id}/restore`)
+      .set("x-test-user", ownerId);
+    expect(restored.status).toBe(200);
+    expect(restored.body).toMatchObject({
+      id: drawing.id,
+      title: "Restore me",
+      role: "owner",
+    });
+
+    const list = await request(fixture.app)
+      .get("/api/v1/drawings")
+      .set("x-test-user", ownerId);
+    expect(list.body.owned.map((entry: { id: string }) => entry.id)).toContain(
+      drawing.id,
+    );
+
+    const trash = await request(fixture.app)
+      .get("/api/v1/drawings/trash")
+      .set("x-test-user", ownerId);
+    expect(trash.body.drawings).toEqual([]);
+  });
+
+  it("permanently deletes only trashed drawings, owner only", async () => {
+    const fixture = createFixture();
+    const drawing = fixture.repository.seed(ownerId, "Purge me", "owner");
+    fixture.repository.members.set(`${drawing.id}:${editorId}`, "editor");
+
+    // Must be trashed first.
+    const active = await request(fixture.app)
+      .delete(`/api/v1/drawings/${drawing.id}/permanent`)
+      .set("x-test-user", ownerId);
+    expect(active.status).toBe(404);
+
+    await request(fixture.app)
+      .delete(`/api/v1/drawings/${drawing.id}`)
+      .set("x-test-user", ownerId);
+
+    const byEditor = await request(fixture.app)
+      .delete(`/api/v1/drawings/${drawing.id}/permanent`)
+      .set("x-test-user", editorId);
+    expect(byEditor.status).toBe(404);
+
+    const purged = await request(fixture.app)
+      .delete(`/api/v1/drawings/${drawing.id}/permanent`)
+      .set("x-test-user", ownerId);
+    expect(purged.status).toBe(204);
+
+    const restoreAfterPurge = await request(fixture.app)
+      .post(`/api/v1/drawings/${drawing.id}/restore`)
+      .set("x-test-user", ownerId);
+    expect(restoreAfterPurge.status).toBe(404);
+  });
+
   it("requires a valid session on every route", async () => {
     const fixture = createFixture();
     const response = await request(fixture.app).get("/api/v1/drawings");
@@ -394,7 +505,7 @@ function rename(
 class InMemoryDrawingRepository implements DrawingRepository {
   public readonly drawings = new Map<string, AccessibleDrawing>();
   public readonly members = new Map<string, "editor" | "viewer">();
-  public readonly deleted = new Set<string>();
+  public readonly deleted = new Map<string, Date>();
   public readonly tags = new Map<string, string[]>();
 
   private tagsFor(drawingId: string, userId: string): string[] {
@@ -534,8 +645,48 @@ class InMemoryDrawingRepository implements DrawingRepository {
     if (!drawing || drawing.ownerUserId !== input.ownerUserId) {
       return Promise.resolve("not-found" as const);
     }
-    this.deleted.add(input.drawingId);
+    this.deleted.set(input.drawingId, new Date());
     return Promise.resolve("deleted" as const);
+  }
+
+  public listTrashedForUser(userId: string) {
+    const trashed = [...this.deleted.entries()]
+      .flatMap(([drawingId, deletedAt]) => {
+        const drawing = this.drawings.get(drawingId);
+        return drawing && drawing.ownerUserId === userId
+          ? [{ ...drawing, role: "owner" as const, deletedAt }]
+          : [];
+      })
+      .sort((a, b) => b.deletedAt.getTime() - a.deletedAt.getTime());
+    return Promise.resolve(trashed);
+  }
+
+  public restore(input: { drawingId: string; ownerUserId: string }) {
+    const drawing = this.drawings.get(input.drawingId);
+    if (
+      !drawing ||
+      drawing.ownerUserId !== input.ownerUserId ||
+      !this.deleted.has(input.drawingId)
+    ) {
+      return Promise.resolve("not-found" as const);
+    }
+    this.deleted.delete(input.drawingId);
+    drawing.metadataRevision += 1n;
+    return Promise.resolve("restored" as const);
+  }
+
+  public purge(input: { drawingId: string; ownerUserId: string }) {
+    const drawing = this.drawings.get(input.drawingId);
+    if (
+      !drawing ||
+      drawing.ownerUserId !== input.ownerUserId ||
+      !this.deleted.has(input.drawingId)
+    ) {
+      return Promise.resolve("not-found" as const);
+    }
+    this.drawings.delete(input.drawingId);
+    this.deleted.delete(input.drawingId);
+    return Promise.resolve("purged" as const);
   }
 
   public leave(input: { drawingId: string; userId: string }) {

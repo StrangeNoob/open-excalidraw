@@ -2,6 +2,7 @@ import type {
   DrawingListResponse,
   DrawingSummary,
   Role,
+  TrashedDrawing,
 } from "@open-excalidraw/contracts";
 
 export interface AccessibleDrawing {
@@ -40,7 +41,13 @@ export type RenameDrawingResult =
   | { status: "forbidden" }
   | { status: "not-found" };
 
+export interface TrashedDrawingRecord extends AccessibleDrawing {
+  deletedAt: Date;
+}
+
 export type DeleteDrawingResult = "deleted" | "not-found";
+export type RestoreDrawingResult = "restored" | "not-found";
+export type PurgeDrawingResult = "purged" | "not-found";
 export type LeaveDrawingResult = "left" | "not-found";
 export type TransferOwnershipResult =
   | { status: "transferred"; drawing: AccessibleDrawing }
@@ -78,6 +85,17 @@ export interface DrawingRepository {
     ownerUserId: string;
     auditRequestId?: string;
   }): Promise<DeleteDrawingResult>;
+  listTrashedForUser(userId: string): Promise<TrashedDrawingRecord[]>;
+  restore(input: {
+    drawingId: string;
+    ownerUserId: string;
+    auditRequestId?: string;
+  }): Promise<RestoreDrawingResult>;
+  purge(input: {
+    drawingId: string;
+    ownerUserId: string;
+    auditRequestId?: string;
+  }): Promise<PurgeDrawingResult>;
   leave(input: {
     drawingId: string;
     userId: string;
@@ -110,6 +128,13 @@ export const toDrawingSummary = (
   updatedAt: drawing.updatedAt.toISOString(),
   thumbnailUpdatedAt: drawing.thumbnailUpdatedAt?.toISOString() ?? null,
   isTemplate: drawing.isTemplate,
+});
+
+export const toTrashedDrawingSummary = (
+  drawing: TrashedDrawingRecord,
+): TrashedDrawing => ({
+  ...toDrawingSummary(drawing),
+  deletedAt: drawing.deletedAt.toISOString(),
 });
 
 export const toDrawingListResponse = (input: {

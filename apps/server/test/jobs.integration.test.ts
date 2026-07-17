@@ -14,6 +14,10 @@ import {
   ContentService,
   PostgresContentRepository,
 } from "../src/modules/content/index.js";
+import {
+  PostgresDrawingRepository,
+  storageDrawingBlobStore,
+} from "../src/modules/drawings/index.js";
 
 const databaseUrl = process.env.DATABASE_TEST_URL;
 const describeDatabase = databaseUrl ? describe : describe.skip;
@@ -367,6 +371,51 @@ describeDatabase("maintenance jobs", () => {
       failures: [],
     });
     expect(storage.has(`drawings/${drawingId}/thumbnail`)).toBe(false);
+  });
+
+  it("purges a trashed drawing on demand for its owner only, regardless of age", async () => {
+    const repository = new PostgresDrawingRepository(
+      database.pool,
+      storageDrawingBlobStore(storage),
+    );
+    // Deleted just now — the owner purge must not wait out the retention.
+    const trashed = await createDrawing(ownerId, emptyScene(), {
+      deletedAt: NOW,
+    });
+    await insertAsset(trashed, "keep", NOW);
+    storage.seed(`drawings/${trashed}/thumbnail`);
+    const active = await createDrawing(ownerId);
+
+    expect(
+      await repository.purge({ drawingId: trashed, ownerUserId: randomUUID() }),
+    ).toBe("not-found");
+    expect(
+      await repository.purge({ drawingId: active, ownerUserId: ownerId }),
+    ).toBe("not-found");
+    expect(
+      await repository.purge({
+        drawingId: trashed,
+        ownerUserId: ownerId,
+        auditRequestId: `maintenance-${ownerId}-user-purge`,
+      }),
+    ).toBe("purged");
+    expect(storage.has(storageKey(trashed, "keep"))).toBe(false);
+    expect(storage.has(`drawings/${trashed}/thumbnail`)).toBe(false);
+    expect(await drawingIds([trashed, active])).toEqual([active]);
+
+    // The purge is audited even though the drawing row (the usual FK target)
+    // is gone; the drawing id survives in the event metadata.
+    const audit = await database.pool.query<{
+      metadata: { drawingId: string };
+      drawing_id: string | null;
+    }>(
+      `SELECT metadata, drawing_id FROM audit_events
+       WHERE request_id = $1 AND event_type = 'drawing.purged'`,
+      [`maintenance-${ownerId}-user-purge`],
+    );
+    expect(audit.rows).toHaveLength(1);
+    expect(audit.rows[0]?.drawing_id).toBeNull();
+    expect(audit.rows[0]?.metadata).toEqual({ drawingId: trashed });
   });
 
   async function createDrawing(

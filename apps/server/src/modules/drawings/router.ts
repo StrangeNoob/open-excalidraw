@@ -43,6 +43,14 @@ export function createDrawingRouter(input: CreateDrawingRouterInput): Router {
     }));
   });
 
+  // Registered before /:drawingId so "trash" is not parsed as a drawing id.
+  router.get("/api/v1/drawings/trash", async (request, response) => {
+    await handle(request, response, input.identity, async (userId) => ({
+      status: 200,
+      body: await input.service.listTrash(userId),
+    }));
+  });
+
   router.get("/api/v1/drawings/:drawingId", async (request, response) => {
     await handle(request, response, input.identity, async (userId) => ({
       status: 200,
@@ -100,6 +108,40 @@ export function createDrawingRouter(input: CreateDrawingRouterInput): Router {
       },
     );
   });
+
+  router.post(
+    "/api/v1/drawings/:drawingId/restore",
+    async (request, response) => {
+      await handle(
+        request,
+        response,
+        input.identity,
+        async (userId, requestId) => ({
+          status: 200,
+          body: await input.service.restore(
+            userId,
+            drawingId(request),
+            requestId,
+          ),
+        }),
+      );
+    },
+  );
+
+  router.delete(
+    "/api/v1/drawings/:drawingId/permanent",
+    async (request, response) => {
+      await handle(
+        request,
+        response,
+        input.identity,
+        async (userId, requestId) => {
+          await input.service.purge(userId, drawingId(request), requestId);
+          return { status: 204 };
+        },
+      );
+    },
+  );
 
   router.delete(
     "/api/v1/drawings/:drawingId/members/me",

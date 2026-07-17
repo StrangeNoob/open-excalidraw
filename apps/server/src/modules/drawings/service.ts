@@ -2,6 +2,7 @@ import type {
   CreateDrawingRequest,
   DrawingListResponse,
   DrawingSummary,
+  TrashListResponse,
 } from "@open-excalidraw/contracts";
 
 import { DrawingDomainError } from "./errors.js";
@@ -9,6 +10,7 @@ import { can, type DrawingCapability } from "./policy.js";
 import {
   toDrawingListResponse,
   toDrawingSummary,
+  toTrashedDrawingSummary,
   type AccessibleDrawing,
   type DrawingRepository,
 } from "./types.js";
@@ -106,6 +108,50 @@ export class DrawingService {
   ): Promise<void> {
     await this.requireAccess(userId, drawingId, "delete");
     const result = await this.repository.softDelete({
+      drawingId,
+      ownerUserId: userId,
+      ...(auditRequestId ? { auditRequestId } : {}),
+    });
+    if (result === "not-found") {
+      throw notFound();
+    }
+  }
+
+  // Trash actions authorize in SQL (owner_user_id scoping) rather than via
+  // requireAccess: trashed rows are invisible to findAccessible. Non-owners
+  // get 404, which also avoids leaking that a trashed drawing exists.
+  public async listTrash(userId: string): Promise<TrashListResponse> {
+    const drawings = await this.repository.listTrashedForUser(userId);
+    return { drawings: drawings.map(toTrashedDrawingSummary) };
+  }
+
+  public async restore(
+    userId: string,
+    drawingId: string,
+    auditRequestId?: string,
+  ): Promise<DrawingSummary> {
+    const result = await this.repository.restore({
+      drawingId,
+      ownerUserId: userId,
+      ...(auditRequestId ? { auditRequestId } : {}),
+    });
+    if (result === "not-found") {
+      throw notFound();
+    }
+    const drawing = await this.repository.findAccessible(drawingId, userId);
+    if (!drawing) {
+      // A concurrent purge won the race; the drawing is gone.
+      throw notFound();
+    }
+    return toDrawingSummary(drawing);
+  }
+
+  public async purge(
+    userId: string,
+    drawingId: string,
+    auditRequestId?: string,
+  ): Promise<void> {
+    const result = await this.repository.purge({
       drawingId,
       ownerUserId: userId,
       ...(auditRequestId ? { auditRequestId } : {}),

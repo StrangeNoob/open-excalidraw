@@ -3,13 +3,18 @@ import type {
   DrawingSummary,
 } from "@open-excalidraw/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { getDrawingCapabilities } from "../access";
-import { DashboardApiClient, type DashboardApi } from "./dashboard-api";
+import {
+  DASHBOARD_QUERY_KEY,
+  DashboardApiClient,
+  TRASH_QUERY_KEY,
+  type DashboardApi,
+} from "./dashboard-api";
+import { useOnlineStatus } from "./use-online-status";
 
-const DASHBOARD_QUERY_KEY = ["drawings", "dashboard"] as const;
 const MAX_TAGS = 20;
 const defaultDashboardApi = new DashboardApiClient();
 
@@ -39,23 +44,6 @@ const replaceDrawing = (
       drawing.id === replacement.id ? replacement : drawing,
     ),
   };
-};
-
-const useOnlineStatus = () => {
-  const [online, setOnline] = useState(() => navigator.onLine);
-
-  useEffect(() => {
-    const updateOnline = () => setOnline(navigator.onLine);
-    window.addEventListener("online", updateOnline);
-    window.addEventListener("offline", updateOnline);
-
-    return () => {
-      window.removeEventListener("online", updateOnline);
-      window.removeEventListener("offline", updateOnline);
-    };
-  }, []);
-
-  return online;
 };
 
 const DrawingCard = ({
@@ -468,6 +456,9 @@ export const DashboardPage = ({
               }
             : current,
       );
+      // A previously viewed trash list is now stale; TrashPage does the
+      // symmetric invalidation when restoring.
+      void queryClient.invalidateQueries({ queryKey: TRASH_QUERY_KEY });
     },
   });
 
@@ -493,7 +484,9 @@ export const DashboardPage = ({
 
   const requestDelete = (drawing: DrawingSummary) => {
     if (
-      globalThis.confirm(`Delete “${drawing.title}”? This cannot be undone.`)
+      globalThis.confirm(
+        `Move “${drawing.title}” to the trash? Trashed drawings are deleted forever after 7 days.`,
+      )
     ) {
       deleteDrawing.mutate(drawing);
     }
@@ -537,6 +530,8 @@ export const DashboardPage = ({
           <p className="dashboard-eyebrow">Open Excalidraw</p>
           <h1>Your drawings</h1>
           <Link to="/app/settings">Settings</Link>
+          {" · "}
+          <Link to="/app/trash">Trash</Link>
         </div>
         <form className="create-drawing" onSubmit={submitCreate}>
           <label>

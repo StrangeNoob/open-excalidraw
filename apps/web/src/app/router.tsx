@@ -54,6 +54,11 @@ const SettingsPage = lazy(() =>
     default: module.SettingsPage,
   })),
 );
+const TrashPage = lazy(() =>
+  import("../features/dashboard").then((module) => ({
+    default: module.TrashPage,
+  })),
+);
 
 const AuthRouteLayout = () => (
   <AuthProvider>
@@ -131,6 +136,42 @@ const SettingsRoute = () => {
   return (
     <Suspense fallback={<p aria-live="polite">Loading settings…</p>}>
       <SettingsPage />
+    </Suspense>
+  );
+};
+
+const TrashRoute = () => {
+  const auth = useAuth();
+  const location = useLocation();
+
+  if (auth.status === "loading") {
+    return <p aria-live="polite">Loading your account…</p>;
+  }
+
+  if (auth.status === "error") {
+    return (
+      <main>
+        <h1>Could not load your account</h1>
+        <button onClick={() => void auth.refresh()} type="button">
+          Try again
+        </button>
+      </main>
+    );
+  }
+
+  if (!auth.user) {
+    const returnTo = `${location.pathname}${location.search}${location.hash}`;
+    return (
+      <Navigate
+        replace
+        to={`/login?returnTo=${encodeURIComponent(returnTo)}`}
+      />
+    );
+  }
+
+  return (
+    <Suspense fallback={<p aria-live="polite">Loading trash…</p>}>
+      <TrashPage />
     </Suspense>
   );
 };
@@ -231,6 +272,10 @@ export const appRoutes: RouteObject[] = [
       {
         path: "/app/settings",
         element: <SettingsRoute />,
+      },
+      {
+        path: "/app/trash",
+        element: <TrashRoute />,
       },
       {
         path: "/dashboard",
