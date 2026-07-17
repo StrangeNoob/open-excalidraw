@@ -102,6 +102,20 @@ export const useLibrarySync = (
     drain();
   }, [client]);
 
+  const queueSave = useCallback(
+    (items: LibraryItems) => {
+      pendingRef.current = items;
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null;
+        flush();
+      }, debounceMs);
+    },
+    [debounceMs, flush],
+  );
+
   useEffect(() => {
     if (!api) {
       return;
@@ -115,13 +129,25 @@ export const useLibrarySync = (
           return;
         }
         lastSyncedRef.current = JSON.stringify(library.items);
-        loadedRef.current = true;
         // Merge (not replace) when the server has nothing yet, so a pre-existing
-        // local library survives the load and migrates up on the next save.
-        return api.updateLibrary({
-          libraryItems: library.items as unknown as LibraryItems,
-          merge: library.items.length === 0,
-        });
+        // local library survives the load; the merged result is queued below so
+        // it migrates up without waiting for an edit.
+        return api
+          .updateLibrary({
+            libraryItems: library.items as unknown as LibraryItems,
+            merge: library.items.length === 0,
+          })
+          .then((merged) => {
+            if (!active) {
+              return;
+            }
+            // Saving opens only once the loaded library is actually in the
+            // editor; after a failed apply a save could wipe the server copy.
+            loadedRef.current = true;
+            if (JSON.stringify(merged) !== lastSyncedRef.current) {
+              queueSave(merged);
+            }
+          });
       })
       .catch((error: unknown) => {
         console.warn("Could not load your saved library.", error);
@@ -140,25 +166,25 @@ export const useLibrarySync = (
         flush();
       }
     };
-  }, [api, client, flush]);
+  }, [api, client, flush, queueSave]);
 
   return useCallback<LibraryChangeHandler>(
     (items) => {
       if (!loadedRef.current) {
         return;
       }
-      if (JSON.stringify(items) === lastSyncedRef.current) {
+      // A change matching the last synced snapshot only skips the queue while
+      // nothing newer is queued or in flight; otherwise it is a revert that
+      // must still overwrite the superseding snapshot on the server.
+      if (
+        JSON.stringify(items) === lastSyncedRef.current &&
+        !savingRef.current &&
+        pendingRef.current === null
+      ) {
         return;
       }
-      pendingRef.current = items;
-      if (timerRef.current) {
-        clearTimeout(timerRef.current);
-      }
-      timerRef.current = setTimeout(() => {
-        timerRef.current = null;
-        flush();
-      }, debounceMs);
+      queueSave(items);
     },
-    [debounceMs, flush],
+    [queueSave],
   );
 };

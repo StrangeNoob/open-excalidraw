@@ -17,7 +17,11 @@ const response = (items: ReturnType<typeof item>[] = []) => ({
 });
 
 const createApi = () => {
-  const updateLibrary = vi.fn(() => Promise.resolve([]));
+  // Mirrors the real API: updateLibrary resolves with the resulting items.
+  const updateLibrary = vi.fn(
+    ({ libraryItems }: { libraryItems: ReturnType<typeof item>[] }) =>
+      Promise.resolve(libraryItems),
+  );
   return {
     api: { updateLibrary } as unknown as ExcalidrawImperativeAPI,
     updateLibrary,
@@ -417,5 +421,102 @@ describe("useLibrarySync", () => {
 
     expect(client.save).not.toHaveBeenCalled();
     warn.mockRestore();
+  });
+
+  it("keeps saving disabled when applying the loaded library fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { api, updateLibrary } = createApi();
+    updateLibrary.mockImplementationOnce(() =>
+      Promise.reject(new Error("apply failed")),
+    );
+    const client = {
+      load: vi.fn(() => Promise.resolve(response([item("a")]))),
+      save: vi.fn(() => Promise.resolve(response())),
+    };
+
+    const { result } = renderHook(() => useLibrarySync(api, { client }));
+    await settle();
+
+    act(() => {
+      void result.current([item("x")]);
+    });
+    act(() => {
+      vi.advanceTimersByTime(5_000);
+    });
+
+    expect(client.save).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("persists the merged library after an empty-server load without an edit", async () => {
+    const { api, updateLibrary } = createApi();
+    // Simulates Excalidraw merging a pre-existing local library into the
+    // empty server copy.
+    updateLibrary.mockImplementationOnce(() =>
+      Promise.resolve([item("local")]),
+    );
+    const client = {
+      load: vi.fn(() => Promise.resolve(response())),
+      save: vi.fn(() => Promise.resolve(response())),
+    };
+
+    renderHook(() => useLibrarySync(api, { client }));
+    await settle();
+    act(() => {
+      vi.advanceTimersByTime(2_000);
+    });
+    await settle();
+
+    expect(client.save).toHaveBeenCalledTimes(1);
+    expect(client.save).toHaveBeenCalledWith([item("local")]);
+  });
+
+  it("still saves a revert to the last synced snapshot while a save is in flight", async () => {
+    let resolveFirst!: () => void;
+    const save = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<ReturnType<typeof response>>((resolve) => {
+            resolveFirst = () => resolve(response());
+          }),
+      )
+      .mockImplementation(() => Promise.resolve(response()));
+    const client = {
+      load: vi.fn(() => Promise.resolve(response([item("a")]))),
+      save,
+    };
+    const { api } = createApi();
+
+    const { result } = renderHook(() => useLibrarySync(api, { client }));
+    await settle();
+
+    // Edit away from the synced snapshot; the save stays in flight.
+    act(() => {
+      void result.current([item("a"), item("b")]);
+    });
+    act(() => {
+      vi.advanceTimersByTime(2_000);
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+
+    // Revert to the synced snapshot while the newer save is in flight: it
+    // must queue, or the server would keep the superseding snapshot.
+    act(() => {
+      void result.current([item("a")]);
+    });
+    await act(async () => {
+      resolveFirst();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    act(() => {
+      vi.advanceTimersByTime(2_000);
+    });
+    await settle();
+
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(save).toHaveBeenLastCalledWith([item("a")]);
   });
 });
