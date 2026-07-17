@@ -56,14 +56,18 @@ export async function prepareDrawingPurge(
   });
 }
 
-/** Phase 3: hard-delete the row (children cascade). True when it deleted. */
+/**
+ * Phase 3: hard-delete the row (children cascade). True when it deleted.
+ * Accepts a client so a caller can finalize inside its own transaction
+ * (e.g. atomically with an audit event).
+ */
 export async function finalizeDrawingPurge(
-  pool: Pool,
+  db: Pick<Pool | PoolClient, "query">,
   drawingId: string,
   guard: DrawingPurgeGuard,
 ): Promise<boolean> {
   const clause = guardClause(guard);
-  const removed = await pool.query(
+  const removed = await db.query(
     `DELETE FROM drawings WHERE id = $1 AND ${clause.sql}`,
     [drawingId, clause.param],
   );

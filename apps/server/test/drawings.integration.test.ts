@@ -654,7 +654,14 @@ class InMemoryDrawingRepository implements DrawingRepository {
       .flatMap(([drawingId, deletedAt]) => {
         const drawing = this.drawings.get(drawingId);
         return drawing && drawing.ownerUserId === userId
-          ? [{ ...drawing, role: "owner" as const, deletedAt }]
+          ? [
+              {
+                ...drawing,
+                role: "owner" as const,
+                tags: this.tagsFor(drawingId, userId),
+                deletedAt,
+              },
+            ]
           : [];
       })
       .sort((a, b) => b.deletedAt.getTime() - a.deletedAt.getTime());

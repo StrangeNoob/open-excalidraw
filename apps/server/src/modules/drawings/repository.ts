@@ -476,25 +476,38 @@ export class PostgresDrawingRepository implements DrawingRepository {
     for (const key of prepared.storageKeys) {
       await this.blobs.remove(key);
     }
-    if (!(await finalizeDrawingPurge(this.pool, input.drawingId, guard))) {
-      return "not-found";
-    }
-    if (input.auditRequestId) {
-      // The drawing row is already gone (and ON DELETE SET NULL unlinks its
-      // earlier audit rows), so the event carries the id in metadata instead
-      // of the FK column.
-      await this.pool.query(
-        `INSERT INTO audit_events
-           (actor_user_id, drawing_id, event_type, request_id, metadata)
-         VALUES ($1, NULL, 'drawing.purged', $2, $3::jsonb)`,
-        [
-          input.ownerUserId,
-          input.auditRequestId,
-          JSON.stringify({ drawingId: input.drawingId }),
-        ],
+    // Row delete and audit event commit together: a purge must never land
+    // without its audit record.
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const finalized = await finalizeDrawingPurge(
+        client,
+        input.drawingId,
+        guard,
       );
+      if (finalized && input.auditRequestId) {
+        // The DELETE above unlinks earlier audit rows (ON DELETE SET NULL),
+        // so the event carries the id in metadata instead of the FK column.
+        await client.query(
+          `INSERT INTO audit_events
+             (actor_user_id, drawing_id, event_type, request_id, metadata)
+           VALUES ($1, NULL, 'drawing.purged', $2, $3::jsonb)`,
+          [
+            input.ownerUserId,
+            input.auditRequestId,
+            JSON.stringify({ drawingId: input.drawingId }),
+          ],
+        );
+      }
+      await client.query("COMMIT");
+      return finalized ? "purged" : "not-found";
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
     }
-    return "purged";
   }
 
   public async replaceTags(input: {
