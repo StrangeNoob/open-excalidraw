@@ -75,13 +75,16 @@ export const useLibrarySync = (
         })
         .catch((error: unknown) => {
           // A 4xx is a permanent client error (e.g. over the item limit) that
-          // would retry forever, so warn and drop it. Anything else (offline,
-          // 5xx) is transient: re-queue unless a newer snapshot already won,
-          // then retry with backoff.
+          // would retry forever, so warn and drop it — except 408 (timeout) and
+          // 429 (rate limit), which are transient and fall through. Anything
+          // else (offline, 5xx) is transient too: re-queue unless a newer
+          // snapshot already won, then retry with backoff.
           if (
             error instanceof LibraryRequestError &&
             error.status >= 400 &&
-            error.status < 500
+            error.status < 500 &&
+            error.status !== 408 &&
+            error.status !== 429
           ) {
             console.warn("Could not save your library.", error);
             return;
@@ -126,6 +129,15 @@ export const useLibrarySync = (
       .load()
       .then((library) => {
         if (!active) {
+          return;
+        }
+        // A save from a previous effect generation is still outstanding (refs
+        // survive re-runs; cleanup flushes a pending snapshot fire-and-forget,
+        // e.g. switching drawings within the debounce window), so local state
+        // is ahead of this GET and applying it would resurrect stale items.
+        // Open saving and let the in-flight save's .then set lastSyncedRef.
+        if (savingRef.current || pendingRef.current !== null) {
+          loadedRef.current = true;
           return;
         }
         lastSyncedRef.current = JSON.stringify(library.items);

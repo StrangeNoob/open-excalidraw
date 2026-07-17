@@ -188,6 +188,42 @@ describe("useLibrarySync", () => {
     warn.mockRestore();
   });
 
+  it("retries a transient 429 failure after a backoff delay", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const client = {
+      load: vi.fn(() => Promise.resolve(response())),
+      save: vi
+        .fn()
+        .mockRejectedValueOnce(new LibraryRequestError(429, null))
+        .mockResolvedValueOnce(response([item("a")])),
+    };
+    const { api } = createApi();
+
+    const { result } = renderHook(() => useLibrarySync(api, { client }));
+    await settle();
+
+    act(() => {
+      void result.current([item("a")]);
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(2_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(client.save).toHaveBeenCalledTimes(1);
+
+    // No further onLibraryChange: the backoff timer resends the same snapshot.
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(client.save).toHaveBeenCalledTimes(2);
+    expect(client.save).toHaveBeenLastCalledWith([item("a")]);
+
+    warn.mockRestore();
+  });
+
   it("does not retry a permanent 4xx failure", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const client = {
@@ -518,5 +554,58 @@ describe("useLibrarySync", () => {
 
     expect(save).toHaveBeenCalledTimes(2);
     expect(save).toHaveBeenLastCalledWith([item("a")]);
+  });
+
+  it("does not apply a stale load over an outstanding write when the effect re-runs", async () => {
+    let resolveSave!: () => void;
+    const save = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<ReturnType<typeof response>>((resolve) => {
+            resolveSave = () => resolve(response());
+          }),
+      )
+      .mockImplementation(() => Promise.resolve(response()));
+    const client = {
+      load: vi
+        .fn()
+        .mockResolvedValueOnce(response([item("a")]))
+        .mockResolvedValue(response([item("stale")])),
+      save,
+    };
+    const { api: firstApi } = createApi();
+    const { api: secondApi, updateLibrary: secondUpdate } = createApi();
+
+    const { result, rerender } = renderHook(
+      ({ api }) => useLibrarySync(api, { client }),
+      { initialProps: { api: firstApi } },
+    );
+    await settle();
+
+    // Edit away from the synced snapshot; the change is still in the debounce.
+    act(() => {
+      void result.current([item("a"), item("b")]);
+    });
+
+    // Re-run the effect with a new API: cleanup flushes the pending [a, b],
+    // starting a save that stays in flight, then generation 2 loads OLD items.
+    await act(async () => {
+      rerender({ api: secondApi });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(save).toHaveBeenCalledWith([item("a"), item("b")]);
+    // The stale GET must not overwrite the newer local state mid-flight.
+    expect(secondUpdate).not.toHaveBeenCalled();
+
+    // Once the in-flight save settles, everything is consistent.
+    await act(async () => {
+      resolveSave();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(save).toHaveBeenCalledTimes(1);
   });
 });
