@@ -1,6 +1,7 @@
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { act, renderHook } from "@testing-library/react";
 
+import { LibraryRequestError } from "./library-client";
 import { useLibrarySync } from "./use-library-sync";
 
 const item = (id: string) => ({
@@ -147,7 +148,7 @@ describe("useLibrarySync", () => {
     expect(client.save).toHaveBeenCalledWith([item("a"), item("b")]);
   });
 
-  it("retries on the next change after a failed save", async () => {
+  it("retries a transient failure automatically after a backoff delay", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const client = {
       load: vi.fn(() => Promise.resolve(response())),
@@ -167,20 +168,187 @@ describe("useLibrarySync", () => {
     await act(async () => {
       vi.advanceTimersByTime(2_000);
       await Promise.resolve();
+      await Promise.resolve();
     });
     expect(client.save).toHaveBeenCalledTimes(1);
 
-    // The failed save left the snapshot unsynced, so the same content saves again.
+    // No further onLibraryChange: the backoff timer resends the same snapshot.
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(client.save).toHaveBeenCalledTimes(2);
+    expect(client.save).toHaveBeenLastCalledWith([item("a")]);
+
+    warn.mockRestore();
+  });
+
+  it("does not retry a permanent 4xx failure", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const client = {
+      load: vi.fn(() => Promise.resolve(response())),
+      save: vi.fn(() => Promise.reject(new LibraryRequestError(400, null))),
+    };
+    const { api } = createApi();
+
+    const { result } = renderHook(() => useLibrarySync(api, { client }));
+    await settle();
+
     act(() => {
       void result.current([item("a")]);
     });
     await act(async () => {
       vi.advanceTimersByTime(2_000);
       await Promise.resolve();
+      await Promise.resolve();
     });
-    expect(client.save).toHaveBeenCalledTimes(2);
+    expect(client.save).toHaveBeenCalledTimes(1);
+
+    // Well past any backoff window: a permanent error is never retried.
+    await act(async () => {
+      vi.advanceTimersByTime(60_000);
+      await Promise.resolve();
+    });
+    expect(client.save).toHaveBeenCalledTimes(1);
 
     warn.mockRestore();
+  });
+
+  it("lets a newer change supersede a queued retry", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const client = {
+      load: vi.fn(() => Promise.resolve(response())),
+      save: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("network down"))
+        .mockResolvedValue(response()),
+    };
+    const { api } = createApi();
+
+    const { result } = renderHook(() => useLibrarySync(api, { client }));
+    await settle();
+
+    act(() => {
+      void result.current([item("a")]);
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(2_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(client.save).toHaveBeenCalledTimes(1);
+    expect(client.save).toHaveBeenLastCalledWith([item("a")]);
+
+    // A newer change replaces the [a] retry that was queued after the failure.
+    act(() => {
+      void result.current([item("a"), item("b")]);
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(2_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(client.save).toHaveBeenCalledTimes(2);
+    expect(client.save).toHaveBeenLastCalledWith([item("a"), item("b")]);
+
+    warn.mockRestore();
+  });
+
+  it("flushes a pending debounced change on unmount", async () => {
+    const client = {
+      load: vi.fn(() => Promise.resolve(response())),
+      save: vi.fn(() => Promise.resolve(response())),
+    };
+    const { api } = createApi();
+
+    const { result, unmount } = renderHook(() =>
+      useLibrarySync(api, { client }),
+    );
+    await settle();
+
+    // Still inside the debounce window when the editor session tears down.
+    act(() => {
+      void result.current([item("a")]);
+    });
+    expect(client.save).not.toHaveBeenCalled();
+
+    await act(async () => {
+      unmount();
+      await Promise.resolve();
+    });
+    expect(client.save).toHaveBeenCalledTimes(1);
+    expect(client.save).toHaveBeenCalledWith([item("a")]);
+  });
+
+  it("does not open a second PUT when the effect re-runs mid-save", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let resolveFirst!: () => void;
+    const track = () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+    };
+    const save = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<ReturnType<typeof response>>((resolve) => {
+            track();
+            resolveFirst = () => {
+              inFlight -= 1;
+              resolve(response());
+            };
+          }),
+      )
+      .mockImplementation(() => {
+        track();
+        return Promise.resolve(response());
+      });
+    const client = { load: vi.fn(() => Promise.resolve(response())), save };
+    const { api: firstApi } = createApi();
+    const { api: secondApi } = createApi();
+
+    const { result, rerender } = renderHook(
+      ({ api }) => useLibrarySync(api, { client }),
+      { initialProps: { api: firstApi } },
+    );
+    await settle();
+
+    // First save is left in flight.
+    act(() => {
+      void result.current([item("a")]);
+    });
+    act(() => {
+      vi.advanceTimersByTime(2_000);
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+
+    // Re-run the effect with a new API while that save is still in flight.
+    await act(async () => {
+      rerender({ api: secondApi });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // A change after the remount must still queue behind the in-flight PUT.
+    act(() => {
+      void result.current([item("a"), item("b")]);
+    });
+    act(() => {
+      vi.advanceTimersByTime(2_000);
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(maxInFlight).toBe(1);
+
+    // Releasing the first save lets the queued snapshot go, one at a time.
+    await act(async () => {
+      resolveFirst();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(save).toHaveBeenLastCalledWith([item("a"), item("b")]);
+    expect(maxInFlight).toBe(1);
   });
 
   it("serializes saves so a slow request is not overtaken", async () => {

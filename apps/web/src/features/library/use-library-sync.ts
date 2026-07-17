@@ -4,7 +4,7 @@ import type {
 } from "@excalidraw/excalidraw/types";
 import { useCallback, useEffect, useRef } from "react";
 
-import type { LibraryClient } from "./library-client";
+import { LibraryRequestError, type LibraryClient } from "./library-client";
 
 type LibrarySource = Pick<LibraryClient, "load" | "save">;
 export type LibraryChangeHandler = NonNullable<
@@ -13,6 +13,8 @@ export type LibraryChangeHandler = NonNullable<
 type LibraryItems = Parameters<LibraryChangeHandler>[0];
 
 const DEBOUNCE_MS = 2_000;
+const RETRY_BASE_MS = 1_000;
+const RETRY_MAX_MS = 30_000;
 
 export interface UseLibrarySyncOptions {
   client: LibrarySource;
@@ -35,8 +37,26 @@ export const useLibrarySync = (
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savingRef = useRef(false);
   const pendingRef = useRef<LibraryItems | null>(null);
+  const retryRef = useRef(0);
 
   const flush = useCallback(() => {
+    // Re-arms the shared timer to resend a failed snapshot after an
+    // exponential backoff, so a transient blip persists without a fresh edit.
+    function scheduleRetry() {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+      const delay = Math.min(
+        RETRY_BASE_MS * 2 ** retryRef.current,
+        RETRY_MAX_MS,
+      );
+      retryRef.current += 1;
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null;
+        drain();
+      }, delay);
+    }
+
     // Drains the latest pending snapshot, then re-drains once the request
     // settles so a save queued while this one was in flight is not stranded.
     function drain() {
@@ -51,13 +71,32 @@ export const useLibrarySync = (
         .save(items)
         .then(() => {
           lastSyncedRef.current = serialized;
+          retryRef.current = 0;
         })
         .catch((error: unknown) => {
-          console.warn("Could not save your library.", error);
+          // A 4xx is a permanent client error (e.g. over the item limit) that
+          // would retry forever, so warn and drop it. Anything else (offline,
+          // 5xx) is transient: re-queue unless a newer snapshot already won,
+          // then retry with backoff.
+          if (
+            error instanceof LibraryRequestError &&
+            error.status >= 400 &&
+            error.status < 500
+          ) {
+            console.warn("Could not save your library.", error);
+            return;
+          }
+          if (pendingRef.current === null) {
+            pendingRef.current = items;
+          }
+          scheduleRetry();
         })
         .finally(() => {
           savingRef.current = false;
-          drain();
+          // A retry (or a newer change's debounce) already owns the next drain.
+          if (timerRef.current === null) {
+            drain();
+          }
         });
     }
     drain();
@@ -69,8 +108,6 @@ export const useLibrarySync = (
     }
     let active = true;
     loadedRef.current = false;
-    savingRef.current = false;
-    pendingRef.current = null;
     void client
       .load()
       .then((library) => {
@@ -97,8 +134,13 @@ export const useLibrarySync = (
         clearTimeout(timerRef.current);
         timerRef.current = null;
       }
+      // Send a snapshot still waiting out its debounce before this editor
+      // session tears down, so an edit is not lost when switching drawings.
+      if (pendingRef.current !== null) {
+        flush();
+      }
     };
-  }, [api, client]);
+  }, [api, client, flush]);
 
   return useCallback<LibraryChangeHandler>(
     (items) => {
