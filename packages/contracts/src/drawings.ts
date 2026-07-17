@@ -54,6 +54,16 @@ export const drawingListResponseSchema = z
   })
   .strict();
 
+export const trashedDrawingSchema = drawingSummarySchema.extend({
+  deletedAt: isoDateTimeSchema,
+});
+
+export const trashListResponseSchema = z
+  .object({
+    drawings: z.array(trashedDrawingSchema),
+  })
+  .strict();
+
 export const createDrawingRequestSchema = z
   .object({
     title: drawingTitleSchema,
@@ -83,6 +93,8 @@ export const setDrawingTagsRequestSchema = z
 
 export type DrawingSummary = z.infer<typeof drawingSummarySchema>;
 export type DrawingListResponse = z.infer<typeof drawingListResponseSchema>;
+export type TrashedDrawing = z.infer<typeof trashedDrawingSchema>;
+export type TrashListResponse = z.infer<typeof trashListResponseSchema>;
 export type CreateDrawingRequest = z.infer<typeof createDrawingRequestSchema>;
 export type DuplicateDrawingRequest = z.infer<
   typeof duplicateDrawingRequestSchema

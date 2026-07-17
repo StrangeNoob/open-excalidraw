@@ -212,6 +212,20 @@ export const openApiDocument = {
         },
       },
     },
+    "/api/v1/drawings/trash": {
+      get: {
+        tags: ["Drawings"],
+        summary: "List the caller's trashed drawings",
+        description:
+          "Drawings the caller owns that were deleted but not yet purged, " +
+          "newest deletion first. Trashed drawings are permanently deleted " +
+          "automatically after 7 days.",
+        responses: {
+          "200": json("The trashed drawings.", ref("TrashListResponse")),
+          "401": unauthorized,
+        },
+      },
+    },
     "/api/v1/drawings/{drawingId}": {
       parameters: [drawingIdParameter],
       get: {
@@ -288,6 +302,45 @@ export const openApiDocument = {
           "400": invalidRequest,
           "401": unauthorized,
           "404": notFound,
+        },
+      },
+    },
+    "/api/v1/drawings/{drawingId}/restore": {
+      parameters: [drawingIdParameter],
+      post: {
+        tags: ["Drawings"],
+        summary: "Restore a trashed drawing (owner only)",
+        description:
+          "Moves a drawing out of the trash. Members and share links were " +
+          "never removed by the soft delete, so access resumes exactly as " +
+          "before the deletion. A drawing whose permanent deletion has " +
+          "already begun can no longer be restored. Distinct from the " +
+          "revision-restore endpoint, which restores a drawing's content " +
+          "to an earlier revision.",
+        responses: {
+          "200": json("The restored drawing.", ref("DrawingSummary")),
+          "401": unauthorized,
+          "404": problem(
+            "Not trashed, not owned by the caller, or its purge has begun.",
+          ),
+        },
+      },
+    },
+    "/api/v1/drawings/{drawingId}/permanent": {
+      parameters: [drawingIdParameter],
+      delete: {
+        tags: ["Drawings"],
+        summary: "Permanently delete a trashed drawing (owner only)",
+        description:
+          "Only drawings already in the trash can be permanently deleted. " +
+          "Removes the asset blobs and thumbnail from object storage, then " +
+          "the drawing row and everything attached to it. Irreversible.",
+        responses: {
+          "204": { description: "Permanently deleted." },
+          "401": unauthorized,
+          "404": problem(
+            "Not trashed, not owned by the caller, or already purged.",
+          ),
         },
       },
     },
@@ -998,6 +1051,28 @@ export const openApiDocument = {
           owned: { type: "array", items: ref("DrawingSummary") },
           shared: { type: "array", items: ref("DrawingSummary") },
           nextCursor: { type: "string", nullable: true },
+        },
+      },
+      TrashedDrawing: {
+        allOf: [
+          ref("DrawingSummary"),
+          {
+            type: "object",
+            required: ["deletedAt"],
+            properties: {
+              deletedAt: {
+                ...isoDateTime,
+                description: "When the drawing was moved to the trash.",
+              },
+            },
+          },
+        ],
+      },
+      TrashListResponse: {
+        type: "object",
+        required: ["drawings"],
+        properties: {
+          drawings: { type: "array", items: ref("TrashedDrawing") },
         },
       },
       CreateDrawingRequest: {

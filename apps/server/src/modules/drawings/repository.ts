@@ -10,12 +10,16 @@ import {
 
 import { assetStorageKey, thumbnailStorageKey } from "../assets/service.js";
 import { insertAuditEvent } from "../audit.js";
+import { finalizeDrawingPurge, prepareDrawingPurge } from "./purge.js";
 import type {
   AccessibleDrawing,
   DrawingBlobStore,
   DrawingRepository,
+  PurgeDrawingResult,
   RenameDrawingResult,
+  RestoreDrawingResult,
   TransferOwnershipResult,
+  TrashedDrawingRecord,
 } from "./types.js";
 
 const EMPTY_SCENE = {
@@ -392,6 +396,121 @@ export class PostgresDrawingRepository implements DrawingRepository {
           [input.drawingId, input.ownerUserId],
         );
     return result.rowCount === 1 ? "deleted" : "not-found";
+  }
+
+  public async listTrashedForUser(
+    userId: string,
+  ): Promise<TrashedDrawingRecord[]> {
+    const result = await this.pool.query<
+      AccessibleDrawingRow & { deleted_at: Date }
+    >(
+      `
+        SELECT
+          d.id, d.title, d.owner_user_id, u.name AS owner_name,
+          'owner'::text AS role, d.content_revision, d.metadata_revision,
+          d.created_at, d.updated_at, d.thumbnail_updated_at, d.is_template,
+          d.deleted_at, ${tagsSelect("$1")}
+        FROM drawings d
+        JOIN "user" u ON u.id = d.owner_user_id
+        WHERE d.owner_user_id = $1 AND d.deleted_at IS NOT NULL
+          AND d.purge_started_at IS NULL
+        ORDER BY d.deleted_at DESC, d.id
+      `,
+      [userId],
+    );
+    return result.rows.map((row) => ({
+      ...mapAccessible(row),
+      deletedAt: row.deleted_at,
+    }));
+  }
+
+  public async restore(input: {
+    drawingId: string;
+    ownerUserId: string;
+    auditRequestId?: string;
+  }): Promise<RestoreDrawingResult> {
+    const result = input.auditRequestId
+      ? await this.pool.query(
+          `WITH restored AS (
+             UPDATE drawings
+             SET deleted_at = NULL, updated_at = now(),
+                 metadata_revision = metadata_revision + 1
+             WHERE id = $1 AND owner_user_id = $2 AND deleted_at IS NOT NULL
+               AND purge_started_at IS NULL
+             RETURNING id
+           )
+           INSERT INTO audit_events
+             (actor_user_id, drawing_id, event_type, request_id, metadata)
+           SELECT $2, restored.id, 'drawing.restored', $3, '{}'::jsonb
+           FROM restored
+           RETURNING id`,
+          [input.drawingId, input.ownerUserId, input.auditRequestId],
+        )
+      : await this.pool.query(
+          `
+        UPDATE drawings
+        SET
+          deleted_at = NULL,
+          updated_at = now(),
+          metadata_revision = metadata_revision + 1
+        WHERE id = $1 AND owner_user_id = $2 AND deleted_at IS NOT NULL
+          AND purge_started_at IS NULL
+      `,
+          [input.drawingId, input.ownerUserId],
+        );
+    return result.rowCount === 1 ? "restored" : "not-found";
+  }
+
+  public async purge(input: {
+    drawingId: string;
+    ownerUserId: string;
+    auditRequestId?: string;
+  }): Promise<PurgeDrawingResult> {
+    const guard = { ownerUserId: input.ownerUserId };
+    const prepared = await prepareDrawingPurge(
+      this.pool,
+      input.drawingId,
+      guard,
+    );
+    if (!prepared) return "not-found";
+    // Blobs before the row: once the row is gone the keys are unrecoverable.
+    // A blob failure throws and leaves the drawing trashed; a retry or the
+    // maintenance purge completes the job later.
+    for (const key of prepared.storageKeys) {
+      await this.blobs.remove(key);
+    }
+    // Row delete and audit event commit together: a purge must never land
+    // without its audit record.
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const finalized = await finalizeDrawingPurge(
+        client,
+        input.drawingId,
+        guard,
+      );
+      if (finalized && input.auditRequestId) {
+        // The DELETE above unlinks earlier audit rows (ON DELETE SET NULL),
+        // so the event carries the id in metadata instead of the FK column.
+        await client.query(
+          `INSERT INTO audit_events
+             (actor_user_id, drawing_id, event_type, request_id, metadata)
+           VALUES ($1, NULL, 'drawing.purged', $2, $3::jsonb)`,
+          [
+            input.ownerUserId,
+            input.auditRequestId,
+            JSON.stringify({ drawingId: input.drawingId }),
+          ],
+        );
+      }
+      await client.query("COMMIT");
+      return finalized ? "purged" : "not-found";
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   public async replaceTags(input: {

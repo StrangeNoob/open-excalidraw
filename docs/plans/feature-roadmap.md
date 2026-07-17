@@ -9,6 +9,11 @@ is ranked by value against effort for a self-hosted collaboration tool.
 
 ## Recently shipped
 
+- **Trash and soft delete** — deleting moves a drawing to a per-user trash
+  (`GET /api/v1/drawings/trash`); owners can restore
+  (`POST /api/v1/drawings/:drawingId/restore`) or delete forever
+  (`DELETE /api/v1/drawings/:drawingId/permanent`), and the existing
+  maintenance job still purges trashed drawings after 7 days.
 - **Duplicate drawing and templates** — `POST /api/v1/drawings/:drawingId/duplicate`
   copies the scene, assets, and thumbnail for any member; an `is_template`
   flag feeds the dashboard's "New from template" picker.
@@ -22,19 +27,13 @@ is ranked by value against effort for a self-hosted collaboration tool.
 
 ## Next up
 
-### 1. Trash and soft delete
-
-Deleting a drawing today is forever. A `deleted_at` column already exists on
-`drawings`; what is missing is a trash view, a restore action, and a purge
-job. Small diff that prevents the worst kind of support request.
-
-### 2. Persistent shape libraries
+### 1. Persistent shape libraries
 
 The editor supports `.excalidrawlib` libraries but keeps them in
 localStorage, so they do not follow users across devices. Persisting them
 per-account is a natural fit for the existing storage layer.
 
-### 3. Minimal admin page
+### 2. Minimal admin page
 
 Operators currently manage users with `ADMIN_RESET_TOKEN` and SQL. A user
 list with disable/delete plus instance counts (users, drawings, storage)

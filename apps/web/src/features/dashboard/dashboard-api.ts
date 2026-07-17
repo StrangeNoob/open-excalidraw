@@ -1,12 +1,20 @@
 import {
   drawingListResponseSchema,
   drawingSummarySchema,
+  trashListResponseSchema,
   type DrawingListResponse,
   type DrawingSummary,
+  type TrashedDrawing,
+  type TrashListResponse,
 } from "@open-excalidraw/contracts";
 import { z } from "zod";
 
 import { HttpApiClient } from "../../shared/api";
+
+// Shared here so DashboardPage and TrashPage agree on the cache entries
+// without importing each other.
+export const DASHBOARD_QUERY_KEY = ["drawings", "dashboard"] as const;
+export const TRASH_QUERY_KEY = ["drawings", "trash"] as const;
 
 const drawingMutationResponseSchema = z.union([
   drawingSummarySchema,
@@ -22,6 +30,9 @@ export interface DashboardApi {
   deleteDrawing(drawing: DrawingSummary): Promise<void>;
   duplicateDrawing(drawing: DrawingSummary): Promise<DrawingSummary>;
   listDrawings(): Promise<DrawingListResponse>;
+  listTrash(): Promise<TrashListResponse>;
+  purgeDrawing(drawing: TrashedDrawing): Promise<void>;
+  restoreDrawing(drawing: TrashedDrawing): Promise<DrawingSummary>;
   renameDrawing(
     drawing: DrawingSummary,
     title: string,
@@ -134,6 +145,30 @@ export class DashboardApiClient implements DashboardApi {
 
   async deleteDrawing(drawing: DrawingSummary): Promise<void> {
     await this.#api.request<void>(`/v1/drawings/${drawing.id}`, {
+      method: "DELETE",
+    });
+  }
+
+  listTrash(): Promise<TrashListResponse> {
+    return this.#api.request(
+      "/v1/drawings/trash",
+      { method: "GET" },
+      trashListResponseSchema,
+    );
+  }
+
+  async restoreDrawing(drawing: TrashedDrawing): Promise<DrawingSummary> {
+    const response = await this.#api.request(
+      `/v1/drawings/${drawing.id}/restore`,
+      { method: "POST" },
+      drawingMutationResponseSchema,
+    );
+
+    return unwrapDrawing(response);
+  }
+
+  async purgeDrawing(drawing: TrashedDrawing): Promise<void> {
+    await this.#api.request<void>(`/v1/drawings/${drawing.id}/permanent`, {
       method: "DELETE",
     });
   }

@@ -1,13 +1,14 @@
 import type {
   DrawingListResponse,
   DrawingSummary,
+  TrashedDrawing,
 } from "@open-excalidraw/contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 
-import type { DashboardApi } from "./dashboard-api";
+import { TRASH_QUERY_KEY, type DashboardApi } from "./dashboard-api";
 import { DashboardPage } from "./DashboardPage";
 
 const createDrawing = (
@@ -87,6 +88,13 @@ class FakeDashboardApi implements DashboardApi {
     },
   );
 
+  // Trash actions live on TrashPage; the dashboard never calls these.
+  readonly listTrash = vi.fn(() => Promise.resolve({ drawings: [] }));
+  readonly purgeDrawing = vi.fn(() => Promise.resolve());
+  readonly restoreDrawing = vi.fn((drawing: TrashedDrawing) =>
+    Promise.resolve(drawing),
+  );
+
   constructor(data: DrawingListResponse) {
     this.data = data;
   }
@@ -132,6 +140,7 @@ describe("DashboardPage", () => {
     expect(screen.getAllByText("viewer")).toHaveLength(1);
     expect(screen.getAllByText("Grace")).toHaveLength(2);
     expect(screen.getAllByRole("time")).toHaveLength(3);
+    expect(screen.getByRole("link", { name: "Trash" })).toBeInTheDocument();
   });
 
   it("shows a cache-busted thumbnail when one exists and hides it on load failure", async () => {
@@ -228,7 +237,8 @@ describe("DashboardPage", () => {
     });
     const onOpen = vi.fn();
     vi.spyOn(globalThis, "confirm").mockReturnValue(true);
-    renderDashboard(api, onOpen);
+    const { queryClient } = renderDashboard(api, onOpen);
+    queryClient.setQueryData(TRASH_QUERY_KEY, { drawings: [] });
 
     await screen.findByText("Old board");
     await user.type(screen.getByLabelText("New drawing title"), "New board");
@@ -247,6 +257,10 @@ describe("DashboardPage", () => {
       expect(api.deleteDrawing).toHaveBeenCalledWith(existing),
     );
     expect(screen.queryByText("Old board")).not.toBeInTheDocument();
+    // A previously viewed trash list must refetch after a delete.
+    expect(queryClient.getQueryState(TRASH_QUERY_KEY)?.isInvalidated).toBe(
+      true,
+    );
   });
 
   it("duplicates any accessible drawing and opens the copy", async () => {

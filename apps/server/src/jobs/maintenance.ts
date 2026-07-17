@@ -1,7 +1,10 @@
 import type { ObjectStorage } from "@open-excalidraw/storage";
 import type { Pool, PoolClient } from "pg";
 
-import { thumbnailStorageKey } from "../modules/assets/service.js";
+import {
+  finalizeDrawingPurge,
+  prepareDrawingPurge,
+} from "../modules/drawings/purge.js";
 
 export const DEFAULT_REVISION_RETENTION = 20;
 export const DEFAULT_ASSET_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
@@ -268,7 +271,7 @@ export class MaintenanceJobs {
     const cutoff = before(now, this.#deletedDrawingRetentionMs);
     const candidates = await this.pool.query<DrawingCandidate>(
       `SELECT id FROM drawings
-       WHERE deleted_at < $1
+       WHERE deleted_at < $1 OR purge_started_at IS NOT NULL
        ORDER BY deleted_at, id
        LIMIT $2`,
       [cutoff, this.#candidateBatchSize],
@@ -279,7 +282,9 @@ export class MaintenanceJobs {
     for (const candidate of candidates.rows) {
       throwIfAborted(signal);
       try {
-        const prepared = await this.#prepareDrawingPurge(candidate.id, cutoff);
+        const prepared = await prepareDrawingPurge(this.pool, candidate.id, {
+          deletedBefore: cutoff,
+        });
         if (!prepared) continue;
         let objectFailure = false;
         for (const storageKey of prepared.storageKeys) {
@@ -295,7 +300,11 @@ export class MaintenanceJobs {
         }
         if (objectFailure) continue;
         try {
-          if (await this.#finalizeDrawingPurge(candidate.id, cutoff))
+          if (
+            await finalizeDrawingPurge(this.pool, candidate.id, {
+              deletedBefore: cutoff,
+            })
+          )
             deleted += 1;
         } catch (error) {
           failures.push(failure(candidate.id, "drawing-finalize", error));
@@ -364,48 +373,6 @@ export class MaintenanceJobs {
       [assetId, now],
     );
     return (finalized.rowCount ?? 0) === 1;
-  }
-
-  async #prepareDrawingPurge(
-    drawingId: string,
-    cutoff: Date,
-  ): Promise<{ storageKeys: string[] } | null> {
-    return transaction(this.pool, async (client) => {
-      const locked = await client.query<{ id: string }>(
-        `SELECT id FROM drawings
-         WHERE id = $1 AND deleted_at < $2
-         FOR UPDATE`,
-        [drawingId, cutoff],
-      );
-      if (!locked.rows[0]) return null;
-
-      const assets = await client.query<{ storage_key: string }>(
-        `SELECT storage_key FROM drawing_assets
-         WHERE drawing_id = $1
-         ORDER BY id
-         FOR UPDATE`,
-        [drawingId],
-      );
-      return {
-        // The dashboard thumbnail has no drawing_assets row; delete its
-        // fixed key alongside the asset blobs (a missing key is a no-op).
-        storageKeys: [
-          ...assets.rows.map((asset) => asset.storage_key),
-          thumbnailStorageKey(drawingId),
-        ],
-      };
-    });
-  }
-
-  async #finalizeDrawingPurge(
-    drawingId: string,
-    cutoff: Date,
-  ): Promise<boolean> {
-    const removed = await this.pool.query(
-      `DELETE FROM drawings WHERE id = $1 AND deleted_at < $2`,
-      [drawingId, cutoff],
-    );
-    return (removed.rowCount ?? 0) === 1;
   }
 }
 
