@@ -5,6 +5,7 @@ export * from "./common/primitives.js";
 export * from "./common/problem.js";
 export * from "./content.js";
 export * from "./drawings.js";
+export * from "./library.js";
 export * from "./limits.js";
 export * from "./realtime.js";
 export * from "./sharing.js";

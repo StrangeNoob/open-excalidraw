@@ -93,6 +93,10 @@ export const openApiDocument = {
       description: "Scene content with revisioned, conflict-safe saves.",
     },
     { name: "Sharing", description: "Members, roles, and email invitations." },
+    {
+      name: "Library",
+      description: "Per-account persistence of Excalidraw shape libraries.",
+    },
     { name: "Chat", description: "Per-drawing chat history." },
     { name: "Assets", description: "Binary assets referenced by scenes." },
     {
@@ -497,6 +501,35 @@ export const openApiDocument = {
           "422": problem(
             "`MISSING_ASSET`: the revision references purged assets.",
           ),
+        },
+      },
+    },
+    "/api/v1/library": {
+      get: {
+        tags: ["Library"],
+        summary: "Load the signed-in user's shape library",
+        responses: {
+          "200": json(
+            "The stored library items and when they were last saved.",
+            ref("LibraryResponse"),
+          ),
+          "401": unauthorized,
+        },
+      },
+      put: {
+        tags: ["Library"],
+        summary: "Replace the signed-in user's shape library",
+        description:
+          "Last-write-wins: the posted items overwrite the stored library " +
+          "in a single row per user.",
+        requestBody: jsonBody(ref("SaveLibraryRequest")),
+        responses: {
+          "200": json(
+            "The saved library items and their new timestamp.",
+            ref("LibraryResponse"),
+          ),
+          "400": invalidRequest,
+          "401": unauthorized,
         },
       },
     },
@@ -1236,6 +1269,38 @@ export const openApiDocument = {
                 createdAt: isoDateTime,
               },
             },
+          },
+        },
+      },
+      LibraryItem: {
+        type: "object",
+        description:
+          "An Excalidraw library item; extra properties are preserved.",
+        required: ["id"],
+        properties: { id: { type: "string", minLength: 1, maxLength: 256 } },
+      },
+      LibraryResponse: {
+        type: "object",
+        required: ["items", "updatedAt"],
+        additionalProperties: false,
+        properties: {
+          items: {
+            type: "array",
+            maxItems: 500,
+            items: ref("LibraryItem"),
+          },
+          updatedAt: isoDateTime,
+        },
+      },
+      SaveLibraryRequest: {
+        type: "object",
+        required: ["items"],
+        additionalProperties: false,
+        properties: {
+          items: {
+            type: "array",
+            maxItems: 500,
+            items: ref("LibraryItem"),
           },
         },
       },

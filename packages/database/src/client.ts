@@ -10,6 +10,7 @@ import {
   drawingRevisions,
   drawings,
 } from "./schema/drawings.js";
+import { userLibraries } from "./schema/libraries.js";
 import { drawingInvitations, drawingMembers } from "./schema/sharing.js";
 
 export const schema = {
@@ -24,6 +25,7 @@ export const schema = {
   drawings,
   session,
   user,
+  userLibraries,
   verification,
 };
 

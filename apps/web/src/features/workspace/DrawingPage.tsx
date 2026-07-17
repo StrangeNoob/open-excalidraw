@@ -47,6 +47,7 @@ import {
   type ExcalidrawChangeHandler,
   type ExcalidrawHostProps,
 } from "../editor";
+import { LibraryClient, useLibrarySync } from "../library";
 import {
   AutosaveController,
   CloudRecoveryRepository,
@@ -75,6 +76,7 @@ import { captureThumbnail } from "./thumbnail";
 import "./workspace.css";
 
 type ContentSource = Pick<ContentClient, "load" | "save">;
+type LibrarySource = Pick<LibraryClient, "load" | "save">;
 type AssetSource = Pick<
   AssetClient,
   "deleteThumbnail" | "download" | "upload" | "uploadThumbnail"
@@ -98,6 +100,7 @@ export interface DrawingWorkspaceDependencies {
   createRealtimeTransport?: () => SocketIoTransport;
   host?: ComponentType<ExcalidrawHostProps>;
   hydrate?: typeof hydrateAssets;
+  library?: LibrarySource;
   metadata?: DrawingMetadataSource;
   recovery?: RecoverySource;
   revisions?: RevisionSource;
@@ -158,6 +161,7 @@ export const DrawingPage = ({
     assets: new AssetClient(),
     chat: new ChatClient(),
     content: new ContentClient(),
+    library: new LibraryClient(),
     metadata: new DrawingMetadataClient(),
     recovery: new CloudRecoveryRepository(),
     revisions: new RevisionClient(),
@@ -180,6 +184,7 @@ export const DrawingPage = ({
         (() => new SocketIoTransport()),
       hydrate: dependencies?.hydrate ?? hydrateAssets,
       Host: dependencies?.host ?? ExcalidrawHost,
+      library: dependencies?.library ?? ownedDefaults.library,
       metadata: dependencies?.metadata ?? ownedDefaults.metadata,
       recovery: dependencies?.recovery ?? ownedDefaults.recovery,
       revisions: dependencies?.revisions ?? ownedDefaults.revisions,
@@ -609,6 +614,12 @@ export const DrawingPage = ({
     });
   }, []);
 
+  // The shape library is per-account, not per-drawing: it syncs whenever the
+  // signed-in user has the editor open, regardless of their role here.
+  const onLibraryChange = useLibrarySync(editorApi, {
+    client: resolved.library,
+  });
+
   const reloadServer = useCallback(
     (server: LoadedContent) => {
       controller?.acceptServer(toAcknowledgedContent(server));
@@ -822,6 +833,7 @@ export const DrawingPage = ({
         onChange={
           capabilities.editScene && !restoringRevision ? onChange : undefined
         }
+        onLibraryChange={onLibraryChange}
         onPointerUpdate={onPointerUpdate}
         readOnly={!capabilities.editScene || restoringRevision}
         renderTopRightUI={() => (
