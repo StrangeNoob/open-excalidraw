@@ -31,9 +31,9 @@ export const drawingMembers = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
     role: varchar("role", { length: 16 }).notNull(),
-    createdByUserId: uuid("created_by_user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "restrict" }),
+    createdByUserId: uuid("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -61,9 +61,9 @@ export const drawingInvitations = pgTable(
     inviteeEmail: citext("invitee_email").notNull(),
     role: varchar("role", { length: 16 }).notNull(),
     tokenHash: bytea("token_hash").notNull(),
-    invitedByUserId: uuid("invited_by_user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "restrict" }),
+    invitedByUserId: uuid("invited_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     acceptedAt: timestamp("accepted_at", { withTimezone: true }),
     acceptedByUserId: uuid("accepted_by_user_id").references(() => user.id, {
@@ -113,9 +113,9 @@ export const drawingShareLinks = pgTable(
       .notNull()
       .references(() => drawings.id, { onDelete: "cascade" }),
     token: text("token").notNull(),
-    createdByUserId: uuid("created_by_user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "restrict" }),
+    createdByUserId: uuid("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

@@ -1,6 +1,7 @@
 import type {
   DrawingListResponse,
   DrawingSummary,
+  SessionResponse,
   TrashedDrawing,
 } from "@open-excalidraw/contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -8,6 +9,14 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 
+import type {
+  AuthClient,
+  EmailSignInInput,
+  EmailSignUpInput,
+  LinkedAccount,
+  OAuthProvider,
+} from "../auth";
+import { AuthProvider } from "../auth";
 import { TRASH_QUERY_KEY, type DashboardApi } from "./dashboard-api";
 import { DashboardPage } from "./DashboardPage";
 
@@ -100,7 +109,55 @@ class FakeDashboardApi implements DashboardApi {
   }
 }
 
-const renderDashboard = (api: DashboardApi, onOpenDrawing = vi.fn()) => {
+const buildSession = (isAdmin: boolean): SessionResponse => ({
+  capabilities: {
+    emailPassword: true,
+    github: false,
+    google: false,
+    oidc: false,
+    oidcProviderName: "SSO",
+    smtp: false,
+  },
+  user: {
+    createdAt: "2026-07-10T10:00:00.000Z",
+    email: "ada@example.com",
+    emailVerified: true,
+    id: "be21c1cd-a5d5-49f9-b9dd-a30e3cb80e09",
+    image: null,
+    isAdmin,
+    name: "Ada",
+  },
+});
+
+class FakeAuthClient implements AuthClient {
+  readonly changePassword =
+    vi.fn<(currentPassword: string, newPassword: string) => Promise<void>>();
+  readonly getSession = vi.fn<() => Promise<SessionResponse>>();
+  readonly linkSocial =
+    vi.fn<(provider: OAuthProvider, returnPath: string) => Promise<void>>();
+  readonly listAccounts = vi.fn<() => Promise<LinkedAccount[]>>();
+  readonly requestPasswordReset =
+    vi.fn<(email: string, redirectTo: string) => Promise<void>>();
+  readonly resendVerification =
+    vi.fn<(email: string, callbackURL: string) => Promise<void>>();
+  readonly resetPassword =
+    vi.fn<(newPassword: string, token: string) => Promise<void>>();
+  readonly setPassword = vi.fn<(newPassword: string) => Promise<void>>();
+  readonly signIn = vi.fn<(input: EmailSignInInput) => Promise<void>>();
+  readonly signOut = vi.fn<() => Promise<void>>();
+  readonly signUp = vi.fn<(input: EmailSignUpInput) => Promise<void>>();
+  readonly startOAuth =
+    vi.fn<(provider: OAuthProvider, returnPath: string) => Promise<void>>();
+  readonly unlinkAccount = vi.fn<(providerId: string) => Promise<void>>();
+}
+
+const renderDashboard = (
+  api: DashboardApi,
+  onOpenDrawing = vi.fn(),
+  isAdmin = false,
+) => {
+  const authClient = new FakeAuthClient();
+  authClient.getSession.mockResolvedValue(buildSession(isAdmin));
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -108,9 +165,11 @@ const renderDashboard = (api: DashboardApi, onOpenDrawing = vi.fn()) => {
   return {
     ...render(
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter>
-          <DashboardPage api={api} onOpenDrawing={onOpenDrawing} />
-        </MemoryRouter>
+        <AuthProvider client={authClient}>
+          <MemoryRouter>
+            <DashboardPage api={api} onOpenDrawing={onOpenDrawing} />
+          </MemoryRouter>
+        </AuthProvider>
       </QueryClientProvider>,
     ),
     onOpenDrawing,
@@ -495,5 +554,25 @@ describe("DashboardPage", () => {
       }),
     ).toBeInTheDocument();
     expect(screen.getByText("Network unavailable")).toBeInTheDocument();
+  });
+
+  it("shows the Admin link only when the current user is an admin", async () => {
+    const api = new FakeDashboardApi({
+      nextCursor: null,
+      owned: [],
+      shared: [],
+    });
+    const view = renderDashboard(api, vi.fn(), false);
+
+    await screen.findByText("Create your first drawing to get started.");
+    expect(
+      screen.queryByRole("link", { name: "Admin" }),
+    ).not.toBeInTheDocument();
+    view.unmount();
+
+    renderDashboard(api, vi.fn(), true);
+    expect(
+      await screen.findByRole("link", { name: "Admin" }),
+    ).toBeInTheDocument();
   });
 });

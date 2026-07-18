@@ -14,6 +14,12 @@ import { Server as SocketIoServer } from "socket.io";
 import { createApp } from "./app.js";
 import { createDocsRouter } from "./http/docs.js";
 import {
+  AdminService,
+  createAdminRouter,
+  parseAdminEmails,
+  PostgresAdminRepository,
+} from "./modules/admin/index.js";
+import {
   createStorageFromEnvironment,
   requiredEnvironment,
 } from "./storage-config.js";
@@ -158,10 +164,15 @@ const shareLinkResolver = {
 const storage: ObjectStorage = createStorageFromEnvironment(
   process.env.STORAGE_DRIVER?.trim() || "local",
 );
-const drawingService = new DrawingService(
-  new PostgresDrawingRepository(
-    database.pool,
-    storageDrawingBlobStore(storage),
+const drawingRepository = new PostgresDrawingRepository(
+  database.pool,
+  storageDrawingBlobStore(storage),
+);
+const drawingService = new DrawingService(drawingRepository);
+const adminEmails = parseAdminEmails(process.env.ADMIN_EMAILS);
+const adminService = new AdminService(
+  new PostgresAdminRepository(database.pool, (input) =>
+    drawingRepository.purge(input),
   ),
 );
 const maintenanceJobs = new MaintenanceJobs(database.pool, storage);
@@ -326,9 +337,11 @@ const app = createApp({
         ...(github ? { github } : {}),
         ...(oidc ? { oidc } : {}),
       }),
+      adminEmails,
       manualResetLinks,
       ...(adminResetToken ? { adminResetToken } : {}),
     }),
+    createAdminRouter({ service: adminService, identity, adminEmails }),
     createDrawingRouter({ service: drawingService, identity }),
     createContentRouter({ service: contentService, identity }),
     createLibraryRouter({ service: libraryService, identity }),

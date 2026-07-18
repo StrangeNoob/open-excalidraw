@@ -107,6 +107,7 @@ describe("initial PostgreSQL migration", () => {
       "0008_drawing_templates.sql",
       "0009_drawing_purge_state.sql",
       "0010_user_libraries.sql",
+      "0011_admin_user_management.sql",
     ]);
     expect(second.alreadyApplied).toEqual(first.applied);
     expect(record.rows).toEqual(first.applied);
@@ -142,12 +143,14 @@ describe("database constraints", () => {
       local_column: string;
       foreign_table: string;
       foreign_column: string;
+      delete_rule: string;
     }>(`
       SELECT
         tc.table_name AS local_table,
         kcu.column_name AS local_column,
         ccu.table_name AS foreign_table,
-        ccu.column_name AS foreign_column
+        ccu.column_name AS foreign_column,
+        rc.delete_rule AS delete_rule
       FROM information_schema.table_constraints tc
       JOIN information_schema.key_column_usage kcu
         ON tc.constraint_catalog = kcu.constraint_catalog
@@ -157,39 +160,45 @@ describe("database constraints", () => {
         ON tc.constraint_catalog = ccu.constraint_catalog
         AND tc.constraint_schema = ccu.constraint_schema
         AND tc.constraint_name = ccu.constraint_name
+      JOIN information_schema.referential_constraints rc
+        ON tc.constraint_catalog = rc.constraint_catalog
+        AND tc.constraint_schema = rc.constraint_schema
+        AND tc.constraint_name = rc.constraint_name
       WHERE tc.constraint_type = 'FOREIGN KEY'
         AND tc.table_schema = 'public'
       ORDER BY local_table, local_column
     `);
     const installedForeignKeys = foreignKeys.rows.map(
       (row) =>
-        `${row.local_table}.${row.local_column}->${row.foreign_table}.${row.foreign_column}`,
+        `${row.local_table}.${row.local_column}->${row.foreign_table}.${row.foreign_column} (${row.delete_rule})`,
     );
 
+    // The five attribution FKs SET NULL so deleting a user is never blocked by
+    // content they authored in other users' drawings (migration 0011).
     expect(installedForeignKeys).toEqual([
-      "account.user_id->user.id",
-      "audit_events.actor_user_id->user.id",
-      "audit_events.drawing_id->drawings.id",
-      "chat_messages.drawing_id->drawings.id",
-      "chat_messages.user_id->user.id",
-      "drawing_assets.created_by_user_id->user.id",
-      "drawing_assets.drawing_id->drawings.id",
-      "drawing_invitations.accepted_by_user_id->user.id",
-      "drawing_invitations.drawing_id->drawings.id",
-      "drawing_invitations.invited_by_user_id->user.id",
-      "drawing_members.created_by_user_id->user.id",
-      "drawing_members.drawing_id->drawings.id",
-      "drawing_members.user_id->user.id",
-      "drawing_mutations.drawing_id->drawings.id",
-      "drawing_revisions.author_user_id->user.id",
-      "drawing_revisions.drawing_id->drawings.id",
-      "drawing_share_links.created_by_user_id->user.id",
-      "drawing_share_links.drawing_id->drawings.id",
-      "drawing_user_tags.drawing_id->drawings.id",
-      "drawing_user_tags.user_id->user.id",
-      "drawings.owner_user_id->user.id",
-      "session.user_id->user.id",
-      "user_libraries.user_id->user.id",
+      "account.user_id->user.id (CASCADE)",
+      "audit_events.actor_user_id->user.id (SET NULL)",
+      "audit_events.drawing_id->drawings.id (SET NULL)",
+      "chat_messages.drawing_id->drawings.id (CASCADE)",
+      "chat_messages.user_id->user.id (CASCADE)",
+      "drawing_assets.created_by_user_id->user.id (SET NULL)",
+      "drawing_assets.drawing_id->drawings.id (CASCADE)",
+      "drawing_invitations.accepted_by_user_id->user.id (SET NULL)",
+      "drawing_invitations.drawing_id->drawings.id (CASCADE)",
+      "drawing_invitations.invited_by_user_id->user.id (SET NULL)",
+      "drawing_members.created_by_user_id->user.id (SET NULL)",
+      "drawing_members.drawing_id->drawings.id (CASCADE)",
+      "drawing_members.user_id->user.id (CASCADE)",
+      "drawing_mutations.drawing_id->drawings.id (CASCADE)",
+      "drawing_revisions.author_user_id->user.id (SET NULL)",
+      "drawing_revisions.drawing_id->drawings.id (CASCADE)",
+      "drawing_share_links.created_by_user_id->user.id (SET NULL)",
+      "drawing_share_links.drawing_id->drawings.id (CASCADE)",
+      "drawing_user_tags.drawing_id->drawings.id (CASCADE)",
+      "drawing_user_tags.user_id->user.id (CASCADE)",
+      "drawings.owner_user_id->user.id (RESTRICT)",
+      "session.user_id->user.id (CASCADE)",
+      "user_libraries.user_id->user.id (CASCADE)",
     ]);
 
     const indexes = await pool.query<{ indexname: string }>(`

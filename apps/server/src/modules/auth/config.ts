@@ -14,6 +14,7 @@ import {
   type DBAdapterInstance,
 } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { APIError } from "better-auth/api";
 import { genericOAuth } from "better-auth/plugins";
 
 import {
@@ -114,6 +115,44 @@ export function buildBetterAuthOptions(
     },
     verification: {
       storeIdentifier: "hashed",
+    },
+    user: {
+      additionalFields: {
+        // Read-only projection of the disabled_at column so the session hook
+        // below can see it through the adapter; admins set it via SQL. No
+        // fieldName override: the drizzle adapter resolves the column from the
+        // schema by this camelCase name (like the built-in emailVerified).
+        disabledAt: {
+          type: "date",
+          required: false,
+          input: false,
+        },
+      },
+    },
+    databaseHooks: {
+      session: {
+        create: {
+          // Block session creation for disabled users: combined with deleting
+          // their sessions on disable, this is a full lockout at zero
+          // per-request cost. ponytail: reads through the auth context adapter
+          // (not the injected drizzle handle) so the same path works for the
+          // in-memory test adapter and production drizzle alike.
+          before: async (session, context) => {
+            const adapter = context?.context.adapter;
+            if (!adapter) return;
+            const account = await adapter.findOne<{ disabledAt: Date | null }>({
+              model: "user",
+              where: [{ field: "id", value: session.userId }],
+            });
+            if (account?.disabledAt) {
+              throw new APIError("FORBIDDEN", {
+                code: "ACCOUNT_DISABLED",
+                message: "This account has been disabled",
+              });
+            }
+          },
+        },
+      },
     },
     session: {
       expiresIn: sessionExpiresIn,

@@ -1,0 +1,52 @@
+.admin-stats {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  margin: 2rem 0;
+}
+
+.admin-stat {
+  background: var(--card);
+  border: 1.5px solid var(--ink);
+  border-radius: var(--wobble);
+  box-shadow: 3px 3px 0 var(--shadow);
+  padding: 1rem 1.25rem;
+}
+
+.admin-stat:nth-child(even) {
+  border-radius: var(--wobble-alt);
+}
+
+.admin-stat dt {
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+.admin-stat dd {
+  font-size: 2rem;
+  font-weight: 800;
+  margin: 0.25rem 0 0;
+}
+
+.admin-search {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 1.5rem;
+  max-width: 24rem;
+}
+
+.admin-badge-disabled {
+  background: var(--danger-wash);
+  border-color: var(--danger-ink);
+  color: var(--danger-ink);
+  rotate: 1.5deg;
+}
+
+.admin-badge-unverified {
+  background: var(--highlight-wash);
+  border-color: var(--highlight-ink);
+  color: var(--highlight-ink);
+  margin-left: 0.5rem;
+  rotate: 1.5deg;
+}

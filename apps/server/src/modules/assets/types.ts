@@ -19,7 +19,9 @@ export interface AssetRecord {
   byteSize: number;
   sha256: string;
   fileVersion: number | null;
-  createdByUserId: string;
+  // Nullable since migration 0011: the creator's account may have been
+  // deleted, which nulls this attribution (ON DELETE SET NULL).
+  createdByUserId: string | null;
   createdAt: Date;
 }
 

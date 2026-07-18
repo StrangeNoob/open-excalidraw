@@ -5,7 +5,8 @@ import { HttpApiClient } from "../../shared/api";
 
 const revisionEntrySchema = z
   .object({
-    authorUserId: z.string().uuid(),
+    // Null once the author's account is deleted (migration 0011 SET NULL).
+    authorUserId: z.string().uuid().nullable(),
     createdAt: z.string().datetime({ offset: true }),
     reason: z.enum(["checkpoint", "restore"]),
     revision: revisionSchema,

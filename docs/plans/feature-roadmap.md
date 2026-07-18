@@ -9,6 +9,11 @@ is ranked by value against effort for a self-hosted collaboration tool.
 
 ## Recently shipped
 
+- **Minimal admin page** — accounts in `ADMIN_EMAILS` get an instance overview
+  (users, active drawings, storage bytes) and a searchable user list with
+  disable, enable, and delete (`/api/v1/admin/*`). Disabling revokes sessions
+  and blocks new sign-ins; deleting purges the user's owned drawings and
+  account while nulling their attribution on shared content.
 - **Trash and soft delete** — deleting moves a drawing to a per-user trash
   (`GET /api/v1/drawings/trash`); owners can restore
   (`POST /api/v1/drawings/:drawingId/restore`) or delete forever
@@ -32,11 +37,8 @@ is ranked by value against effort for a self-hosted collaboration tool.
 
 ## Next up
 
-### 1. Minimal admin page
-
-Operators currently manage users with `ADMIN_RESET_TOKEN` and SQL. A user
-list with disable/delete plus instance counts (users, drawings, storage)
-goes a long way for a self-hosted deployment.
+Nothing queued right now — the core platform and its operator tooling are in
+place. Open an issue or discussion to propose what comes next.
 
 ## Deliberate non-goals
 

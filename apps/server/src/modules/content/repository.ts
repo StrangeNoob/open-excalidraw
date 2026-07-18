@@ -172,7 +172,7 @@ export class PostgresContentRepository implements ContentRepository {
       const result = await client.query<{
         content_revision: string;
         reason: string;
-        author_user_id: string;
+        author_user_id: string | null;
         created_at: Date;
       }>(
         `SELECT content_revision, reason, author_user_id, created_at

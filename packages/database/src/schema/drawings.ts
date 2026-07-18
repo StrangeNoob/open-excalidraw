@@ -102,9 +102,9 @@ export const drawingRevisions = pgTable(
     scene: jsonb("scene").$type<StoredScene>().notNull(),
     sceneFormatVersion: integer("scene_format_version").notNull(),
     sceneBytes: integer("scene_bytes").notNull(),
-    authorUserId: uuid("author_user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "restrict" }),
+    authorUserId: uuid("author_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
     reason: varchar("reason", { length: 16 }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()

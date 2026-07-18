@@ -59,6 +59,11 @@ const TrashPage = lazy(() =>
     default: module.TrashPage,
   })),
 );
+const AdminPage = lazy(() =>
+  import("../features/admin").then((module) => ({
+    default: module.AdminPage,
+  })),
+);
 
 const AuthRouteLayout = () => (
   <AuthProvider>
@@ -176,6 +181,46 @@ const TrashRoute = () => {
   );
 };
 
+const AdminRoute = () => {
+  const auth = useAuth();
+  const location = useLocation();
+
+  if (auth.status === "loading") {
+    return <p aria-live="polite">Loading your account…</p>;
+  }
+
+  if (auth.status === "error") {
+    return (
+      <main>
+        <h1>Could not load your account</h1>
+        <button onClick={() => void auth.refresh()} type="button">
+          Try again
+        </button>
+      </main>
+    );
+  }
+
+  if (!auth.user) {
+    const returnTo = `${location.pathname}${location.search}${location.hash}`;
+    return (
+      <Navigate
+        replace
+        to={`/login?returnTo=${encodeURIComponent(returnTo)}`}
+      />
+    );
+  }
+
+  if (!auth.user.isAdmin) {
+    return <Navigate replace to="/app" />;
+  }
+
+  return (
+    <Suspense fallback={<p aria-live="polite">Loading admin…</p>}>
+      <AdminPage />
+    </Suspense>
+  );
+};
+
 const DrawingRoute = () => {
   const auth = useAuth();
   const location = useLocation();
@@ -276,6 +321,10 @@ export const appRoutes: RouteObject[] = [
       {
         path: "/app/trash",
         element: <TrashRoute />,
+      },
+      {
+        path: "/app/admin",
+        element: <AdminRoute />,
       },
       {
         path: "/dashboard",

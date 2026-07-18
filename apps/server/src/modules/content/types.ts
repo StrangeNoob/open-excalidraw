@@ -40,7 +40,8 @@ export type SaveContentResult =
 export interface RevisionRecord {
   revision: bigint;
   reason: "checkpoint" | "restore";
-  authorUserId: string;
+  // Null when the authoring account was deleted (ON DELETE SET NULL, 0011).
+  authorUserId: string | null;
   createdAt: Date;
 }
 
