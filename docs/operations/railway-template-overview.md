@@ -64,3 +64,5 @@ API, and Socket.IO collaboration from port 3000, persisting to PostgreSQL.
 - Persistent volume at `/data/assets` for binary assets
 - Optional `ADMIN_EMAILS` for the admin page (requires a verified email via
   SMTP or an OAuth/OIDC sign-in)
+- Optional `DISABLE_SIGNUPS=true` to block new account registration across
+  email/password and OAuth/OIDC (existing users keep signing in)

@@ -114,6 +114,7 @@ const renderAdmin = (api: AdminApi) => {
       google: false,
       oidc: false,
       oidcProviderName: "SSO",
+      signupsDisabled: false,
       smtp: false,
     },
     user: {

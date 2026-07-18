@@ -22,6 +22,7 @@ const session = (emailVerified: boolean): SessionResponse => ({
     google: false,
     oidc: false,
     oidcProviderName: "SSO",
+    signupsDisabled: false,
     smtp: true,
   },
   user: {

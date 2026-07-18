@@ -40,7 +40,11 @@ describe("Better Auth configuration", () => {
       cookieCache: { enabled: false },
     });
     expect(options.socialProviders).toEqual({
-      github: { clientId: "github-id", clientSecret: "github-secret" },
+      github: {
+        clientId: "github-id",
+        clientSecret: "github-secret",
+        disableSignUp: false,
+      },
     });
     expect(options.account).toMatchObject({
       encryptOAuthTokens: true,
@@ -79,8 +83,53 @@ describe("Better Auth configuration", () => {
       github: false,
       oidc: false,
       oidcProviderName: "SSO",
+      signupsDisabled: false,
       smtp: false,
     });
+  });
+
+  it("threads DISABLE_SIGNUPS into every provider and the capabilities payload", () => {
+    const options = buildBetterAuthOptions({
+      database: {} as never,
+      mailer: new DisabledMailer(),
+      baseUrl: BASE_URL,
+      secret: SECRET,
+      smtpEnabled: false,
+      disableSignups: true,
+      github: { clientId: "github-id", clientSecret: "github-secret" },
+      oidc: {
+        issuerUrl: "https://idp.example.test",
+        clientId: "oidc-id",
+        clientSecret: "oidc-secret",
+      },
+    });
+
+    expect(options.emailAndPassword?.disableSignUp).toBe(true);
+    expect(options.socialProviders?.github).toMatchObject({
+      disableSignUp: true,
+    });
+    const plugin = options.plugins?.[0] as unknown as {
+      options: { config: Array<Record<string, unknown>> };
+    };
+    expect(plugin.options.config[0]?.disableSignUp).toBe(true);
+
+    expect(
+      authCapabilities({ smtpEnabled: false, disableSignups: true }),
+    ).toMatchObject({ signupsDisabled: true });
+  });
+
+  it("leaves sign-up enabled by default", () => {
+    const options = buildBetterAuthOptions({
+      database: {} as never,
+      mailer: new DisabledMailer(),
+      baseUrl: BASE_URL,
+      secret: SECRET,
+      smtpEnabled: false,
+    });
+    expect(options.emailAndPassword?.disableSignUp).toBeFalsy();
+    expect(authCapabilities({ smtpEnabled: false }).signupsDisabled).toBe(
+      false,
+    );
   });
 
   it("registers the generic OAuth plugin when OIDC is fully configured", () => {
@@ -216,6 +265,7 @@ describe("Better Auth configuration", () => {
       github: false,
       oidc: true,
       oidcProviderName: "Keycloak",
+      signupsDisabled: false,
       smtp: false,
     });
     expect(authCapabilities({ smtpEnabled: false, oidc })).toMatchObject({
@@ -360,6 +410,45 @@ describe("auth HTTP boundary", () => {
       email: "unverified@example.test",
       emailVerified: false,
     });
+  });
+
+  it("rejects email sign-up and creates no session when signups are disabled", async () => {
+    const memory = createMemoryAdapter();
+    const auth = createOpenExcalidrawAuth({
+      database: {} as never,
+      databaseAdapter: memory.factory,
+      mailer: new DisabledMailer(),
+      baseUrl: BASE_URL,
+      secret: SECRET,
+      smtpEnabled: false,
+      secureCookies: false,
+      disableSignups: true,
+    });
+    const app = express();
+    app.use(express.json());
+    app.use(
+      createAuthRouter({
+        auth,
+        identity: createIdentityService(auth),
+        capabilities: authCapabilities({
+          smtpEnabled: false,
+          disableSignups: true,
+        }),
+      }),
+    );
+
+    const signup = await request(app)
+      .post("/api/auth/sign-up/email")
+      .set("origin", BASE_URL)
+      .send({
+        name: "Blocked User",
+        email: "blocked@example.test",
+        password: "correct-horse-battery-staple",
+      });
+    expect(signup.status).toBeGreaterThanOrEqual(400);
+    expect(signup.status).toBeLessThan(500);
+    expect(memory.rows.user).toHaveLength(0);
+    expect(memory.rows.session).toHaveLength(0);
   });
 
   it("reports isAdmin on /v1/me only for a verified email on the ADMIN_EMAILS allowlist", async () => {
