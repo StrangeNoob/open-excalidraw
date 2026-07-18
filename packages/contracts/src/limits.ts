@@ -7,6 +7,7 @@ export const CONTRACT_LIMITS = {
   elementsPerPatch: 5_000,
   elementsPerScene: 50_000,
   fileIdCharacters: 256,
+  libraryItemsPerUser: 500,
   problemDetailCharacters: 4_096,
   sceneBytes: 10 * 1024 * 1024,
 } as const;

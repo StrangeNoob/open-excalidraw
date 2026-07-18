@@ -24,16 +24,15 @@ is ranked by value against effort for a self-hosted collaboration tool.
 - **Generic OIDC single sign-on** — Keycloak, Authentik, Authelia, or any
   OIDC provider via Better Auth's generic OAuth plugin; configured with
   `OIDC_*` environment variables.
+- **Persistent shape libraries** — the editor's `.excalidrawlib` items now
+  persist per account (`GET`/`PUT /api/v1/library`) instead of only in
+  localStorage, so they follow users across devices. Public libraries from
+  libraries.excalidraw.com can be browsed and imported straight into the
+  editor, and those imports persist to the account like any other item.
 
 ## Next up
 
-### 1. Persistent shape libraries
-
-The editor supports `.excalidrawlib` libraries but keeps them in
-localStorage, so they do not follow users across devices. Persisting them
-per-account is a natural fit for the existing storage layer.
-
-### 2. Minimal admin page
+### 1. Minimal admin page
 
 Operators currently manage users with `ADMIN_RESET_TOKEN` and SQL. A user
 list with disable/delete plus instance counts (users, drawings, storage)

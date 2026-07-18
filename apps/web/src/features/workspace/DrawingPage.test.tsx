@@ -28,9 +28,11 @@ const USER = "10000000-0000-4000-8000-000000000001";
 
 const apiAddFiles = vi.fn();
 const apiUpdateScene = vi.fn();
+const apiUpdateLibrary = vi.fn(() => Promise.resolve([]));
 const editorApi = {
   addFiles: apiAddFiles,
   updateScene: apiUpdateScene,
+  updateLibrary: apiUpdateLibrary,
   getAppState: () => appState,
   getFiles: () => ({}),
   getSceneElementsIncludingDeleted: () => [],
@@ -182,6 +184,14 @@ const createDependencies = (options?: {
     ),
   };
   const recovery = { put: vi.fn(() => Promise.resolve({} as never)) };
+  const library = {
+    load: vi.fn(() =>
+      Promise.resolve({ items: [], updatedAt: "2026-07-11T00:00:00.000Z" }),
+    ),
+    save: vi.fn(() =>
+      Promise.resolve({ items: [], updatedAt: "2026-07-11T00:00:00.000Z" }),
+    ),
+  };
 
   return {
     dependencies: {
@@ -189,11 +199,12 @@ const createDependencies = (options?: {
       connectivity: online,
       content,
       host: TestHost,
+      library,
       metadata,
       recovery,
     } satisfies DrawingWorkspaceDependencies,
     order,
-    sources: { assets, content, metadata, recovery },
+    sources: { assets, content, library, metadata, recovery },
   };
 };
 
@@ -201,6 +212,8 @@ describe("DrawingPage", () => {
   beforeEach(() => {
     apiAddFiles.mockReset();
     apiUpdateScene.mockReset();
+    apiUpdateLibrary.mockReset();
+    apiUpdateLibrary.mockResolvedValue([]);
   });
 
   it("does not fall back to a stale workspace role after membership revocation", () => {

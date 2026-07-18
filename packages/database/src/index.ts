@@ -5,4 +5,5 @@ export * from "./schema/assets.js";
 export * from "./schema/auth.js";
 export * from "./schema/chat.js";
 export * from "./schema/drawings.js";
+export * from "./schema/libraries.js";
 export * from "./schema/sharing.js";

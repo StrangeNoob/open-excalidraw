@@ -106,6 +106,7 @@ describe("initial PostgreSQL migration", () => {
       "0007_drawing_thumbnail.sql",
       "0008_drawing_templates.sql",
       "0009_drawing_purge_state.sql",
+      "0010_user_libraries.sql",
     ]);
     expect(second.alreadyApplied).toEqual(first.applied);
     expect(record.rows).toEqual(first.applied);
@@ -188,6 +189,7 @@ describe("database constraints", () => {
       "drawing_user_tags.user_id->user.id",
       "drawings.owner_user_id->user.id",
       "session.user_id->user.id",
+      "user_libraries.user_id->user.id",
     ]);
 
     const indexes = await pool.query<{ indexname: string }>(`

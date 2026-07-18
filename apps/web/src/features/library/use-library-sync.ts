@@ -1,0 +1,231 @@
+import type {
+  ExcalidrawImperativeAPI,
+  ExcalidrawProps,
+} from "@excalidraw/excalidraw/types";
+import { useCallback, useEffect, useRef } from "react";
+
+import { LibraryRequestError, type LibraryClient } from "./library-client";
+
+type LibrarySource = Pick<LibraryClient, "load" | "save">;
+export type LibraryChangeHandler = NonNullable<
+  ExcalidrawProps["onLibraryChange"]
+>;
+type LibraryItems = Parameters<LibraryChangeHandler>[0];
+
+const DEBOUNCE_MS = 2_000;
+const RETRY_BASE_MS = 1_000;
+const RETRY_MAX_MS = 30_000;
+
+export interface UseLibrarySyncOptions {
+  client: LibrarySource;
+  debounceMs?: number;
+}
+
+/**
+ * Loads the account library into the editor once the canvas API exists, then
+ * persists in-editor changes. Library events are ignored until that initial
+ * load has been applied so the empty local library never overwrites the server.
+ * Saves are serialized: only one PUT is in flight at a time, so overlapping
+ * requests cannot land out of order and strand the server on a stale library.
+ */
+export const useLibrarySync = (
+  api: ExcalidrawImperativeAPI | null,
+  { client, debounceMs = DEBOUNCE_MS }: UseLibrarySyncOptions,
+): LibraryChangeHandler => {
+  const loadedRef = useRef(false);
+  const lastSyncedRef = useRef<string | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const savingRef = useRef(false);
+  const pendingRef = useRef<LibraryItems | null>(null);
+  const retryRef = useRef(0);
+  const disposedRef = useRef(false);
+  const writeGenRef = useRef(0);
+
+  const flush = useCallback(() => {
+    // Re-arms the shared timer to resend a failed snapshot after an
+    // exponential backoff, so a transient blip persists without a fresh edit.
+    function scheduleRetry() {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+      const delay = Math.min(
+        RETRY_BASE_MS * 2 ** retryRef.current,
+        RETRY_MAX_MS,
+      );
+      retryRef.current += 1;
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null;
+        drain();
+      }, delay);
+    }
+
+    // Drains the latest pending snapshot, then re-drains once the request
+    // settles so a save queued while this one was in flight is not stranded.
+    function drain() {
+      if (savingRef.current || pendingRef.current === null) {
+        return;
+      }
+      const items = pendingRef.current;
+      pendingRef.current = null;
+      const serialized = JSON.stringify(items);
+      savingRef.current = true;
+      writeGenRef.current += 1;
+      void client
+        .save(items)
+        .then(() => {
+          lastSyncedRef.current = serialized;
+          retryRef.current = 0;
+        })
+        .catch((error: unknown) => {
+          // A 4xx is a permanent client error (e.g. over the item limit) that
+          // would retry forever, so warn and drop it — except 408 (timeout) and
+          // 429 (rate limit), which are transient and fall through. Anything
+          // else (offline, 5xx) is transient too: re-queue unless a newer
+          // snapshot already won, then retry with backoff.
+          if (
+            error instanceof LibraryRequestError &&
+            error.status >= 400 &&
+            error.status < 500 &&
+            error.status !== 408 &&
+            error.status !== 429
+          ) {
+            console.warn("Could not save your library.", error);
+            return;
+          }
+          // After the final unmount nothing owns a retry chain; a zombie
+          // timer could later overwrite a newer editor session's writes.
+          if (disposedRef.current) {
+            console.warn("Could not save your library.", error);
+            return;
+          }
+          if (pendingRef.current === null) {
+            pendingRef.current = items;
+          }
+          scheduleRetry();
+        })
+        .finally(() => {
+          savingRef.current = false;
+          // A retry (or a newer change's debounce) already owns the next drain.
+          if (timerRef.current === null) {
+            drain();
+          }
+        });
+    }
+    drain();
+  }, [client]);
+
+  const queueSave = useCallback(
+    (items: LibraryItems) => {
+      pendingRef.current = items;
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null;
+        flush();
+      }, debounceMs);
+    },
+    [debounceMs, flush],
+  );
+
+  // Marks the final unmount only: api/client re-runs must keep the queue and
+  // retry machinery alive, so this lives in its own mount-lifetime effect.
+  // After disposal a failed save must not arm a retry timer (see drain).
+  useEffect(() => {
+    disposedRef.current = false;
+    return () => {
+      disposedRef.current = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!api) {
+      return;
+    }
+    let active = true;
+    loadedRef.current = false;
+    // The cleanup flush starts its PUT before this effect runs, so remember
+    // both any write outstanding as the GET begins and the write generation,
+    // to catch a write that starts — and even settles — during the GET.
+    const writeGenAtLoad = writeGenRef.current;
+    const writeAheadAtLoad = savingRef.current || pendingRef.current !== null;
+    void client
+      .load()
+      .then((library) => {
+        if (!active) {
+          return;
+        }
+        // A save was outstanding when this GET began, or one has started
+        // since — even if it already settled and cleared savingRef/pendingRef
+        // (the generation token catches that). The response may predate that
+        // PUT, so local state is ahead and applying it would resurrect stale
+        // items. Open saving and let the save's .then own lastSyncedRef.
+        if (
+          writeAheadAtLoad ||
+          savingRef.current ||
+          pendingRef.current !== null ||
+          writeGenRef.current !== writeGenAtLoad
+        ) {
+          loadedRef.current = true;
+          return;
+        }
+        lastSyncedRef.current = JSON.stringify(library.items);
+        // Merge (not replace) when the server has nothing yet, so a pre-existing
+        // local library survives the load; the merged result is queued below so
+        // it migrates up without waiting for an edit.
+        return api
+          .updateLibrary({
+            libraryItems: library.items as unknown as LibraryItems,
+            merge: library.items.length === 0,
+          })
+          .then((merged) => {
+            if (!active) {
+              return;
+            }
+            // Saving opens only once the loaded library is actually in the
+            // editor; after a failed apply a save could wipe the server copy.
+            loadedRef.current = true;
+            if (JSON.stringify(merged) !== lastSyncedRef.current) {
+              queueSave(merged);
+            }
+          });
+      })
+      .catch((error: unknown) => {
+        console.warn("Could not load your saved library.", error);
+      });
+
+    return () => {
+      active = false;
+      loadedRef.current = false;
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      // Send a snapshot still waiting out its debounce before this editor
+      // session tears down, so an edit is not lost when switching drawings.
+      if (pendingRef.current !== null) {
+        flush();
+      }
+    };
+  }, [api, client, flush, queueSave]);
+
+  return useCallback<LibraryChangeHandler>(
+    (items) => {
+      if (!loadedRef.current) {
+        return;
+      }
+      // A change matching the last synced snapshot only skips the queue while
+      // nothing newer is queued or in flight; otherwise it is a revert that
+      // must still overwrite the superseding snapshot on the server.
+      if (
+        JSON.stringify(items) === lastSyncedRef.current &&
+        !savingRef.current &&
+        pendingRef.current === null
+      ) {
+        return;
+      }
+      queueSave(items);
+    },
+    [queueSave],
+  );
+};

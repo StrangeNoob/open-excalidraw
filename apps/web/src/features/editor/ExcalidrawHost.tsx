@@ -45,6 +45,7 @@ export interface ExcalidrawHostProps {
   isCollaborating?: boolean;
   onApiChange?: (api: ExcalidrawImperativeAPI | null) => void;
   onChange?: ExcalidrawChangeHandler;
+  onLibraryChange?: ExcalidrawProps["onLibraryChange"];
   onPointerUpdate?: ExcalidrawPointerHandler;
   readOnly?: boolean;
   renderTopRightUI?: ExcalidrawProps["renderTopRightUI"];
@@ -57,6 +58,7 @@ export const ExcalidrawHost = ({
   isCollaborating = false,
   onApiChange,
   onChange,
+  onLibraryChange,
   onPointerUpdate,
   readOnly = false,
   renderTopRightUI,
@@ -117,6 +119,7 @@ export const ExcalidrawHost = ({
         isCollaborating={isCollaborating}
         name={title}
         onChange={onChange}
+        onLibraryChange={onLibraryChange}
         onPointerUpdate={onPointerUpdate}
         renderTopRightUI={renderTopRightUI}
         theme={theme}

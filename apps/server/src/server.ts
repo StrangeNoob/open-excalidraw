@@ -59,6 +59,11 @@ import {
   PostgresContentRepository,
 } from "./modules/content/index.js";
 import {
+  createLibraryRouter,
+  LibraryService,
+  PostgresLibraryRepository,
+} from "./modules/library/index.js";
+import {
   createSharingRouter,
   PostgresSharingRepository,
   SharingService,
@@ -138,6 +143,9 @@ const sharingService = new SharingService({
     },
   },
 });
+const libraryService = new LibraryService(
+  new PostgresLibraryRepository(database.pool),
+);
 const shareLinkResolver = {
   async resolveToken(token: string) {
     const resolved = await sharingRepository.resolveShareToken(token);
@@ -323,6 +331,7 @@ const app = createApp({
     }),
     createDrawingRouter({ service: drawingService, identity }),
     createContentRouter({ service: contentService, identity }),
+    createLibraryRouter({ service: libraryService, identity }),
     createSharingRouter({ service: sharingService, identity }),
     createChatRouter({ service: chatService, identity }),
     assetRouter,
