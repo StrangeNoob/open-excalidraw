@@ -103,6 +103,24 @@ export default defineConfig({
         // non-SPA paths, per the dev proxy and every server route living
         // under /api).
         navigateFallbackDenylist: [/^\/api\//, /^\/socket\.io\//],
+        // The only API route we runtime-cache. Thumbnails are versioned by
+        // ?v=<thumbnailUpdatedAt>, so a cached entry is never served for a new
+        // version and CacheFirst is safe. Cleared per-browser on logout.
+        runtimeCaching: [
+          {
+            urlPattern: ({ url }) =>
+              /^\/api\/v1\/drawings\/[^/]+\/thumbnail$/.test(url.pathname),
+            handler: "CacheFirst",
+            options: {
+              cacheName: "drawing-thumbnails",
+              expiration: {
+                maxEntries: 200,
+                maxAgeSeconds: 30 * 24 * 60 * 60,
+              },
+              cacheableResponse: { statuses: [200] },
+            },
+          },
+        ],
       },
     }),
   ],

@@ -16,9 +16,33 @@ import type {
   LinkedAccount,
   OAuthProvider,
 } from "../auth";
+import { ApiError } from "../../shared/api";
 import { AuthProvider } from "../auth";
 import { TRASH_QUERY_KEY, type DashboardApi } from "./dashboard-api";
+import {
+  DashboardListDb,
+  deleteDashboardListDatabase,
+} from "./dashboard-list-db";
 import { DashboardPage } from "./DashboardPage";
+
+const SESSION_USER_ID = "be21c1cd-a5d5-49f9-b9dd-a30e3cb80e09";
+const listCaches = new Map<string, DashboardListDb>();
+
+const makeListCache = () => {
+  const name = `dashboard-${crypto.randomUUID()}`;
+  const cache = new DashboardListDb(name);
+  listCaches.set(name, cache);
+  return cache;
+};
+
+afterEach(async () => {
+  // Close before deleting: an open connection makes deleteDB block for 10s.
+  await Promise.all([...listCaches.values()].map((cache) => cache.close()));
+  await Promise.all(
+    [...listCaches.keys()].map((name) => deleteDashboardListDatabase(name)),
+  );
+  listCaches.clear();
+});
 
 const createDrawing = (
   role: DrawingSummary["role"],
@@ -156,6 +180,9 @@ const renderDashboard = (
   api: DashboardApi,
   onOpenDrawing = vi.fn(),
   isAdmin = false,
+  // Each render gets an isolated cache so the shared fake-indexeddb never
+  // leaks a list between tests; pass one explicitly to seed or inspect it.
+  listCache: DashboardListDb = makeListCache(),
 ) => {
   const authClient = new FakeAuthClient();
   authClient.getSession.mockResolvedValue(buildSession(isAdmin));
@@ -168,11 +195,16 @@ const renderDashboard = (
       <QueryClientProvider client={queryClient}>
         <AuthProvider client={authClient}>
           <MemoryRouter>
-            <DashboardPage api={api} onOpenDrawing={onOpenDrawing} />
+            <DashboardPage
+              api={api}
+              listCache={listCache}
+              onOpenDrawing={onOpenDrawing}
+            />
           </MemoryRouter>
         </AuthProvider>
       </QueryClientProvider>,
     ),
+    listCache,
     onOpenDrawing,
     queryClient,
   };
@@ -555,6 +587,103 @@ describe("DashboardPage", () => {
       }),
     ).toBeInTheDocument();
     expect(screen.getByText("Network unavailable")).toBeInTheDocument();
+  });
+
+  it("renders the cached list with a last-synced label when the fetch fails at the network level", async () => {
+    const cache = makeListCache();
+    await cache.put(SESSION_USER_ID, {
+      nextCursor: null,
+      owned: [createDrawing("owner", "Cached board", 1)],
+      shared: [],
+    });
+    const api = new FakeDashboardApi({
+      nextCursor: null,
+      owned: [],
+      shared: [],
+    });
+    // A fetch rejection (offline / unreachable server), not an ApiError.
+    api.listDrawings.mockRejectedValueOnce(new Error("Failed to fetch"));
+    renderDashboard(api, vi.fn(), false, cache);
+
+    expect(await screen.findByText("Cached board")).toBeInTheDocument();
+    const status = screen.getByText(/Showing your last saved copy/);
+    expect(status).toHaveTextContent(/Last synced/);
+    expect(
+      screen.queryByRole("heading", { name: "Could not load your drawings" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the error state on an HTTP problem and never falls back to the cache", async () => {
+    const cache = makeListCache();
+    await cache.put(SESSION_USER_ID, {
+      nextCursor: null,
+      owned: [createDrawing("owner", "Cached board", 1)],
+      shared: [],
+    });
+    const api = new FakeDashboardApi({
+      nextCursor: null,
+      owned: [],
+      shared: [],
+    });
+    api.listDrawings.mockRejectedValueOnce(new ApiError(500, null));
+    renderDashboard(api, vi.fn(), false, cache);
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Could not load your drawings",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Cached board")).not.toBeInTheDocument();
+  });
+
+  it("writes each successful list through to the cache", async () => {
+    const cache = makeListCache();
+    const api = new FakeDashboardApi({
+      nextCursor: null,
+      owned: [createDrawing("owner", "Fresh board", 1)],
+      shared: [],
+    });
+    renderDashboard(api, vi.fn(), false, cache);
+
+    await screen.findByText("Fresh board");
+    await waitFor(async () => {
+      const record = await cache.get(SESSION_USER_ID);
+      expect(record?.list.owned[0]?.title).toBe("Fresh board");
+    });
+  });
+
+  it("disables the refresh button while offline and enables it online", async () => {
+    Object.defineProperty(navigator, "onLine", {
+      configurable: true,
+      value: false,
+    });
+    const offlineApi = new FakeDashboardApi({
+      nextCursor: null,
+      owned: [createDrawing("owner", "Board", 1)],
+      shared: [],
+    });
+    const offlineView = renderDashboard(offlineApi);
+    await screen.findByText("Board");
+    const offlineRefresh = screen.getByRole("button", { name: "Refresh" });
+    expect(offlineRefresh).toBeDisabled();
+    expect(offlineRefresh).toHaveAttribute(
+      "title",
+      expect.stringMatching(/offline/i),
+    );
+    offlineView.unmount();
+
+    Object.defineProperty(navigator, "onLine", {
+      configurable: true,
+      value: true,
+    });
+    const onlineApi = new FakeDashboardApi({
+      nextCursor: null,
+      owned: [createDrawing("owner", "Board", 1)],
+      shared: [],
+    });
+    renderDashboard(onlineApi);
+    await screen.findByText("Board");
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
   });
 
   it("shows the Admin link only when the current user is an admin", async () => {

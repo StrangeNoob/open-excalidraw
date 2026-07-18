@@ -690,4 +690,41 @@ describe("cookie auth state", () => {
     await waitFor(() => expect(purgeEditor).toHaveBeenCalledOnce());
     unregister();
   });
+
+  it("clears the per-browser thumbnail cache on logout", async () => {
+    const cachesDelete = vi.fn().mockResolvedValue(true);
+    // jsdom has no Cache API; stand one in so logout can drop the SW cache.
+    vi.stubGlobal("caches", { delete: cachesDelete });
+
+    const client = new FakeAuthClient();
+    client.getSession.mockResolvedValue(signedInSession);
+    client.signOut.mockResolvedValue();
+
+    const LogoutButton = () => {
+      const auth = useAuth();
+      return (
+        <button onClick={() => void auth.logout()} type="button">
+          Log out
+        </button>
+      );
+    };
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AuthProvider client={client}>
+          <LogoutButton />
+        </AuthProvider>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(client.getSession).toHaveBeenCalled());
+    act(() => {
+      screen.getByRole("button", { name: "Log out" }).click();
+    });
+
+    await waitFor(() =>
+      expect(cachesDelete).toHaveBeenCalledWith("drawing-thumbnails"),
+    );
+    vi.unstubAllGlobals();
+  });
 });

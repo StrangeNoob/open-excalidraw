@@ -3,9 +3,10 @@ import type {
   DrawingSummary,
 } from "@open-excalidraw/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
+import { ApiError } from "../../shared/api";
 import { getDrawingCapabilities } from "../access";
 import { useAuth } from "../auth";
 import {
@@ -14,10 +15,29 @@ import {
   TRASH_QUERY_KEY,
   type DashboardApi,
 } from "./dashboard-api";
+import { DashboardListDb, type DashboardListRecord } from "./dashboard-list-db";
 import { useOnlineStatus } from "./use-online-status";
 
 const MAX_TAGS = 20;
 const defaultDashboardApi = new DashboardApiClient();
+const defaultListCache = new DashboardListDb();
+
+const RELATIVE_UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
+  ["day", 86_400],
+  ["hour", 3_600],
+  ["minute", 60],
+];
+
+const formatRelativeTime = (iso: string): string => {
+  const seconds = Math.round((new Date(iso).getTime() - Date.now()) / 1_000);
+  const relative = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  for (const [unit, size] of RELATIVE_UNITS) {
+    if (Math.abs(seconds) >= size) {
+      return relative.format(Math.round(seconds / size), unit);
+    }
+  }
+  return relative.format(seconds, "second");
+};
 
 const parseTags = (value: string): string[] => [
   ...new Set(
@@ -335,25 +355,67 @@ const DrawingSection = ({
 
 export interface DashboardPageProps {
   api?: DashboardApi;
+  listCache?: DashboardListDb;
   onOpenDrawing?: (drawing: DrawingSummary) => void;
 }
 
 export const DashboardPage = ({
   api = defaultDashboardApi,
+  listCache = defaultListCache,
   onOpenDrawing,
 }: DashboardPageProps) => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const online = useOnlineStatus();
   const { user } = useAuth();
+  const userId = user?.id;
   const [newTitle, setNewTitle] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [templateId, setTemplateId] = useState("");
+  const [fallback, setFallback] = useState<DashboardListRecord | null>(null);
+  const [fallbackChecked, setFallbackChecked] = useState(false);
   const dashboard = useQuery({
     queryFn: () => api.listDrawings(),
     queryKey: DASHBOARD_QUERY_KEY,
   });
+
+  // Write-through: persist each successful list, keyed by user, so an offline
+  // reload can render it. Fire-and-forget; a failed cache write must not break
+  // the dashboard. `userId` is in the deps so a late-arriving session still
+  // triggers the first write.
+  useEffect(() => {
+    if (userId && dashboard.isSuccess) {
+      void listCache.put(userId, dashboard.data).catch(() => undefined);
+    }
+  }, [userId, listCache, dashboard.data, dashboard.isSuccess]);
+
+  // Only a network-level failure (fetch rejection / offline) falls back to the
+  // cached list; an ApiError HTTP problem (401/403/500) is the real error and
+  // keeps the error state. Mirrors the isHttpProblem discrimination in
+  // DrawingPage.
+  useEffect(() => {
+    if (!userId || !dashboard.isError || dashboard.error instanceof ApiError) {
+      return;
+    }
+    let active = true;
+    void listCache
+      .get(userId)
+      .then((record) => {
+        if (active) {
+          setFallback(record ?? null);
+          setFallbackChecked(true);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setFallbackChecked(true);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [userId, listCache, dashboard.isError, dashboard.error]);
 
   const createDrawing = useMutation({
     mutationFn: (title: string) => api.createDrawing(title),
@@ -494,10 +556,17 @@ export const DashboardPage = ({
     }
   };
 
-  const templates = dashboard.data
-    ? [...dashboard.data.owned, ...dashboard.data.shared].filter(
-        (drawing) => drawing.isTemplate,
-      )
+  // Live data wins; a cached list only stands in when the live fetch failed at
+  // the network level. Offline the mutation controls are disabled, so the
+  // cached list is read-only and never diverges from what mutations would edit.
+  const list = dashboard.data ?? fallback?.list;
+  const fromCache = !dashboard.data && Boolean(fallback);
+  const lastSyncedAt = dashboard.data
+    ? new Date(dashboard.dataUpdatedAt).toISOString()
+    : fallback?.fetchedAt;
+
+  const templates = list
+    ? [...list.owned, ...list.shared].filter((drawing) => drawing.isTemplate)
     : [];
 
   const submitFromTemplate = (event: FormEvent<HTMLFormElement>) => {
@@ -509,12 +578,10 @@ export const DashboardPage = ({
     }
   };
 
-  const allTags = dashboard.data
+  const allTags = list
     ? [
         ...new Set(
-          [...dashboard.data.owned, ...dashboard.data.shared].flatMap(
-            (drawing) => drawing.tags,
-          ),
+          [...list.owned, ...list.shared].flatMap((drawing) => drawing.tags),
         ),
       ].sort()
     : [];
@@ -590,16 +657,32 @@ export const DashboardPage = ({
 
       {dashboard.isPending ? (
         <p aria-live="polite">Loading drawings…</p>
-      ) : dashboard.isError ? (
-        <section className="dashboard-error" role="alert">
-          <h2>Could not load your drawings</h2>
-          <p>{dashboard.error.message}</p>
-          <button onClick={() => void dashboard.refetch()} type="button">
-            Try again
-          </button>
-        </section>
-      ) : (
+      ) : list ? (
         <>
+          <div
+            className={`dashboard-sync${
+              fromCache ? " dashboard-sync-offline" : ""
+            }`}
+          >
+            <p role="status">
+              {fromCache ? "Showing your last saved copy. " : null}
+              {lastSyncedAt
+                ? `Last synced ${formatRelativeTime(lastSyncedAt)}`
+                : "Not synced yet"}
+            </p>
+            <button
+              disabled={!online}
+              onClick={() => void dashboard.refetch()}
+              title={
+                online
+                  ? "Refresh your drawings"
+                  : "You are offline — reconnect to refresh"
+              }
+              type="button"
+            >
+              Refresh
+            </button>
+          </div>
           {allTags.length > 0 ? (
             <nav aria-label="Filter by tag" className="tag-filter-bar">
               {/* ponytail: single-select filter; multi-select if anyone asks */}
@@ -628,7 +711,7 @@ export const DashboardPage = ({
           ) : null}
           <div className="dashboard-sections">
             <DrawingSection
-              drawings={byTag(dashboard.data.owned)}
+              drawings={byTag(list.owned)}
               emptyMessage={
                 activeTag
                   ? `No owned drawings tagged “${activeTag}”.`
@@ -653,7 +736,7 @@ export const DashboardPage = ({
               title="Owned"
             />
             <DrawingSection
-              drawings={byTag(dashboard.data.shared)}
+              drawings={byTag(list.shared)}
               emptyMessage={
                 activeTag
                   ? `No shared drawings tagged “${activeTag}”.`
@@ -679,6 +762,22 @@ export const DashboardPage = ({
             />
           </div>
         </>
+      ) : dashboard.isError &&
+        !(dashboard.error instanceof ApiError) &&
+        !fallbackChecked ? (
+        // A network failure whose cache lookup is still pending: keep the
+        // loading state until we know whether a cached list exists.
+        <p aria-live="polite">Loading drawings…</p>
+      ) : dashboard.isError ? (
+        <section className="dashboard-error" role="alert">
+          <h2>Could not load your drawings</h2>
+          <p>{dashboard.error.message}</p>
+          <button onClick={() => void dashboard.refetch()} type="button">
+            Try again
+          </button>
+        </section>
+      ) : (
+        <p aria-live="polite">Loading drawings…</p>
       )}
     </main>
   );

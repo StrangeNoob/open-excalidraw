@@ -143,6 +143,12 @@ export const AuthProvider = ({
     await queryClient.cancelQueries();
     queryClient.clear();
     await purgeProtectedState();
+    // Service-worker-cached thumbnails are per-browser, not per-account; drop
+    // them so the next user never sees the previous user's drawing previews.
+    // Guarded for browsers without the Cache API and non-fatal on failure.
+    if (typeof caches !== "undefined") {
+      await caches.delete("drawing-thumbnails").catch(() => undefined);
+    }
     setSession((current) => ({
       capabilities: current.capabilities,
       user: null,
