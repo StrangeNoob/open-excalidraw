@@ -52,7 +52,14 @@ export const createInvitationResponseSchema = z
     membership: drawingMemberSchema.optional(),
     invitation: invitationSchema.optional(),
     deliveryStatus: z.enum(["sent", "manual", "failed", "not-needed"]),
-    manualUrl: z.string().url().optional(),
+    manualUrl: z
+      .string()
+      .url()
+      .meta({
+        description:
+          "Invitation link for manual delivery when email was not sent.",
+      })
+      .optional(),
   })
   .strict()
   .refine(
@@ -60,7 +67,12 @@ export const createInvitationResponseSchema = z
     {
       message: "A membership or invitation is required",
     },
-  );
+  )
+  .meta({
+    description:
+      "Exactly one of `membership` (the email already had an account) or " +
+      "`invitation` is present.",
+  });
 
 export const updateMemberRoleRequestSchema = z
   .object({ role: memberRoleSchema })

@@ -12,7 +12,8 @@ export const excalidrawElementSchema = z
     isDeleted: z.boolean(),
     index: z.string().nullable().optional(),
   })
-  .passthrough();
+  .passthrough()
+  .meta({ description: "Excalidraw element; extra properties are preserved." });
 
 export const sceneAppStateSchema = z.record(z.string(), z.unknown());
 
@@ -26,13 +27,17 @@ export const sceneEnvelopeSchema = z
       .max(CONTRACT_LIMITS.elementsPerScene),
     appState: sceneAppStateSchema,
   })
-  .strict();
+  .strict()
+  .meta({ description: "Excalidraw scene export envelope." });
 
 export const contentResponseSchema = z
   .object({
     revision: revisionSchema,
     scene: sceneEnvelopeSchema,
-    assetIds: z.array(fileIdSchema).max(CONTRACT_LIMITS.assetManifestEntries),
+    assetIds: z
+      .array(fileIdSchema)
+      .max(CONTRACT_LIMITS.assetManifestEntries)
+      .meta({ description: "File ids of every asset the scene references." }),
     savedAt: z.string().datetime({ offset: true }),
   })
   .strict();
@@ -40,7 +45,13 @@ export const contentResponseSchema = z
 export const saveContentRequestSchema = z
   .object({
     scene: sceneEnvelopeSchema,
-    assetIds: z.array(fileIdSchema).max(CONTRACT_LIMITS.assetManifestEntries),
+    assetIds: z
+      .array(fileIdSchema)
+      .max(CONTRACT_LIMITS.assetManifestEntries)
+      .meta({
+        description:
+          "Sorted, de-duplicated manifest of every referenced asset.",
+      }),
   })
   .strict();
 
