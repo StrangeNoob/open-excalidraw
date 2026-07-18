@@ -4,7 +4,10 @@ import { CONTRACT_LIMITS } from "./limits.js";
 
 export const libraryItemSchema = z
   .object({ id: z.string().min(1).max(256) })
-  .passthrough();
+  .passthrough()
+  .meta({
+    description: "An Excalidraw library item; extra properties are preserved.",
+  });
 
 export const libraryResponseSchema = z
   .object({

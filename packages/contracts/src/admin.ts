@@ -5,8 +5,16 @@ import { isoDateTimeSchema, uuidSchema } from "./common/primitives.js";
 export const adminOverviewSchema = z
   .object({
     users: z.number().int().nonnegative(),
-    drawings: z.number().int().nonnegative(),
-    storageBytes: z.number().int().nonnegative(),
+    drawings: z
+      .number()
+      .int()
+      .nonnegative()
+      .meta({ description: "Active (non-trashed) drawings." }),
+    storageBytes: z
+      .number()
+      .int()
+      .nonnegative()
+      .meta({ description: "Total bytes of active drawing assets." }),
   })
   .strict();
 
@@ -17,16 +25,23 @@ export const adminUserSchema = z
     email: z.string().email(),
     emailVerified: z.boolean(),
     createdAt: isoDateTimeSchema,
-    // NULL means active; a timestamp means disabled.
-    disabledAt: isoDateTimeSchema.nullable(),
-    drawingCount: z.number().int().nonnegative(),
+    disabledAt: isoDateTimeSchema.nullable().meta({
+      description: "Null when active; a timestamp when disabled.",
+    }),
+    drawingCount: z
+      .number()
+      .int()
+      .nonnegative()
+      .meta({ description: "Active drawings the user owns." }),
   })
   .strict();
 
 export const adminUserListSchema = z
   .object({
     users: z.array(adminUserSchema),
-    total: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative().meta({
+      description: "Users matching the search, ignoring the limit.",
+    }),
   })
   .strict();
 

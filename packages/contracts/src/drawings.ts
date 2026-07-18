@@ -32,17 +32,28 @@ export const drawingSummarySchema = z
     ownerUserId: uuidSchema,
     ownerName: z.string().min(1).max(120),
     role: roleSchema,
-    // Per-user private tags of the requesting user; defaulted for older
-    // server responses that predate tagging.
-    tags: drawingTagsSchema.default([]),
+    // Defaulted for older server responses that predate tagging.
+    tags: drawingTagsSchema.default([]).meta({
+      description: "The requesting user's private tags.",
+    }),
     contentRevision: revisionSchema,
     metadataRevision: revisionSchema,
     createdAt: isoDateTimeSchema,
     updatedAt: isoDateTimeSchema,
-    // Null until a client rendered a thumbnail; defaulted for older servers.
-    thumbnailUpdatedAt: isoDateTimeSchema.nullable().default(null),
+    // Defaulted for older servers that predate thumbnails.
+    thumbnailUpdatedAt: isoDateTimeSchema
+      .nullable()
+      .default(null)
+      .meta({
+        description:
+          "When the dashboard thumbnail was last replaced; null until a " +
+          "client has rendered one.",
+      }),
     // Defaulted for older server responses that predate templates.
-    isTemplate: z.boolean().default(false),
+    isTemplate: z.boolean().default(false).meta({
+      description:
+        "Templates appear in the dashboard's “New from template” list.",
+    }),
   })
   .strict();
 
@@ -55,7 +66,9 @@ export const drawingListResponseSchema = z
   .strict();
 
 export const trashedDrawingSchema = drawingSummarySchema.extend({
-  deletedAt: isoDateTimeSchema,
+  deletedAt: isoDateTimeSchema.meta({
+    description: "When the drawing was moved to the trash.",
+  }),
 });
 
 export const trashListResponseSchema = z

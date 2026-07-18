@@ -38,7 +38,9 @@ export const chatMessageEventSchema = z
 export const chatHistoryResponseSchema = z
   .object({
     messages: z.array(chatMessageSchema),
-    nextCursor: z.string().nullable(),
+    nextCursor: z.string().nullable().meta({
+      description: "Pass as `before` to fetch the next older page.",
+    }),
   })
   .strict();
 

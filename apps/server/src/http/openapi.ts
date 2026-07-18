@@ -1,10 +1,112 @@
 /**
- * Hand-authored OpenAPI 3.0 document for the versioned REST API. Kept next to
- * the routers it describes; update it together with contract or route changes.
+ * OpenAPI 3.0 document for the versioned REST API. Component schemas that
+ * have a zod contract in @open-excalidraw/contracts are generated from it at
+ * module load and cannot drift; paths and the few server-only schemas are
+ * hand-authored — update those together with route changes.
  * Realtime collaboration (scene mutations, presence, chat sends) runs over
  * Socket.IO at /socket.io and is documented in docs/operations/collaboration.md
  * rather than here.
  */
+import {
+  adminOverviewSchema,
+  adminUserListSchema,
+  adminUserSchema,
+  assetMetadataSchema,
+  authCapabilitiesSchema,
+  chatHistoryResponseSchema,
+  chatMessageSchema,
+  contentResponseSchema,
+  createDrawingRequestSchema,
+  createInvitationRequestSchema,
+  createInvitationResponseSchema,
+  createShareLinkResponseSchema,
+  currentUserSchema,
+  drawingListResponseSchema,
+  drawingMemberSchema,
+  drawingSummarySchema,
+  duplicateDrawingRequestSchema,
+  invitationSchema,
+  libraryItemSchema,
+  libraryResponseSchema,
+  problemDetailsSchema,
+  saveContentRequestSchema,
+  saveContentResponseSchema,
+  saveLibraryRequestSchema,
+  sceneEnvelopeSchema,
+  sessionResponseSchema,
+  setDrawingTagsRequestSchema,
+  sharedDrawingResponseSchema,
+  trashedDrawingSchema,
+  trashListResponseSchema,
+  updateDrawingRequestSchema,
+} from "@open-excalidraw/contracts";
+import { z } from "zod";
+
+/** OpenAPI component name → the zod contract it mirrors. */
+const contractSchemas = {
+  AdminOverview: adminOverviewSchema,
+  AdminUser: adminUserSchema,
+  AdminUserList: adminUserListSchema,
+  AssetMetadata: assetMetadataSchema,
+  AuthCapabilities: authCapabilitiesSchema,
+  ChatHistoryResponse: chatHistoryResponseSchema,
+  ChatMessage: chatMessageSchema,
+  ContentResponse: contentResponseSchema,
+  CreateDrawingRequest: createDrawingRequestSchema,
+  CreateInvitationRequest: createInvitationRequestSchema,
+  CreateInvitationResponse: createInvitationResponseSchema,
+  CreateShareLinkResponse: createShareLinkResponseSchema,
+  CurrentUser: currentUserSchema,
+  DrawingListResponse: drawingListResponseSchema,
+  DrawingMember: drawingMemberSchema,
+  DrawingSummary: drawingSummarySchema,
+  DuplicateDrawingRequest: duplicateDrawingRequestSchema,
+  Invitation: invitationSchema,
+  LibraryItem: libraryItemSchema,
+  LibraryResponse: libraryResponseSchema,
+  ProblemDetails: problemDetailsSchema,
+  SaveContentRequest: saveContentRequestSchema,
+  SaveContentResponse: saveContentResponseSchema,
+  SaveLibraryRequest: saveLibraryRequestSchema,
+  SceneEnvelope: sceneEnvelopeSchema,
+  SessionResponse: sessionResponseSchema,
+  SetDrawingTagsRequest: setDrawingTagsRequestSchema,
+  SharedDrawing: sharedDrawingResponseSchema,
+  TrashedDrawing: trashedDrawingSchema,
+  TrashListResponse: trashListResponseSchema,
+  UpdateDrawingRequest: updateDrawingRequestSchema,
+};
+
+const contractRegistry = z.registry<{ id: string }>();
+for (const [id, schema] of Object.entries(contractSchemas)) {
+  contractRegistry.add(schema, { id });
+}
+
+/**
+ * zod emits `$id` (not valid in OpenAPI 3.0 schema objects), a redundant
+ * `pattern` next to every string `format`, and ±MAX_SAFE_INTEGER bounds on
+ * integers; strip them so the served document stays readable.
+ */
+const tidy = (node: unknown): void => {
+  if (Array.isArray(node)) {
+    for (const item of node) tidy(item);
+    return;
+  }
+  if (node === null || typeof node !== "object") return;
+  const schema = node as Record<string, unknown>;
+  delete schema.$id;
+  if (typeof schema.format === "string") delete schema.pattern;
+  if (schema.maximum === Number.MAX_SAFE_INTEGER) delete schema.maximum;
+  if (schema.minimum === -Number.MAX_SAFE_INTEGER) delete schema.minimum;
+  for (const value of Object.values(schema)) tidy(value);
+};
+
+const generatedSchemas = z.toJSONSchema(contractRegistry, {
+  target: "openapi-3.0",
+  io: "output",
+  uri: (id) => `#/components/schemas/${id}`,
+}).schemas;
+tidy(generatedSchemas);
 
 const PROBLEM = "application/problem+json";
 const JSON_TYPE = "application/json";
@@ -33,7 +135,6 @@ const revision = {
   pattern: "^(0|[1-9]\\d*)$",
   description: "Monotonically increasing revision, serialized as a string.",
 };
-const role = { type: "string", enum: ["owner", "editor", "viewer"] };
 const memberRole = { type: "string", enum: ["editor", "viewer"] };
 
 const drawingIdParameter = {
@@ -1044,33 +1145,13 @@ export const openApiDocument = {
       },
     },
     schemas: {
+      // Hand-written: server-only shapes with no zod contract.
+      // ShareLinkStatus also stays manual — its discriminated oneOf is
+      // richer than the contract's refine().
       HealthStatus: {
         type: "object",
         properties: {
           status: { type: "string", enum: ["ok", "ready", "unavailable"] },
-        },
-      },
-      ProblemDetails: {
-        type: "object",
-        description: "RFC 9457 style problem document.",
-        required: ["code", "status", "title", "requestId"],
-        properties: {
-          code: {
-            type: "string",
-            description: "Stable machine-readable code.",
-          },
-          status: { type: "integer", minimum: 400, maximum: 599 },
-          title: { type: "string" },
-          detail: { type: "string" },
-          requestId: { type: "string" },
-          errors: {
-            type: "object",
-            description: "Per-field validation messages.",
-            additionalProperties: {
-              type: "array",
-              items: { type: "string" },
-            },
-          },
         },
       },
       AdminError: {
@@ -1086,174 +1167,6 @@ export const openApiDocument = {
           expiresAt: isoDateTime,
           reason: { type: "string" },
           url: { type: "string", format: "uri" },
-        },
-      },
-      AuthCapabilities: {
-        type: "object",
-        required: [
-          "emailPassword",
-          "google",
-          "github",
-          "oidc",
-          "oidcProviderName",
-          "signupsDisabled",
-          "smtp",
-        ],
-        properties: {
-          emailPassword: { type: "boolean" },
-          google: { type: "boolean" },
-          github: { type: "boolean" },
-          oidc: { type: "boolean" },
-          oidcProviderName: { type: "string", minLength: 1 },
-          signupsDisabled: { type: "boolean" },
-          smtp: { type: "boolean" },
-        },
-      },
-      CurrentUser: {
-        type: "object",
-        required: [
-          "id",
-          "email",
-          "name",
-          "image",
-          "emailVerified",
-          "isAdmin",
-          "createdAt",
-        ],
-        properties: {
-          id: uuid,
-          email: { type: "string", format: "email" },
-          name: { type: "string", maxLength: 120 },
-          image: { type: "string", format: "uri", nullable: true },
-          emailVerified: { type: "boolean" },
-          isAdmin: {
-            type: "boolean",
-            description:
-              "Whether this user has a verified email listed in `ADMIN_EMAILS`.",
-          },
-          createdAt: isoDateTime,
-        },
-      },
-      SessionResponse: {
-        type: "object",
-        required: ["user", "capabilities"],
-        properties: {
-          user: { ...ref("CurrentUser"), nullable: true },
-          capabilities: ref("AuthCapabilities"),
-        },
-      },
-      DrawingSummary: {
-        type: "object",
-        required: [
-          "id",
-          "title",
-          "ownerUserId",
-          "ownerName",
-          "role",
-          "tags",
-          "contentRevision",
-          "metadataRevision",
-          "createdAt",
-          "updatedAt",
-        ],
-        properties: {
-          id: uuid,
-          title: { type: "string", maxLength: 120 },
-          ownerUserId: uuid,
-          ownerName: { type: "string", maxLength: 120 },
-          role: role,
-          tags: {
-            type: "array",
-            maxItems: 20,
-            items: { type: "string", maxLength: 32 },
-            description: "The requesting user's private tags.",
-          },
-          contentRevision: revision,
-          metadataRevision: revision,
-          createdAt: isoDateTime,
-          updatedAt: isoDateTime,
-          thumbnailUpdatedAt: {
-            ...isoDateTime,
-            nullable: true,
-            description:
-              "When the dashboard thumbnail was last replaced; null until " +
-              "a client has rendered one.",
-          },
-          isTemplate: {
-            type: "boolean",
-            description:
-              "Templates appear in the dashboard's " +
-              "“New from template” list.",
-          },
-        },
-      },
-      DrawingListResponse: {
-        type: "object",
-        required: ["owned", "shared", "nextCursor"],
-        properties: {
-          owned: { type: "array", items: ref("DrawingSummary") },
-          shared: { type: "array", items: ref("DrawingSummary") },
-          nextCursor: { type: "string", nullable: true },
-        },
-      },
-      TrashedDrawing: {
-        allOf: [
-          ref("DrawingSummary"),
-          {
-            type: "object",
-            required: ["deletedAt"],
-            properties: {
-              deletedAt: {
-                ...isoDateTime,
-                description: "When the drawing was moved to the trash.",
-              },
-            },
-          },
-        ],
-      },
-      TrashListResponse: {
-        type: "object",
-        required: ["drawings"],
-        properties: {
-          drawings: { type: "array", items: ref("TrashedDrawing") },
-        },
-      },
-      CreateDrawingRequest: {
-        type: "object",
-        required: ["title"],
-        additionalProperties: false,
-        properties: {
-          title: { type: "string", minLength: 1, maxLength: 120 },
-          idempotencyKey: uuid,
-        },
-      },
-      DuplicateDrawingRequest: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          idempotencyKey: uuid,
-        },
-      },
-      UpdateDrawingRequest: {
-        type: "object",
-        required: ["title", "metadataRevision"],
-        additionalProperties: false,
-        properties: {
-          title: { type: "string", minLength: 1, maxLength: 120 },
-          metadataRevision: revision,
-          isTemplate: { type: "boolean" },
-        },
-      },
-      SetDrawingTagsRequest: {
-        type: "object",
-        required: ["tags"],
-        additionalProperties: false,
-        properties: {
-          tags: {
-            type: "array",
-            maxItems: 20,
-            items: { type: "string", minLength: 1, maxLength: 32 },
-          },
         },
       },
       ShareLinkStatus: {
@@ -1282,87 +1195,6 @@ export const openApiDocument = {
           },
         ],
       },
-      CreateShareLinkResponse: {
-        type: "object",
-        required: ["url", "createdAt"],
-        additionalProperties: false,
-        properties: {
-          url: { type: "string", format: "uri" },
-          createdAt: isoDateTime,
-        },
-      },
-      SharedDrawing: {
-        type: "object",
-        required: ["drawingId", "title", "scene", "revision"],
-        additionalProperties: false,
-        properties: {
-          drawingId: uuid,
-          title: { type: "string", maxLength: 120 },
-          scene: ref("SceneEnvelope"),
-          revision: revision,
-        },
-      },
-      SceneEnvelope: {
-        type: "object",
-        description: "Excalidraw scene export envelope.",
-        required: ["type", "version", "source", "elements", "appState"],
-        properties: {
-          type: { type: "string", enum: ["excalidraw"] },
-          version: { type: "integer", minimum: 0 },
-          source: { type: "string", maxLength: 2048 },
-          elements: {
-            type: "array",
-            maxItems: 50000,
-            items: {
-              type: "object",
-              description:
-                "Excalidraw element; extra properties are preserved.",
-              required: ["id", "type", "version", "versionNonce", "isDeleted"],
-              properties: {
-                id: { type: "string" },
-                type: { type: "string" },
-                version: { type: "integer" },
-                versionNonce: { type: "integer" },
-                isDeleted: { type: "boolean" },
-              },
-            },
-          },
-          appState: { type: "object" },
-        },
-      },
-      ContentResponse: {
-        type: "object",
-        required: ["revision", "scene", "assetIds", "savedAt"],
-        properties: {
-          revision: revision,
-          scene: ref("SceneEnvelope"),
-          assetIds: {
-            type: "array",
-            items: { type: "string" },
-            description: "File ids of every asset the scene references.",
-          },
-          savedAt: isoDateTime,
-        },
-      },
-      SaveContentRequest: {
-        type: "object",
-        required: ["scene", "assetIds"],
-        additionalProperties: false,
-        properties: {
-          scene: ref("SceneEnvelope"),
-          assetIds: {
-            type: "array",
-            items: { type: "string" },
-            description:
-              "Sorted, de-duplicated manifest of every referenced asset.",
-          },
-        },
-      },
-      SaveContentResponse: {
-        type: "object",
-        required: ["revision", "savedAt"],
-        properties: { revision: revision, savedAt: isoDateTime },
-      },
       RevisionListResponse: {
         type: "object",
         required: ["revisions"],
@@ -1386,168 +1218,12 @@ export const openApiDocument = {
           },
         },
       },
-      AdminOverview: {
-        type: "object",
-        required: ["users", "drawings", "storageBytes"],
-        properties: {
-          users: { type: "integer", minimum: 0 },
-          drawings: {
-            type: "integer",
-            minimum: 0,
-            description: "Active (non-trashed) drawings.",
-          },
-          storageBytes: {
-            type: "integer",
-            minimum: 0,
-            description: "Total bytes of active drawing assets.",
-          },
-        },
-      },
-      AdminUser: {
-        type: "object",
-        required: [
-          "id",
-          "name",
-          "email",
-          "emailVerified",
-          "createdAt",
-          "disabledAt",
-          "drawingCount",
-        ],
-        properties: {
-          id: uuid,
-          name: { type: "string", maxLength: 120 },
-          email: { type: "string", format: "email" },
-          emailVerified: { type: "boolean" },
-          createdAt: isoDateTime,
-          disabledAt: {
-            ...isoDateTime,
-            nullable: true,
-            description: "Null when active; a timestamp when disabled.",
-          },
-          drawingCount: {
-            type: "integer",
-            minimum: 0,
-            description: "Active drawings the user owns.",
-          },
-        },
-      },
-      AdminUserList: {
-        type: "object",
-        required: ["users", "total"],
-        properties: {
-          users: { type: "array", items: ref("AdminUser") },
-          total: {
-            type: "integer",
-            minimum: 0,
-            description: "Users matching the search, ignoring the limit.",
-          },
-        },
-      },
-      LibraryItem: {
-        type: "object",
-        description:
-          "An Excalidraw library item; extra properties are preserved.",
-        required: ["id"],
-        properties: { id: { type: "string", minLength: 1, maxLength: 256 } },
-      },
-      LibraryResponse: {
-        type: "object",
-        required: ["items", "updatedAt"],
-        additionalProperties: false,
-        properties: {
-          items: {
-            type: "array",
-            maxItems: 500,
-            items: ref("LibraryItem"),
-          },
-          updatedAt: isoDateTime,
-        },
-      },
-      SaveLibraryRequest: {
-        type: "object",
-        required: ["items"],
-        additionalProperties: false,
-        properties: {
-          items: {
-            type: "array",
-            maxItems: 500,
-            items: ref("LibraryItem"),
-          },
-        },
-      },
-      DrawingMember: {
-        type: "object",
-        required: ["userId", "email", "name", "image", "role", "createdAt"],
-        properties: {
-          userId: uuid,
-          email: { type: "string", format: "email" },
-          name: { type: "string", maxLength: 120 },
-          image: { type: "string", format: "uri", nullable: true },
-          role: role,
-          createdAt: isoDateTime,
-        },
-      },
-      Invitation: {
-        type: "object",
-        required: [
-          "id",
-          "drawingId",
-          "email",
-          "role",
-          "status",
-          "expiresAt",
-          "createdAt",
-        ],
-        properties: {
-          id: uuid,
-          drawingId: uuid,
-          email: { type: "string", format: "email" },
-          role: memberRole,
-          status: {
-            type: "string",
-            enum: ["pending", "accepted", "revoked", "expired"],
-          },
-          expiresAt: isoDateTime,
-          createdAt: isoDateTime,
-        },
-      },
       MemberListResponse: {
         type: "object",
         required: ["members", "invitations"],
         properties: {
           members: { type: "array", items: ref("DrawingMember") },
           invitations: { type: "array", items: ref("Invitation") },
-        },
-      },
-      CreateInvitationRequest: {
-        type: "object",
-        required: ["email", "role"],
-        additionalProperties: false,
-        properties: {
-          email: { type: "string", format: "email" },
-          role: memberRole,
-        },
-      },
-      CreateInvitationResponse: {
-        type: "object",
-        required: ["deliveryStatus"],
-        description:
-          "Exactly one of `membership` (the email already had an account) " +
-          "or `invitation` is present.",
-        properties: {
-          membership: ref("DrawingMember"),
-          invitation: ref("Invitation"),
-          deliveryStatus: {
-            type: "string",
-            enum: ["sent", "manual", "failed", "not-needed"],
-          },
-          manualUrl: {
-            type: "string",
-            format: "uri",
-            description:
-              "Invitation link for manual delivery when email was not sent.",
-          },
         },
       },
       InvitationInspectResponse: {
@@ -1563,60 +1239,7 @@ export const openApiDocument = {
         required: ["membership"],
         properties: { membership: ref("DrawingMember") },
       },
-      ChatMessage: {
-        type: "object",
-        required: [
-          "id",
-          "drawingId",
-          "userId",
-          "authorName",
-          "body",
-          "createdAt",
-        ],
-        properties: {
-          id: uuid,
-          drawingId: uuid,
-          userId: uuid,
-          authorName: { type: "string", maxLength: 120 },
-          body: { type: "string", maxLength: 4000 },
-          createdAt: isoDateTime,
-        },
-      },
-      ChatHistoryResponse: {
-        type: "object",
-        required: ["messages", "nextCursor"],
-        properties: {
-          messages: { type: "array", items: ref("ChatMessage") },
-          nextCursor: {
-            type: "string",
-            nullable: true,
-            description: "Pass as `before` to fetch the next older page.",
-          },
-        },
-      },
-      AssetMetadata: {
-        type: "object",
-        required: [
-          "id",
-          "drawingId",
-          "fileId",
-          "mimeType",
-          "byteSize",
-          "sha256",
-          "fileVersion",
-          "createdAt",
-        ],
-        properties: {
-          id: uuid,
-          drawingId: uuid,
-          fileId: { type: "string", maxLength: 256 },
-          mimeType: { type: "string" },
-          byteSize: { type: "integer", minimum: 0 },
-          sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
-          fileVersion: { type: "integer", minimum: 1, nullable: true },
-          createdAt: isoDateTime,
-        },
-      },
+      ...generatedSchemas,
     },
   },
 };

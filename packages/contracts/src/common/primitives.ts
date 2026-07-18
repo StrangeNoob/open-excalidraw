@@ -4,7 +4,12 @@ import { CONTRACT_LIMITS } from "../limits.js";
 
 export const uuidSchema = z.string().uuid();
 export const isoDateTimeSchema = z.string().datetime({ offset: true });
-export const revisionSchema = z.string().regex(/^(0|[1-9]\d*)$/);
+export const revisionSchema = z
+  .string()
+  .regex(/^(0|[1-9]\d*)$/)
+  .meta({
+    description: "Monotonically increasing revision, serialized as a string.",
+  });
 export const roleSchema = z.enum(["owner", "editor", "viewer"]);
 export const memberRoleSchema = z.enum(["editor", "viewer"]);
 export const fileIdSchema = z
