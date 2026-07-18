@@ -344,7 +344,7 @@ const AuthPage = ({ mode }: { mode: AuthPageMode }) => {
           </div>
         ) : null}
 
-        {isSignUp || !signupsDisabled ? (
+        {!signupsDisabled ? (
           <p>
             {isSignUp ? "Already have an account?" : "New to Open Excalidraw?"}{" "}
             <Link
