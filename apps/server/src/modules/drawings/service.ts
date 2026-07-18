@@ -26,15 +26,20 @@ export class DrawingService {
     userId: string,
     input: CreateDrawingRequest,
   ): Promise<DrawingSummary> {
-    return toDrawingSummary(
-      await this.repository.create({
-        ownerUserId: userId,
-        title: input.title,
-        ...(input.idempotencyKey
-          ? { idempotencyKey: input.idempotencyKey }
-          : {}),
-      }),
-    );
+    const result = await this.repository.create({
+      ownerUserId: userId,
+      title: input.title,
+      ...(input.id ? { id: input.id } : {}),
+      ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+    });
+    if (result.status === "conflict") {
+      throw new DrawingDomainError(
+        "DRAWING_ID_CONFLICT",
+        409,
+        "This drawing id already belongs to another user",
+      );
+    }
+    return toDrawingSummary(result.drawing);
   }
 
   public async get(userId: string, drawingId: string): Promise<DrawingSummary> {

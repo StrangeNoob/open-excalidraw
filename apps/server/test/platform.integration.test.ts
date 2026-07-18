@@ -180,6 +180,23 @@ describe("Wave 2 platform flow", () => {
         [drawingId],
       );
       expect(drawingCount.rows[0]?.count).toBe("1");
+
+      // Offline clients may mint the primary key themselves. The owner
+      // re-sending the same id (a lost-response retry) replays the original
+      // drawing instead of conflicting.
+      const offlineId = "f0e1d2c3-b4a5-4967-8899-aabbccddeeff";
+      const offlineCreate = await agent
+        .post("/api/v1/drawings")
+        .send({ title: "Offline drawing", id: offlineId })
+        .expect(201);
+      expect(offlineCreate.body.id).toBe(offlineId);
+      const offlineReplay = await agent
+        .post("/api/v1/drawings")
+        .send({ title: "Retried offline drawing", id: offlineId })
+        .expect(201);
+      expect(offlineReplay.body.id).toBe(offlineId);
+      expect(offlineReplay.body.title).toBe("Offline drawing");
+
       const checksum = createHash("sha256").update(PNG).digest("hex");
 
       await agent

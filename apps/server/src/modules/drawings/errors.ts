@@ -3,6 +3,7 @@ import type { ProblemDetails } from "@open-excalidraw/contracts";
 export type DrawingErrorCode =
   | "AUTHENTICATION_REQUIRED"
   | "DRAWING_NOT_FOUND"
+  | "DRAWING_ID_CONFLICT"
   | "FORBIDDEN"
   | "METADATA_VERSION_CONFLICT"
   | "OWNER_CANNOT_LEAVE"

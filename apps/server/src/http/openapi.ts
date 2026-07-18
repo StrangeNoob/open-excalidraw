@@ -411,11 +411,17 @@ export const openApiDocument = {
       post: {
         tags: ["Drawings"],
         summary: "Create a drawing",
+        description:
+          "A client may supply its own `id` (offline-created drawings mint " +
+          "the primary key locally); omitting it lets the server assign one.",
         requestBody: jsonBody(ref("CreateDrawingRequest")),
         responses: {
           "201": json("The created drawing.", ref("DrawingSummary")),
           "400": invalidRequest,
           "401": unauthorized,
+          "409": problem(
+            "`DRAWING_ID_CONFLICT`: the supplied id belongs to another user. Re-creating an id you own replays the existing drawing.",
+          ),
         },
       },
     },

@@ -93,6 +93,24 @@ describe("drawing and sharing contracts", () => {
       }),
     ).toEqual({ email: "person@example.com", role: "editor" });
   });
+
+  it("accepts an optional client-supplied drawing id and rejects malformed ids", () => {
+    // Omitting the id is valid — the server assigns one.
+    expect(
+      createDrawingRequestSchema.parse({ title: "No id" }).id,
+    ).toBeUndefined();
+
+    const parsed = createDrawingRequestSchema.parse({
+      title: "Offline",
+      id: drawingId,
+    });
+    expect(parsed.id).toBe(drawingId);
+
+    expect(
+      createDrawingRequestSchema.safeParse({ title: "Bad", id: "not-a-uuid" })
+        .success,
+    ).toBe(false);
+  });
 });
 
 describe("admin contracts", () => {

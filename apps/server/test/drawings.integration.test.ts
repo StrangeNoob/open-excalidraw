@@ -11,6 +11,7 @@ import {
   createDrawingRouter,
   DrawingService,
   type AccessibleDrawing,
+  type CreateDrawingResult,
   type DrawingRepository,
   type RenameDrawingResult,
   type TransferOwnershipResult,
@@ -312,6 +313,60 @@ describe("drawing HTTP domain", () => {
     expect(fresh.body.id).not.toBe(first.body.id);
   });
 
+  it("creates a drawing at a client-supplied id, replays the owner's retry, and rejects another user's reuse with 409", async () => {
+    const fixture = createFixture();
+    const clientId = randomUUID();
+
+    const created = await request(fixture.app)
+      .post("/api/v1/drawings")
+      .set("x-test-user", ownerId)
+      .send({ title: "Offline sketch", id: clientId });
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({
+      id: clientId,
+      title: "Offline sketch",
+      ownerUserId: ownerId,
+      role: "owner",
+    });
+
+    // The owner re-sending the same id (a lost-response retry) replays the
+    // original drawing — even when the retry carries a different title.
+    const replay = await request(fixture.app)
+      .post("/api/v1/drawings")
+      .set("x-test-user", ownerId)
+      .send({ title: "Retry title", id: clientId });
+    expect(replay.status).toBe(201);
+    expect(replay.body).toMatchObject({
+      id: clientId,
+      title: "Offline sketch",
+    });
+
+    // Another user reusing the taken id is a genuine conflict.
+    const conflict = await request(fixture.app)
+      .post("/api/v1/drawings")
+      .set("x-test-user", editorId)
+      .send({ title: "Clashing", id: clientId });
+    expect(conflict.status).toBe(409);
+    expect(conflict.type).toBe("application/problem+json");
+    expect(conflict.body.code).toBe("DRAWING_ID_CONFLICT");
+
+    // A malformed id never reaches the repository.
+    const malformed = await request(fixture.app)
+      .post("/api/v1/drawings")
+      .set("x-test-user", ownerId)
+      .send({ title: "Bad id", id: "not-a-uuid" });
+    expect(malformed.status).toBe(400);
+    expect(malformed.body.code).toBe("INVALID_REQUEST");
+
+    // Omitting the id keeps the server-assigned default.
+    const assigned = await request(fixture.app)
+      .post("/api/v1/drawings")
+      .set("x-test-user", ownerId)
+      .send({ title: "Server assigned" });
+    expect(assigned.status).toBe(201);
+    expect(assigned.body.id).not.toBe(clientId);
+  });
+
   it("toggles the template flag through PATCH with rename semantics", async () => {
     const fixture = createFixture();
     const drawing = fixture.repository.seed(ownerId, "Base", "owner");
@@ -581,8 +636,38 @@ class InMemoryDrawingRepository implements DrawingRepository {
     return Promise.resolve();
   }
 
-  public create(input: { ownerUserId: string; title: string }) {
-    return Promise.resolve(this.seed(input.ownerUserId, input.title, "owner"));
+  public create(input: {
+    ownerUserId: string;
+    title: string;
+    id?: string;
+    idempotencyKey?: string;
+  }): Promise<CreateDrawingResult> {
+    const existing = input.id ? this.drawings.get(input.id) : undefined;
+    if (existing) {
+      // Same-owner reuse replays the existing drawing; another user's id
+      // is a genuine conflict.
+      return Promise.resolve(
+        existing.ownerUserId === input.ownerUserId
+          ? {
+              status: "created",
+              drawing: { ...existing, role: "owner" as const },
+            }
+          : { status: "conflict" },
+      );
+    }
+    const seeded = this.seed(input.ownerUserId, input.title, "owner");
+    if (!input.id) {
+      return Promise.resolve({ status: "created", drawing: seeded });
+    }
+    // Re-key the seeded drawing under the client-supplied id.
+    const stored = this.drawings.get(seeded.id)!;
+    this.drawings.delete(seeded.id);
+    stored.id = input.id;
+    this.drawings.set(input.id, stored);
+    return Promise.resolve({
+      status: "created",
+      drawing: { ...stored, role: "owner" },
+    });
   }
 
   public readonly duplicatesByKey = new Map<string, string>();

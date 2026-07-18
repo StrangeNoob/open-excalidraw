@@ -79,6 +79,10 @@ export const trashListResponseSchema = z
 
 export const createDrawingRequestSchema = z
   .object({
+    // Offline-created drawings mint their own primary key client-side; when
+    // omitted the server assigns one. Re-creating an id you own replays the
+    // existing drawing (retry-safe); an id owned by another user yields 409.
+    id: uuidSchema.optional(),
     title: drawingTitleSchema,
     idempotencyKey: uuidSchema.optional(),
   })
