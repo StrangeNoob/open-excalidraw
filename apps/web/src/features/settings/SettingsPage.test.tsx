@@ -21,6 +21,7 @@ const session: SessionResponse = {
     google: false,
     oidc: true,
     oidcProviderName: "Keycloak",
+    signupsDisabled: false,
     smtp: false,
   },
   user: {

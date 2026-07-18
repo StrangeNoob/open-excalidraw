@@ -68,7 +68,9 @@ comma-separated allowlist to unlock the admin page (instance counts plus a user
 list with disable and delete). Each admin's account email must be verified —
 via the SMTP verification email or an OAuth/OIDC sign-in — so with SMTP disabled
 and password-only auth, admin access requires an OAuth/OIDC-verified account.
-See the
+Set `DISABLE_SIGNUPS=true` to block all new account registration
+(email/password and OAuth/OIDC) while existing users keep signing in; it
+defaults to `false`. See the
 [deployment runbook](docs/operations/deployment.md) for HTTPS, managed
 database, and one-click Railway template options.
 

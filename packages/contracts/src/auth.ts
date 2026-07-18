@@ -9,6 +9,7 @@ export const authCapabilitiesSchema = z
     github: z.boolean(),
     oidc: z.boolean(),
     oidcProviderName: z.string().min(1),
+    signupsDisabled: z.boolean(),
     smtp: z.boolean(),
   })
   .strict();

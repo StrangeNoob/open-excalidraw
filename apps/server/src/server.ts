@@ -86,6 +86,7 @@ const emailHeroImageUrl = new URL("/icon-512.png", baseUrl).toString();
 const allowedBrowserOrigins = browserAllowedOrigins(baseUrl);
 const secret = requiredEnvironment("BETTER_AUTH_SECRET");
 const smtpEnabled = Boolean(process.env.SMTP_HOST?.trim());
+const disableSignups = process.env.DISABLE_SIGNUPS === "true";
 const adminResetToken = process.env.ADMIN_RESET_TOKEN?.trim();
 if (!smtpEnabled && (!adminResetToken || adminResetToken.length < 32)) {
   throw new Error(
@@ -104,6 +105,7 @@ const auth = createOpenExcalidrawAuth({
   baseUrl,
   secret,
   smtpEnabled,
+  disableSignups,
   manualResetLinks,
   heroImageUrl: emailHeroImageUrl,
   trustedOrigins: allowedBrowserOrigins,
@@ -333,6 +335,7 @@ const app = createApp({
       identity,
       capabilities: authCapabilities({
         smtpEnabled,
+        disableSignups,
         ...(google ? { google } : {}),
         ...(github ? { github } : {}),
         ...(oidc ? { oidc } : {}),

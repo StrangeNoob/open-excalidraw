@@ -1096,6 +1096,7 @@ export const openApiDocument = {
           "github",
           "oidc",
           "oidcProviderName",
+          "signupsDisabled",
           "smtp",
         ],
         properties: {
@@ -1104,6 +1105,7 @@ export const openApiDocument = {
           github: { type: "boolean" },
           oidc: { type: "boolean" },
           oidcProviderName: { type: "string", minLength: 1 },
+          signupsDisabled: { type: "boolean" },
           smtp: { type: "boolean" },
         },
       },

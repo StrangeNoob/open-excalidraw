@@ -30,6 +30,7 @@ const NO_AUTH_CAPABILITIES: AuthCapabilities = {
   google: false,
   oidc: false,
   oidcProviderName: "SSO",
+  signupsDisabled: false,
   smtp: false,
 };
 

@@ -132,6 +132,10 @@ percent-encoded password. OAuth providers are disabled when their client ID or
 secret is blank. SMTP is disabled when `SMTP_HOST` is blank; invitation links
 remain available for an owner to copy manually.
 
+Set `DISABLE_SIGNUPS=true` to block all new account registration —
+email/password, Google, GitHub, and OIDC alike — while existing users keep
+signing in. It defaults to `false` (open registration).
+
 Set `ADMIN_EMAILS` to a comma-separated allowlist to grant those accounts the
 admin page — an instance overview (users, drawings, storage) plus a user list
 with disable, enable, and delete. Disabling revokes a user's sessions and

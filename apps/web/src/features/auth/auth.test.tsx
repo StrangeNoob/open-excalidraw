@@ -36,6 +36,7 @@ const anonymousSession: SessionResponse = {
     google: false,
     oidc: true,
     oidcProviderName: "Keycloak",
+    signupsDisabled: false,
     smtp: false,
   },
   user: null,
@@ -302,6 +303,45 @@ describe("auth pages", () => {
       name: "Ada",
       password: "correct-horse",
     });
+  });
+
+  it("replaces the sign-up form with a notice when signups are disabled", async () => {
+    const client = new FakeAuthClient();
+    client.getSession.mockResolvedValue({
+      ...anonymousSession,
+      capabilities: { ...anonymousSession.capabilities, signupsDisabled: true },
+    });
+    renderAuthRoute("/signup", client, "signup");
+
+    expect(
+      await screen.findByRole("heading", { name: "Signups are disabled" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Name")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Create account" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Sign in" })).toBeInTheDocument();
+  });
+
+  it("hides the create-account link on sign in only when signups are disabled", async () => {
+    const enabled = new FakeAuthClient();
+    enabled.getSession.mockResolvedValue(anonymousSession);
+    const { unmount } = renderAuthRoute("/login", enabled);
+    expect(
+      await screen.findByRole("link", { name: "Create an account" }),
+    ).toBeInTheDocument();
+    unmount();
+
+    const disabled = new FakeAuthClient();
+    disabled.getSession.mockResolvedValue({
+      ...anonymousSession,
+      capabilities: { ...anonymousSession.capabilities, signupsDisabled: true },
+    });
+    renderAuthRoute("/login", disabled);
+    await screen.findByRole("button", { name: "Sign in" });
+    expect(
+      screen.queryByRole("link", { name: "Create an account" }),
+    ).not.toBeInTheDocument();
   });
 
   it("preserves an invitation return path while email verification is pending", async () => {

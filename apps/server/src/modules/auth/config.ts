@@ -54,6 +54,8 @@ export interface CreateAuthInput {
   google?: OAuthProviderCredentials;
   github?: OAuthProviderCredentials;
   oidc?: OidcProviderConfig;
+  /** Block new-account creation across every provider; existing users still sign in. */
+  disableSignups?: boolean;
   sessionExpiresInSeconds?: number;
   manualResetLinks?: ManualResetLinkSink;
   productName?: string;
@@ -75,13 +77,14 @@ export function buildBetterAuthOptions(
     input.sessionExpiresInSeconds ?? DEFAULT_SESSION_SECONDS;
   const manualResetLinks =
     input.manualResetLinks ?? new DisabledManualResetLinkSink();
+  const disableSignUp = input.disableSignups ?? false;
   const socialProviders: NonNullable<BetterAuthOptions["socialProviders"]> = {};
 
   if (hasCompleteCredentials(input.google)) {
-    socialProviders.google = input.google;
+    socialProviders.google = { ...input.google, disableSignUp };
   }
   if (hasCompleteCredentials(input.github)) {
-    socialProviders.github = input.github;
+    socialProviders.github = { ...input.github, disableSignUp };
   }
 
   const adapter = withHashedSessionTokens(
@@ -168,6 +171,7 @@ export function buildBetterAuthOptions(
     },
     emailAndPassword: {
       enabled: true,
+      disableSignUp,
       minPasswordLength: 12,
       maxPasswordLength: 128,
       // Unverified users may sign in and use the app; verification is nudged
@@ -232,6 +236,7 @@ export function buildBetterAuthOptions(
                   clientSecret: input.oidc.clientSecret,
                   scopes: ["openid", "profile", "email"],
                   pkce: true,
+                  disableSignUp,
                 },
               ],
             }),
@@ -293,6 +298,7 @@ export function authCapabilities(input: {
   google?: OAuthProviderCredentials;
   github?: OAuthProviderCredentials;
   oidc?: OidcProviderConfig;
+  disableSignups?: boolean;
 }): AuthCapabilities {
   return {
     emailPassword: true,
@@ -300,6 +306,7 @@ export function authCapabilities(input: {
     github: hasCompleteCredentials(input.github),
     oidc: hasCompleteOidc(input.oidc),
     oidcProviderName: input.oidc?.providerName?.trim() || "SSO",
+    signupsDisabled: Boolean(input.disableSignups),
     smtp: input.smtpEnabled,
   };
 }

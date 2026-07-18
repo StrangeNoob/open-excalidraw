@@ -116,6 +116,7 @@ const buildSession = (isAdmin: boolean): SessionResponse => ({
     google: false,
     oidc: false,
     oidcProviderName: "SSO",
+    signupsDisabled: false,
     smtp: false,
   },
   user: {

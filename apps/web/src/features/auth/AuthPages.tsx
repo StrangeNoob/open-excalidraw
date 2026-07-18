@@ -77,6 +77,7 @@ const AuthPage = ({ mode }: { mode: AuthPageMode }) => {
     null,
   );
   const isSignUp = mode === "signup";
+  const signupsDisabled = auth.capabilities.signupsDisabled;
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -159,6 +160,29 @@ const AuthPage = ({ mode }: { mode: AuthPageMode }) => {
       setSubmitting(false);
     }
   };
+
+  if (isSignUp && signupsDisabled) {
+    return (
+      <main className="auth-page">
+        <section aria-labelledby="auth-title" className="auth-card">
+          <Link className="auth-brand" to="/">
+            <BrandMark size={26} />
+            Open Excalidraw
+          </Link>
+          <h1 id="auth-title">Signups are disabled</h1>
+          <p>
+            New registrations are turned off on this instance. Contact your
+            administrator for access.
+          </p>
+          <p>
+            <Link to={`/login?returnTo=${encodeURIComponent(returnPath)}`}>
+              Sign in
+            </Link>
+          </p>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="auth-page">
@@ -320,14 +344,16 @@ const AuthPage = ({ mode }: { mode: AuthPageMode }) => {
           </div>
         ) : null}
 
-        <p>
-          {isSignUp ? "Already have an account?" : "New to Open Excalidraw?"}{" "}
-          <Link
-            to={`${isSignUp ? "/login" : "/signup"}?returnTo=${encodeURIComponent(returnPath)}`}
-          >
-            {isSignUp ? "Sign in" : "Create an account"}
-          </Link>
-        </p>
+        {!signupsDisabled ? (
+          <p>
+            {isSignUp ? "Already have an account?" : "New to Open Excalidraw?"}{" "}
+            <Link
+              to={`${isSignUp ? "/login" : "/signup"}?returnTo=${encodeURIComponent(returnPath)}`}
+            >
+              {isSignUp ? "Sign in" : "Create an account"}
+            </Link>
+          </p>
+        ) : null}
         {!isSignUp ? (
           <p>
             <Link to="/forgot-password">Forgot your password?</Link>
