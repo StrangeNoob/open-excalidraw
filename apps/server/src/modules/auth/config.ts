@@ -139,7 +139,14 @@ export function buildBetterAuthOptions(
           // in-memory test adapter and production drizzle alike.
           before: async (session, context) => {
             const adapter = context?.context.adapter;
-            if (!adapter) return;
+            // Fail closed: without the adapter the disabled check cannot run,
+            // so refuse the session rather than skip the lockout guard.
+            if (!adapter) {
+              throw new APIError("INTERNAL_SERVER_ERROR", {
+                code: "SESSION_GUARD_UNAVAILABLE",
+                message: "Session guard unavailable",
+              });
+            }
             const account = await adapter.findOne<{ disabledAt: Date | null }>({
               model: "user",
               where: [{ field: "id", value: session.userId }],

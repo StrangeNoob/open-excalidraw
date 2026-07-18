@@ -5,6 +5,7 @@ import type {
 } from "@open-excalidraw/contracts";
 import type { Pool, PoolClient, QueryResultRow } from "pg";
 
+import { AdminDomainError } from "./errors.js";
 import type { AdminRepository, PurgeDrawing } from "./types.js";
 
 interface OverviewRow extends QueryResultRow {
@@ -90,11 +91,16 @@ export class PostgresAdminRepository implements AdminRepository {
   }): Promise<void> {
     await this.transaction(async (client) => {
       // COALESCE keeps the first-disable timestamp, so repeat calls are no-ops.
-      await client.query(
+      const updated = await client.query(
         `UPDATE "user" SET disabled_at = COALESCE(disabled_at, now())
          WHERE id = $1`,
         [input.targetUserId],
       );
+      // The row may have vanished after the service's existence check; a 0-row
+      // mutation must not leave a phantom audit event behind.
+      if (updated.rowCount === 0) {
+        throw new AdminDomainError("USER_NOT_FOUND", 404, "User not found");
+      }
       await client.query(`DELETE FROM "session" WHERE user_id = $1`, [
         input.targetUserId,
       ]);
@@ -108,9 +114,13 @@ export class PostgresAdminRepository implements AdminRepository {
     requestId: string;
   }): Promise<void> {
     await this.transaction(async (client) => {
-      await client.query(`UPDATE "user" SET disabled_at = NULL WHERE id = $1`, [
-        input.targetUserId,
-      ]);
+      const updated = await client.query(
+        `UPDATE "user" SET disabled_at = NULL WHERE id = $1`,
+        [input.targetUserId],
+      );
+      if (updated.rowCount === 0) {
+        throw new AdminDomainError("USER_NOT_FOUND", 404, "User not found");
+      }
       await insertAdminAudit(client, "admin.user_enabled", input);
     });
   }
@@ -147,9 +157,12 @@ export class PostgresAdminRepository implements AdminRepository {
     await this.transaction(async (client) => {
       // Cascades sessions/accounts; the migration-0011 SET NULL FKs null out
       // content the target authored in other users' drawings.
-      await client.query(`DELETE FROM "user" WHERE id = $1`, [
+      const deleted = await client.query(`DELETE FROM "user" WHERE id = $1`, [
         input.targetUserId,
       ]);
+      if (deleted.rowCount === 0) {
+        throw new AdminDomainError("USER_NOT_FOUND", 404, "User not found");
+      }
       await insertAdminAudit(client, "admin.user_deleted", input);
     });
   }

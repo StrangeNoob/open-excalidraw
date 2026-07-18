@@ -49,13 +49,24 @@ export class AdminService {
     // Disable first: revokes the target's sessions so it cannot create new
     // drawings between the purge and the RESTRICT-guarded user-row delete.
     await this.repository.disableUser(input);
+    const purge = () =>
+      this.repository.purgeOwnedDrawings({
+        ownerUserId: input.targetUserId,
+        requestId: input.requestId,
+      });
     // Purge before the row delete: the drawings.owner_user_id FK stays
     // RESTRICT, so the user row cannot be removed while it still owns drawings.
-    await this.repository.purgeOwnedDrawings({
-      ownerUserId: input.targetUserId,
-      requestId: input.requestId,
-    });
-    await this.repository.deleteUser(input);
+    await purge();
+    try {
+      await this.repository.deleteUser(input);
+    } catch (error) {
+      // An in-flight request whose identity resolved before session revocation
+      // can create a drawing after the purge snapshot, tripping the RESTRICT
+      // FK; re-purge and retry the delete once.
+      if (!isForeignKeyViolation(error)) throw error;
+      await purge();
+      await this.repository.deleteUser(input);
+    }
   }
 
   private async assertTargetable(input: TargetAction): Promise<void> {
@@ -78,7 +89,15 @@ export class AdminService {
 }
 
 function clampLimit(raw: string | undefined): number {
-  const value = Number.parseInt(raw ?? "", 10);
-  if (!Number.isFinite(value) || value < 1) return DEFAULT_LIMIT;
+  const trimmed = raw?.trim() ?? "";
+  // Only a whole number counts; parseInt would accept "50abc" or "1.9".
+  if (!/^\d+$/.test(trimmed)) return DEFAULT_LIMIT;
+  const value = Number.parseInt(trimmed, 10);
+  if (value < 1) return DEFAULT_LIMIT;
   return Math.min(value, MAX_LIMIT);
+}
+
+// Postgres foreign_key_violation; the drawings.owner_user_id RESTRICT FK.
+function isForeignKeyViolation(error: unknown): boolean {
+  return (error as { code?: string })?.code === "23503";
 }

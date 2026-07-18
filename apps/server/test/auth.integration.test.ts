@@ -51,6 +51,22 @@ describe("Better Auth configuration", () => {
     });
   });
 
+  it("fails session creation closed when the auth context adapter is missing", async () => {
+    const options = buildBetterAuthOptions({
+      database: {} as never,
+      mailer: new DisabledMailer(),
+      baseUrl: BASE_URL,
+      secret: SECRET,
+      smtpEnabled: false,
+    });
+    const before = options.databaseHooks?.session?.create?.before;
+    expect(before).toBeDefined();
+    // A missing hook context must refuse the session, not skip the guard.
+    await expect(
+      before!({ userId: randomUUID() } as never, undefined as never),
+    ).rejects.toThrow();
+  });
+
   it("reports OAuth and SMTP capabilities only when fully configured", () => {
     expect(
       authCapabilities({
@@ -775,7 +791,8 @@ describeDatabase("disabled account lockout", () => {
       .set("origin", BASE_URL)
       .set("x-forwarded-for", ip)
       .send({ email, password });
-    expect(after.status).toBeGreaterThanOrEqual(400);
+    expect(after.status).toBe(403);
+    expect(after.body.code).toBe("ACCOUNT_DISABLED");
     expect(after.body.user).toBeUndefined();
   });
 });

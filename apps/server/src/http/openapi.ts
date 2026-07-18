@@ -109,7 +109,7 @@ export const openApiDocument = {
       name: "Admin",
       description:
         "Operator endpoints: loopback-only recovery plus instance and user " +
-        "management gated on the `ADMIN_EMAILS` allowlist.",
+        "management gated on a verified email listed in `ADMIN_EMAILS`.",
     },
   ],
   security: [{ sessionCookie: [] }],
@@ -207,7 +207,7 @@ export const openApiDocument = {
         summary: "Instance counts",
         description:
           "Total users, active drawings, and active asset storage bytes. " +
-          "Restricted to callers whose email is in `ADMIN_EMAILS`.",
+          "Restricted to callers with a verified email listed in `ADMIN_EMAILS`.",
         responses: {
           "200": json("Instance counts.", ref("AdminOverview")),
           "401": unauthorized,
@@ -1126,7 +1126,8 @@ export const openApiDocument = {
           emailVerified: { type: "boolean" },
           isAdmin: {
             type: "boolean",
-            description: "Whether this user's email is in `ADMIN_EMAILS`.",
+            description:
+              "Whether this user has a verified email listed in `ADMIN_EMAILS`.",
           },
           createdAt: isoDateTime,
         },

@@ -240,7 +240,9 @@ describe("AdminPage", () => {
 
     await user.click(deleteButton);
     await waitFor(() => expect(api.deleteUser).toHaveBeenCalledWith(GRACE_ID));
-    expect(screen.queryByText("Grace")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByText("Grace")).not.toBeInTheDocument(),
+    );
     expect(confirm).toHaveBeenCalledTimes(2);
   });
 

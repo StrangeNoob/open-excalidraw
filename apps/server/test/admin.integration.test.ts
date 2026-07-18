@@ -103,6 +103,18 @@ describe("admin HTTP domain", () => {
       .set("x-test-user", adminId);
     expect(limited.body.users).toHaveLength(1);
     expect(limited.body.total).toBe(3);
+    expect(fixture.repository.lastLimit).toBe(1);
+
+    // Non-numeric or fractional limits fall back to the default, not parseInt's
+    // lenient "50abc" => 50 / "1.9" => 1.
+    await request(fixture.app)
+      .get("/api/v1/admin/users?limit=50abc")
+      .set("x-test-user", adminId);
+    expect(fixture.repository.lastLimit).toBe(50);
+    await request(fixture.app)
+      .get("/api/v1/admin/users?limit=1.9")
+      .set("x-test-user", adminId);
+    expect(fixture.repository.lastLimit).toBe(50);
   });
 
   it("disables another user and revokes their sessions but refuses self", async () => {
@@ -151,6 +163,27 @@ describe("admin HTTP domain", () => {
     expect(deleted.status).toBe(204);
     expect(fixture.repository.calls).toEqual([
       `disable:${target}`,
+      `purge:${target}`,
+      `delete:${target}`,
+    ]);
+    expect(fixture.repository.users.has(target)).toBe(false);
+  });
+
+  it("re-purges and retries once when the final delete hits the owner FK", async () => {
+    const fixture = createFixture();
+    const target = fixture.repository.seedUser({
+      name: "Racy",
+      email: "racy@example.test",
+    });
+    fixture.repository.failDeleteUserOnce = true;
+
+    const deleted = await request(fixture.app)
+      .delete(`/api/v1/admin/users/${target}`)
+      .set("x-test-user", adminId);
+    expect(deleted.status).toBe(204);
+    expect(fixture.repository.calls).toEqual([
+      `disable:${target}`,
+      `purge:${target}`,
       `purge:${target}`,
       `delete:${target}`,
     ]);
@@ -257,6 +290,12 @@ describeDatabase("admin persistence", () => {
   });
 
   afterAll(async () => {
+    // admin.user_* and drawing.purged rows all carry this suite's requestId;
+    // clean them so they do not accumulate in the shared test database.
+    await database.pool.query(
+      `DELETE FROM audit_events WHERE request_id = $1`,
+      [requestId],
+    );
     await database.pool.query(
       `DELETE FROM drawings WHERE id = ANY($1::uuid[])`,
       [[ownedDrawingId, otherDrawingId]],
@@ -331,6 +370,23 @@ describeDatabase("admin persistence", () => {
       requestId,
     });
     expect(await disabledAtFor(disableId)).toBeNull();
+  });
+
+  it("rejects mutating a vanished user and writes no phantom audit row", async () => {
+    const ghostId = randomUUID();
+    const ghostRequestId = `ghost-${ghostId}`;
+    await expect(
+      repository.disableUser({
+        actorUserId: actorId,
+        targetUserId: ghostId,
+        requestId: ghostRequestId,
+      }),
+    ).rejects.toMatchObject({ code: "USER_NOT_FOUND" });
+    const audit = await database.pool.query(
+      `SELECT 1 FROM audit_events WHERE request_id = $1`,
+      [ghostRequestId],
+    );
+    expect(audit.rowCount).toBe(0);
   });
 
   it("deletes a user, purges their drawings, and nulls foreign attribution", async () => {
@@ -440,6 +496,8 @@ class InMemoryAdminRepository implements AdminRepository {
   public readonly disabled = new Set<string>();
   public readonly sessionsRevoked = new Set<string>();
   public readonly calls: string[] = [];
+  public lastLimit = 0;
+  public failDeleteUserOnce = false;
   private seq = 0;
 
   public seedUser(input: { name: string; email: string }): string {
@@ -465,6 +523,7 @@ class InMemoryAdminRepository implements AdminRepository {
     search?: string;
     limit: number;
   }): Promise<AdminUserList> {
+    this.lastLimit = input.limit;
     const needle = input.search?.toLowerCase();
     const matched = [...this.users.values()]
       .filter(
@@ -502,6 +561,13 @@ class InMemoryAdminRepository implements AdminRepository {
   }
 
   public deleteUser(input: { targetUserId: string }): Promise<void> {
+    if (this.failDeleteUserOnce) {
+      this.failDeleteUserOnce = false;
+      // Shaped like a Postgres foreign_key_violation on drawings.owner_user_id.
+      return Promise.reject(
+        Object.assign(new Error("foreign key violation"), { code: "23503" }),
+      );
+    }
     this.calls.push(`delete:${input.targetUserId}`);
     this.users.delete(input.targetUserId);
     return Promise.resolve();
