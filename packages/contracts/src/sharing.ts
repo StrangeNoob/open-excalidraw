@@ -63,9 +63,10 @@ export const createInvitationResponseSchema = z
   })
   .strict()
   .refine(
-    (value) => value.membership !== undefined || value.invitation !== undefined,
+    (value) =>
+      (value.membership !== undefined) !== (value.invitation !== undefined),
     {
-      message: "A membership or invitation is required",
+      message: "Exactly one of membership or invitation is required",
     },
   )
   .meta({
