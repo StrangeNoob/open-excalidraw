@@ -11,6 +11,7 @@ import "@fontsource/gochi-hand";
 import "@fontsource-variable/nunito";
 
 import { AppProviders, createAppQueryClient } from "./app/providers";
+import "./app/register-sw";
 import { createAppRouter } from "./app/router";
 import "./app/styles.css";
 
