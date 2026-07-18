@@ -16,6 +16,12 @@ references the private database URL, and mounts a persistent volume at
 before each start. No user-entered variables are required. SMTP is optional:
 without it, owners copy invitation links for manual delivery.
 
+Setting the optional `ADMIN_EMAILS` variable (comma-separated) unlocks a
+built-in admin page with instance counts and user management. Admin access
+additionally requires the account's email to be verified, which happens
+through the SMTP verification link or a Google, GitHub, or OIDC sign-in —
+so configure one of those alongside `ADMIN_EMAILS`.
+
 The application service must run as exactly one replica: real-time
 collaboration state lives in-process, and the asset volume mounts to a
 single instance. Scaling out is unsupported.
@@ -30,6 +36,8 @@ single instance. Scaling out is unsupported.
   generic OIDC provider later through environment variables.
 - Real-time collaboration and chat run inside the single service with no
   extra infrastructure.
+- Manage users and watch instance usage (users, drawings, storage) from a
+  built-in admin page — no SQL required.
 - Move binary assets to any S3-compatible bucket later with the bundled
   migration CLI.
 
@@ -54,3 +62,5 @@ API, and Socket.IO collaboration from port 3000, persisting to PostgreSQL.
 - Private `${{Postgres.DATABASE_URL}}` service reference
 - Generated `BETTER_AUTH_SECRET` and `ADMIN_RESET_TOKEN`
 - Persistent volume at `/data/assets` for binary assets
+- Optional `ADMIN_EMAILS` for the admin page (requires a verified email via
+  SMTP or an OAuth/OIDC sign-in)
