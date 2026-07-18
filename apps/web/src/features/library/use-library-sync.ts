@@ -38,6 +38,8 @@ export const useLibrarySync = (
   const savingRef = useRef(false);
   const pendingRef = useRef<LibraryItems | null>(null);
   const retryRef = useRef(0);
+  const disposedRef = useRef(false);
+  const writeGenRef = useRef(0);
 
   const flush = useCallback(() => {
     // Re-arms the shared timer to resend a failed snapshot after an
@@ -67,6 +69,7 @@ export const useLibrarySync = (
       pendingRef.current = null;
       const serialized = JSON.stringify(items);
       savingRef.current = true;
+      writeGenRef.current += 1;
       void client
         .save(items)
         .then(() => {
@@ -86,6 +89,12 @@ export const useLibrarySync = (
             error.status !== 408 &&
             error.status !== 429
           ) {
+            console.warn("Could not save your library.", error);
+            return;
+          }
+          // After the final unmount nothing owns a retry chain; a zombie
+          // timer could later overwrite a newer editor session's writes.
+          if (disposedRef.current) {
             console.warn("Could not save your library.", error);
             return;
           }
@@ -119,24 +128,44 @@ export const useLibrarySync = (
     [debounceMs, flush],
   );
 
+  // Marks the final unmount only: api/client re-runs must keep the queue and
+  // retry machinery alive, so this lives in its own mount-lifetime effect.
+  // After disposal a failed save must not arm a retry timer (see drain).
+  useEffect(() => {
+    disposedRef.current = false;
+    return () => {
+      disposedRef.current = true;
+    };
+  }, []);
+
   useEffect(() => {
     if (!api) {
       return;
     }
     let active = true;
     loadedRef.current = false;
+    // The cleanup flush starts its PUT before this effect runs, so remember
+    // both any write outstanding as the GET begins and the write generation,
+    // to catch a write that starts — and even settles — during the GET.
+    const writeGenAtLoad = writeGenRef.current;
+    const writeAheadAtLoad = savingRef.current || pendingRef.current !== null;
     void client
       .load()
       .then((library) => {
         if (!active) {
           return;
         }
-        // A save from a previous effect generation is still outstanding (refs
-        // survive re-runs; cleanup flushes a pending snapshot fire-and-forget,
-        // e.g. switching drawings within the debounce window), so local state
-        // is ahead of this GET and applying it would resurrect stale items.
-        // Open saving and let the in-flight save's .then set lastSyncedRef.
-        if (savingRef.current || pendingRef.current !== null) {
+        // A save was outstanding when this GET began, or one has started
+        // since — even if it already settled and cleared savingRef/pendingRef
+        // (the generation token catches that). The response may predate that
+        // PUT, so local state is ahead and applying it would resurrect stale
+        // items. Open saving and let the save's .then own lastSyncedRef.
+        if (
+          writeAheadAtLoad ||
+          savingRef.current ||
+          pendingRef.current !== null ||
+          writeGenRef.current !== writeGenAtLoad
+        ) {
           loadedRef.current = true;
           return;
         }

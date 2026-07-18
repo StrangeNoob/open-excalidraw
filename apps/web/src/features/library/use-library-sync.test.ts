@@ -608,4 +608,113 @@ describe("useLibrarySync", () => {
     });
     expect(save).toHaveBeenCalledTimes(1);
   });
+
+  it("skips a stale load even when the outstanding write settles before the GET responds", async () => {
+    let resolveSave!: () => void;
+    let resolveStaleLoad!: (value: ReturnType<typeof response>) => void;
+    const save = vi.fn(
+      () =>
+        new Promise<ReturnType<typeof response>>((resolve) => {
+          resolveSave = () => resolve(response());
+        }),
+    );
+    const load = vi
+      .fn()
+      .mockImplementationOnce(() => Promise.resolve(response([item("a")])))
+      .mockImplementationOnce(
+        () =>
+          new Promise<ReturnType<typeof response>>((resolve) => {
+            resolveStaleLoad = resolve;
+          }),
+      );
+    const client = { load, save };
+    const { api: firstApi } = createApi();
+    const { api: secondApi, updateLibrary: secondUpdate } = createApi();
+
+    const { result, rerender } = renderHook(
+      ({ api }) => useLibrarySync(api, { client }),
+      { initialProps: { api: firstApi } },
+    );
+    await settle();
+
+    // Edit away from the synced snapshot; the change is still in the debounce.
+    act(() => {
+      void result.current([item("a"), item("b")]);
+    });
+
+    // Cleanup flushes [a, b]; gen 2's GET is issued while that PUT is open.
+    await act(async () => {
+      rerender({ api: secondApi });
+      await Promise.resolve();
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+
+    // The PUT settles first, clearing the in-flight refs...
+    await act(async () => {
+      resolveSave();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // ...then the stale GET lands: it must still not be applied.
+    await act(async () => {
+      resolveStaleLoad(response([item("a")]));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(secondUpdate).not.toHaveBeenCalled();
+
+    // lastSynced still reflects the flushed write: a matching change no-ops.
+    act(() => {
+      void result.current([item("a"), item("b")]);
+    });
+    act(() => {
+      vi.advanceTimersByTime(60_000);
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry after unmount when the teardown flush fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let rejectSave!: (error: Error) => void;
+    const save = vi.fn(
+      () =>
+        new Promise<ReturnType<typeof response>>((_resolve, reject) => {
+          rejectSave = reject;
+        }),
+    );
+    const client = { load: vi.fn(() => Promise.resolve(response())), save };
+    const { api } = createApi();
+
+    const { result, unmount } = renderHook(() =>
+      useLibrarySync(api, { client }),
+    );
+    await settle();
+
+    // Change still inside the debounce when the hook unmounts for good.
+    act(() => {
+      void result.current([item("a")]);
+    });
+    await act(async () => {
+      unmount();
+      await Promise.resolve();
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+
+    // The last-chance save fails transiently after the hook is gone.
+    await act(async () => {
+      rejectSave(new Error("network down"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Well past every backoff window: no ownerless retry chain may fire.
+    await act(async () => {
+      vi.advanceTimersByTime(60_000);
+      await Promise.resolve();
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+
+    warn.mockRestore();
+  });
 });
