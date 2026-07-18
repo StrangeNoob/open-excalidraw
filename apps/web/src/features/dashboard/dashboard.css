@@ -166,6 +166,14 @@
   rotate: 1.5deg;
 }
 
+.pending-badge {
+  background: var(--highlight-wash);
+  border-color: var(--danger-ink);
+  color: var(--danger-ink);
+  rotate: 1.5deg;
+  text-transform: none;
+}
+
 .dashboard-page .danger-button {
   color: var(--danger-ink);
 }

@@ -19,6 +19,10 @@ import {
   VerifyEmailNotice,
 } from "../features/auth";
 
+// Deep import (not the barrel) so mounting the sync hook never pulls the lazy
+// DashboardPage into the initial bundle.
+import { usePendingCreateSync } from "../features/dashboard/use-pending-create-sync";
+
 const DashboardPage = lazy(() =>
   import("../features/dashboard").then((module) => ({
     default: module.DashboardPage,
@@ -65,8 +69,16 @@ const AdminPage = lazy(() =>
   })),
 );
 
+// Inside AuthProvider so it sees the session; replays offline-created drawings
+// once connectivity returns. Renders nothing.
+const PendingCreateSync = () => {
+  usePendingCreateSync();
+  return null;
+};
+
 const AuthRouteLayout = () => (
   <AuthProvider>
+    <PendingCreateSync />
     <Outlet />
   </AuthProvider>
 );

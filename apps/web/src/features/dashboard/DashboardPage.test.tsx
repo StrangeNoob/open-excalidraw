@@ -18,15 +18,25 @@ import type {
 } from "../auth";
 import { ApiError } from "../../shared/api";
 import { AuthProvider } from "../auth";
+import {
+  CloudRecoveryRepository,
+  deleteCloudRecoveryDatabase,
+} from "../persistence";
 import { TRASH_QUERY_KEY, type DashboardApi } from "./dashboard-api";
 import {
   DashboardListDb,
   deleteDashboardListDatabase,
 } from "./dashboard-list-db";
 import { DashboardPage } from "./DashboardPage";
+import {
+  PendingCreateDb,
+  deletePendingCreateDatabase,
+} from "./pending-create-db";
 
 const SESSION_USER_ID = "be21c1cd-a5d5-49f9-b9dd-a30e3cb80e09";
 const listCaches = new Map<string, DashboardListDb>();
+const pendingStores = new Map<string, PendingCreateDb>();
+const recoveryStores = new Map<string, CloudRecoveryRepository>();
 
 const makeListCache = () => {
   const name = `dashboard-${crypto.randomUUID()}`;
@@ -35,13 +45,39 @@ const makeListCache = () => {
   return cache;
 };
 
+const makePendingStore = () => {
+  const name = `pending-${crypto.randomUUID()}`;
+  const store = new PendingCreateDb(name);
+  pendingStores.set(name, store);
+  return store;
+};
+
+const makeRecovery = () => {
+  const name = `recovery-${crypto.randomUUID()}`;
+  const store = new CloudRecoveryRepository(name);
+  recoveryStores.set(name, store);
+  return store;
+};
+
 afterEach(async () => {
   // Close before deleting: an open connection makes deleteDB block for 10s.
-  await Promise.all([...listCaches.values()].map((cache) => cache.close()));
-  await Promise.all(
-    [...listCaches.keys()].map((name) => deleteDashboardListDatabase(name)),
-  );
+  await Promise.all([
+    ...[...listCaches.values()].map((cache) => cache.close()),
+    ...[...pendingStores.values()].map((store) => store.close()),
+    ...[...recoveryStores.values()].map((store) => store.close()),
+  ]);
+  await Promise.all([
+    ...[...listCaches.keys()].map((name) => deleteDashboardListDatabase(name)),
+    ...[...pendingStores.keys()].map((name) =>
+      deletePendingCreateDatabase(name),
+    ),
+    ...[...recoveryStores.keys()].map((name) =>
+      deleteCloudRecoveryDatabase(name),
+    ),
+  ]);
   listCaches.clear();
+  pendingStores.clear();
+  recoveryStores.clear();
 });
 
 const createDrawing = (
@@ -180,9 +216,11 @@ const renderDashboard = (
   api: DashboardApi,
   onOpenDrawing = vi.fn(),
   isAdmin = false,
-  // Each render gets an isolated cache so the shared fake-indexeddb never
-  // leaks a list between tests; pass one explicitly to seed or inspect it.
+  // Each render gets isolated stores so the shared fake-indexeddb never leaks
+  // between tests; pass them explicitly to seed or inspect them.
   listCache: DashboardListDb = makeListCache(),
+  pendingCreates: PendingCreateDb = makePendingStore(),
+  recovery: CloudRecoveryRepository = makeRecovery(),
 ) => {
   const authClient = new FakeAuthClient();
   authClient.getSession.mockResolvedValue(buildSession(isAdmin));
@@ -199,6 +237,8 @@ const renderDashboard = (
               api={api}
               listCache={listCache}
               onOpenDrawing={onOpenDrawing}
+              pendingCreates={pendingCreates}
+              recovery={recovery}
             />
           </MemoryRouter>
         </AuthProvider>
@@ -206,7 +246,9 @@ const renderDashboard = (
     ),
     listCache,
     onOpenDrawing,
+    pendingCreates,
     queryClient,
+    recovery,
   };
 };
 
@@ -455,7 +497,7 @@ describe("DashboardPage", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("keeps mutation controls disabled while offline", async () => {
+  it("keeps server-only controls disabled while offline but allows offline create", async () => {
     Object.defineProperty(navigator, "onLine", {
       configurable: true,
       value: false,
@@ -468,9 +510,11 @@ describe("DashboardPage", () => {
     renderDashboard(api);
 
     const card = (await screen.findByText("Offline board")).closest("article")!;
+    // The create form routes to a local create offline, so it stays enabled.
     expect(
       screen.getByRole("button", { name: "Create drawing" }),
-    ).toBeDisabled();
+    ).toBeEnabled();
+    // Existing drawings still need the server for these mutations.
     expect(within(card).getByRole("button", { name: "Rename" })).toBeDisabled();
     expect(within(card).getByRole("button", { name: "Delete" })).toBeDisabled();
     expect(within(card).getByRole("button", { name: "Open" })).toBeEnabled();
@@ -480,6 +524,107 @@ describe("DashboardPage", () => {
       configurable: true,
       value: true,
     });
+  });
+
+  it("creates a drawing offline, writing the marker, metadata, and snapshot, then opens it", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(navigator, "onLine", {
+      configurable: true,
+      value: false,
+    });
+    const api = new FakeDashboardApi({
+      nextCursor: null,
+      owned: [],
+      shared: [],
+    });
+    // A cached list lets the offline dashboard render its sections.
+    const listCache = makeListCache();
+    await listCache.put(SESSION_USER_ID, {
+      nextCursor: null,
+      owned: [],
+      shared: [],
+    });
+    const pending = makePendingStore();
+    const recovery = makeRecovery();
+    const onOpen = vi.fn();
+    api.listDrawings.mockRejectedValueOnce(new Error("Failed to fetch"));
+    renderDashboard(api, onOpen, false, listCache, pending, recovery);
+
+    await user.type(
+      await screen.findByLabelText("New drawing title"),
+      "Offline idea",
+    );
+    await user.click(screen.getByRole("button", { name: "Create drawing" }));
+
+    await waitFor(() =>
+      expect(onOpen).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Offline idea", role: "owner" }),
+      ),
+    );
+    // The offline path never hits the network.
+    expect(api.createDrawing).not.toHaveBeenCalled();
+
+    const id = onOpen.mock.calls[0]![0].id as string;
+    const markers = await pending.listByUser(SESSION_USER_ID);
+    expect(markers).toEqual([
+      expect.objectContaining({ drawingId: id, title: "Offline idea" }),
+    ]);
+    const snapshot = await recovery.get(SESSION_USER_ID, id);
+    expect(snapshot?.scene.elements).toEqual([]);
+    expect(snapshot?.metadata).toMatchObject({
+      id,
+      metadataRevision: "0",
+      ownerUserId: SESSION_USER_ID,
+      role: "owner",
+      title: "Offline idea",
+    });
+
+    Object.defineProperty(navigator, "onLine", {
+      configurable: true,
+      value: true,
+    });
+  });
+
+  it("renders an unsynced pending drawing with a badge and no server actions", async () => {
+    const pending = makePendingStore();
+    const recovery = makeRecovery();
+    const id = "00000000-0000-4000-8000-0000000000aa";
+    await pending.put(SESSION_USER_ID, id, "Draft board");
+    await recovery.put(SESSION_USER_ID, id, "0", {
+      assetIds: [],
+      scene: {
+        appState: {},
+        elements: [],
+        source: "open-excalidraw",
+        type: "excalidraw",
+        version: 2,
+      },
+    });
+    await recovery.putMetadata(SESSION_USER_ID, id, {
+      ...createDrawing("owner", "Draft board", 42),
+      id,
+      metadataRevision: "0",
+    });
+    const api = new FakeDashboardApi({
+      nextCursor: null,
+      owned: [],
+      shared: [],
+    });
+    renderDashboard(api, vi.fn(), false, makeListCache(), pending, recovery);
+
+    const card = (await screen.findByText("Draft board")).closest("article")!;
+    expect(within(card).getByText("Not synced yet")).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "Open" })).toBeEnabled();
+    // Server-backed actions are hidden until the drawing has synced.
+    expect(
+      within(card).queryByRole("button", { name: "Delete" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(card).queryByRole("button", { name: "Rename" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(card).queryByRole("button", { name: "Duplicate" }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders tag chips, filters by tag, and edits tags", async () => {
