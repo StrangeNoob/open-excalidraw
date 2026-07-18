@@ -132,6 +132,20 @@ percent-encoded password. OAuth providers are disabled when their client ID or
 secret is blank. SMTP is disabled when `SMTP_HOST` is blank; invitation links
 remain available for an owner to copy manually.
 
+Set `ADMIN_EMAILS` to a comma-separated allowlist to grant those accounts the
+admin page — an instance overview (users, drawings, storage) plus a user list
+with disable, enable, and delete. Disabling revokes a user's sessions and
+blocks new sign-ins; deleting purges the drawings they own (storage included)
+and removes the account. Leave `ADMIN_EMAILS` blank to keep every admin
+endpoint returning `403`.
+
+An allowlisted account only becomes admin once its email is **verified** —
+registration does not verify email, so an unverified match (for example an
+attacker who signed up under a configured-but-unregistered admin address) is
+denied. Verify via the SMTP verification email, or by signing in through
+Google/GitHub/OIDC (those providers supply a verified email). With SMTP disabled
+and password-only auth, admin access therefore requires an OAuth/OIDC account.
+
 Provider callback URLs must use the final `APP_BASE_URL`:
 `https://draw.example.com/api/auth/callback/google` and
 `https://draw.example.com/api/auth/callback/github`. Keep the UI, REST API,

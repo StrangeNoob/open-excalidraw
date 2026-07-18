@@ -48,6 +48,12 @@ const shareTokenParameter = {
   required: true,
   schema: { type: "string", pattern: "^[A-Za-z0-9_-]{43}$" },
 };
+const adminUserIdParameter = {
+  name: "userId",
+  in: "path",
+  required: true,
+  schema: uuid,
+};
 
 const unauthorized = problem("Authentication is required.");
 const notFound = problem("Drawing not found or not accessible.");
@@ -101,7 +107,9 @@ export const openApiDocument = {
     { name: "Assets", description: "Binary assets referenced by scenes." },
     {
       name: "Admin",
-      description: "Loopback-only operator recovery endpoints.",
+      description:
+        "Operator endpoints: loopback-only recovery plus instance and user " +
+        "management gated on a verified email listed in `ADMIN_EMAILS`.",
     },
   ],
   security: [{ sessionCookie: [] }],
@@ -190,6 +198,100 @@ export const openApiDocument = {
             "No reset link is queued for this email.",
             ref("AdminError"),
           ),
+        },
+      },
+    },
+    "/api/v1/admin/overview": {
+      get: {
+        tags: ["Admin"],
+        summary: "Instance counts",
+        description:
+          "Total users, active drawings, and active asset storage bytes. " +
+          "Restricted to callers with a verified email listed in `ADMIN_EMAILS`.",
+        responses: {
+          "200": json("Instance counts.", ref("AdminOverview")),
+          "401": unauthorized,
+          "403": problem("Administrator access is required."),
+        },
+      },
+    },
+    "/api/v1/admin/users": {
+      get: {
+        tags: ["Admin"],
+        summary: "List users",
+        description:
+          "Users ordered by creation, oldest first. `search` filters email " +
+          "and name case-insensitively; `total` counts all matches.",
+        parameters: [
+          {
+            name: "search",
+            in: "query",
+            required: false,
+            schema: { type: "string" },
+          },
+          {
+            name: "limit",
+            in: "query",
+            required: false,
+            description: "Default 50, capped at 200.",
+            schema: { type: "integer", minimum: 1, maximum: 200 },
+          },
+        ],
+        responses: {
+          "200": json("The matching users.", ref("AdminUserList")),
+          "401": unauthorized,
+          "403": problem("Administrator access is required."),
+        },
+      },
+    },
+    "/api/v1/admin/users/{userId}/disable": {
+      parameters: [adminUserIdParameter],
+      post: {
+        tags: ["Admin"],
+        summary: "Disable a user",
+        description:
+          "Sets `disabledAt` (idempotent) and revokes every session, so the " +
+          "user is locked out immediately and cannot start a new session. " +
+          "Fails when the target is the caller.",
+        responses: {
+          "204": { description: "Disabled." },
+          "401": unauthorized,
+          "403": problem("Administrator access is required."),
+          "404": problem("User not found."),
+          "409": problem("`CANNOT_TARGET_SELF`: cannot disable yourself."),
+        },
+      },
+    },
+    "/api/v1/admin/users/{userId}/enable": {
+      parameters: [adminUserIdParameter],
+      post: {
+        tags: ["Admin"],
+        summary: "Enable a user",
+        description: "Clears `disabledAt`, allowing the user to sign in again.",
+        responses: {
+          "204": { description: "Enabled." },
+          "401": unauthorized,
+          "403": problem("Administrator access is required."),
+          "404": problem("User not found."),
+        },
+      },
+    },
+    "/api/v1/admin/users/{userId}": {
+      parameters: [adminUserIdParameter],
+      delete: {
+        tags: ["Admin"],
+        summary: "Delete a user",
+        description:
+          "Permanently purges every drawing the user owns (storage blobs " +
+          "included) and deletes the account. Content the user authored in " +
+          "other users' drawings survives with its attribution nulled. Fails " +
+          "when the target is the caller.",
+        responses: {
+          "204": { description: "Deleted." },
+          "401": unauthorized,
+          "403": problem("Administrator access is required."),
+          "404": problem("User not found."),
+          "409": problem("`CANNOT_TARGET_SELF`: cannot delete yourself."),
         },
       },
     },
@@ -1013,6 +1115,7 @@ export const openApiDocument = {
           "name",
           "image",
           "emailVerified",
+          "isAdmin",
           "createdAt",
         ],
         properties: {
@@ -1021,6 +1124,11 @@ export const openApiDocument = {
           name: { type: "string", maxLength: 120 },
           image: { type: "string", format: "uri", nullable: true },
           emailVerified: { type: "boolean" },
+          isAdmin: {
+            type: "boolean",
+            description:
+              "Whether this user has a verified email listed in `ADMIN_EMAILS`.",
+          },
           createdAt: isoDateTime,
         },
       },
@@ -1265,10 +1373,72 @@ export const openApiDocument = {
               properties: {
                 revision: revision,
                 reason: { type: "string", enum: ["checkpoint", "restore"] },
-                authorUserId: uuid,
+                authorUserId: {
+                  ...uuid,
+                  nullable: true,
+                  description: "Null when the authoring account was deleted.",
+                },
                 createdAt: isoDateTime,
               },
             },
+          },
+        },
+      },
+      AdminOverview: {
+        type: "object",
+        required: ["users", "drawings", "storageBytes"],
+        properties: {
+          users: { type: "integer", minimum: 0 },
+          drawings: {
+            type: "integer",
+            minimum: 0,
+            description: "Active (non-trashed) drawings.",
+          },
+          storageBytes: {
+            type: "integer",
+            minimum: 0,
+            description: "Total bytes of active drawing assets.",
+          },
+        },
+      },
+      AdminUser: {
+        type: "object",
+        required: [
+          "id",
+          "name",
+          "email",
+          "emailVerified",
+          "createdAt",
+          "disabledAt",
+          "drawingCount",
+        ],
+        properties: {
+          id: uuid,
+          name: { type: "string", maxLength: 120 },
+          email: { type: "string", format: "email" },
+          emailVerified: { type: "boolean" },
+          createdAt: isoDateTime,
+          disabledAt: {
+            ...isoDateTime,
+            nullable: true,
+            description: "Null when active; a timestamp when disabled.",
+          },
+          drawingCount: {
+            type: "integer",
+            minimum: 0,
+            description: "Active drawings the user owns.",
+          },
+        },
+      },
+      AdminUserList: {
+        type: "object",
+        required: ["users", "total"],
+        properties: {
+          users: { type: "array", items: ref("AdminUser") },
+          total: {
+            type: "integer",
+            minimum: 0,
+            description: "Users matching the search, ignoring the limit.",
           },
         },
       },

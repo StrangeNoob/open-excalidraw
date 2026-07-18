@@ -9,6 +9,7 @@ import { fromNodeHeaders, toNodeHandler } from "better-auth/node";
 import { z } from "zod";
 
 import type { OpenExcalidrawAuth } from "./config.js";
+import { isInstanceAdmin } from "./identity.js";
 import type { IdentityService } from "./identity.js";
 import type { ManualResetLinkSource } from "./manual-reset.js";
 
@@ -20,9 +21,13 @@ export interface CreateAuthRouterInput {
   auth: OpenExcalidrawAuth;
   identity: IdentityService;
   capabilities: AuthCapabilities;
+  /** Lowercased admin emails; drives the `isAdmin` flag on `/v1/me`. */
+  adminEmails?: ReadonlySet<string>;
   adminResetToken?: string;
   manualResetLinks?: ManualResetLinkSource;
 }
+
+const NO_ADMINS: ReadonlySet<string> = new Set();
 
 export function createAuthRouter(input: CreateAuthRouterInput): Router {
   const router = Router();
@@ -75,6 +80,10 @@ export function createAuthRouter(input: CreateAuthRouterInput): Router {
               name: identity.name,
               image: identity.image,
               emailVerified: identity.emailVerified,
+              isAdmin: isInstanceAdmin(
+                identity,
+                input.adminEmails ?? NO_ADMINS,
+              ),
               createdAt: identity.createdAt.toISOString(),
             }
           : null,

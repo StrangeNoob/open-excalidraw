@@ -63,7 +63,11 @@ The application binds to `127.0.0.1:3000` by default. PostgreSQL and binary
 asset storage use private named volumes. SMTP is optional: when it is absent,
 owners can copy invitation links for manual delivery. Email verification and
 ordinary reset-email delivery require SMTP; a loopback-only operator recovery
-flow is documented for SMTP-disabled installations.
+flow is documented for SMTP-disabled installations. Set `ADMIN_EMAILS` to a
+comma-separated allowlist to unlock the admin page (instance counts plus a user
+list with disable and delete). Each admin's account email must be verified —
+via the SMTP verification email or an OAuth/OIDC sign-in — so with SMTP disabled
+and password-only auth, admin access requires an OAuth/OIDC-verified account.
 See the
 [deployment runbook](docs/operations/deployment.md) for HTTPS, managed
 database, and one-click Railway template options.

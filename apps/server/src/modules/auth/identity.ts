@@ -20,6 +20,22 @@ export interface IdentityService {
   ): Promise<RequestIdentity | null>;
 }
 
+/**
+ * An identity is an instance admin only when its email is on the allowlist AND
+ * verified. Registration does not require verification, so an unverified match
+ * could be an attacker who signed up under a configured-but-unregistered admin
+ * email; requiring verification proves mailbox ownership (OAuth/OIDC sign-ins
+ * carry emailVerified from the provider).
+ */
+export function isInstanceAdmin(
+  identity: RequestIdentity,
+  adminEmails: ReadonlySet<string>,
+): boolean {
+  return (
+    identity.emailVerified && adminEmails.has(identity.email.toLowerCase())
+  );
+}
+
 export function createIdentityService(
   auth: OpenExcalidrawAuth,
 ): IdentityService {

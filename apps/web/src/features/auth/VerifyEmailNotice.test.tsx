@@ -30,6 +30,7 @@ const session = (emailVerified: boolean): SessionResponse => ({
     emailVerified,
     id: "be21c1cd-a5d5-49f9-b9dd-a30e3cb80e09",
     image: null,
+    isAdmin: false,
     name: "Ada",
   },
 });

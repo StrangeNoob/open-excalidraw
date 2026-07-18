@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  adminOverviewSchema,
+  adminUserListSchema,
+  adminUserSchema,
   chatHistoryResponseSchema,
   chatMessageEventSchema,
   clientRealtimeEventSchema,
   createDrawingRequestSchema,
   createInvitationRequestSchema,
+  currentUserSchema,
   fileIdSchema,
   problemDetailsSchema,
   revisionSchema,
@@ -88,6 +92,75 @@ describe("drawing and sharing contracts", () => {
         role: "editor",
       }),
     ).toEqual({ email: "person@example.com", role: "editor" });
+  });
+});
+
+describe("admin contracts", () => {
+  const adminUser = {
+    id: drawingId,
+    name: "Ada",
+    email: "ada@example.com",
+    emailVerified: true,
+    createdAt: "2026-07-15T10:00:00.000+00:00",
+    disabledAt: null,
+    drawingCount: 3,
+  };
+
+  it("requires isAdmin on the current user", () => {
+    expect(
+      currentUserSchema.parse({
+        id: drawingId,
+        email: "ada@example.com",
+        name: "Ada",
+        image: null,
+        emailVerified: true,
+        isAdmin: true,
+        createdAt: "2026-07-15T10:00:00.000+00:00",
+      }).isAdmin,
+    ).toBe(true);
+    expect(
+      currentUserSchema.safeParse({
+        id: drawingId,
+        email: "ada@example.com",
+        name: "Ada",
+        image: null,
+        emailVerified: true,
+        createdAt: "2026-07-15T10:00:00.000+00:00",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("parses the admin overview and user list", () => {
+    expect(
+      adminOverviewSchema.parse({ users: 12, drawings: 40, storageBytes: 2048 })
+        .storageBytes,
+    ).toBe(2048);
+    expect(adminUserSchema.parse(adminUser).disabledAt).toBeNull();
+    expect(
+      adminUserSchema.parse({
+        ...adminUser,
+        disabledAt: "2026-07-16T10:00:00.000+00:00",
+      }).disabledAt,
+    ).toBe("2026-07-16T10:00:00.000+00:00");
+    expect(
+      adminUserListSchema.parse({ users: [adminUser], total: 1 }).users,
+    ).toHaveLength(1);
+  });
+
+  it("rejects negative counts and unknown fields", () => {
+    expect(
+      adminOverviewSchema.safeParse({
+        users: -1,
+        drawings: 0,
+        storageBytes: 0,
+      }).success,
+    ).toBe(false);
+    expect(
+      adminUserSchema.safeParse({ ...adminUser, drawingCount: -1 }).success,
+    ).toBe(false);
+    expect(
+      adminUserSchema.safeParse({ ...adminUser, extra: true }).success,
+    ).toBe(false);
   });
 });
 

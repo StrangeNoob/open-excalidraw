@@ -1,3 +1,4 @@
+import { createDatabase, runMigrations } from "@open-excalidraw/database";
 import { DisabledMailer } from "@open-excalidraw/mail";
 import type { DBAdapter, DBAdapterInstance, Where } from "better-auth";
 import express from "express";
@@ -48,6 +49,22 @@ describe("Better Auth configuration", () => {
         allowDifferentEmails: false,
       },
     });
+  });
+
+  it("fails session creation closed when the auth context adapter is missing", async () => {
+    const options = buildBetterAuthOptions({
+      database: {} as never,
+      mailer: new DisabledMailer(),
+      baseUrl: BASE_URL,
+      secret: SECRET,
+      smtpEnabled: false,
+    });
+    const before = options.databaseHooks?.session?.create?.before;
+    expect(before).toBeDefined();
+    // A missing hook context must refuse the session, not skip the guard.
+    await expect(
+      before!({ userId: randomUUID() } as never, undefined as never),
+    ).rejects.toThrow();
   });
 
   it("reports OAuth and SMTP capabilities only when fully configured", () => {
@@ -345,6 +362,79 @@ describe("auth HTTP boundary", () => {
     });
   });
 
+  it("reports isAdmin on /v1/me only for a verified email on the ADMIN_EMAILS allowlist", async () => {
+    const memory = createMemoryAdapter();
+    const auth = createOpenExcalidrawAuth({
+      database: {} as never,
+      databaseAdapter: memory.factory,
+      mailer: new DisabledMailer(),
+      baseUrl: BASE_URL,
+      secret: SECRET,
+      smtpEnabled: false,
+      secureCookies: false,
+    });
+    const identity = createIdentityService(auth);
+    const email = "admin-me@example.test";
+    const adminApp = express();
+    adminApp.use(express.json());
+    adminApp.use(
+      createAuthRouter({
+        auth,
+        identity,
+        capabilities: authCapabilities({ smtpEnabled: false }),
+        adminEmails: new Set([email]),
+      }),
+    );
+    const plainApp = express();
+    plainApp.use(express.json());
+    plainApp.use(
+      createAuthRouter({
+        auth,
+        identity,
+        capabilities: authCapabilities({ smtpEnabled: false }),
+      }),
+    );
+
+    const signup = await request(adminApp)
+      .post("/api/auth/sign-up/email")
+      .set("origin", BASE_URL)
+      // Distinct forwarded IP => own rate-limit bucket (the memory store is
+      // process-global and keyed by IP+path), so sign-ups here don't share
+      // the untrusted-IP bucket with the other tests in this file.
+      .set("x-forwarded-for", "10.10.0.1")
+      .send({ name: "Admin", email, password: "correct-horse-battery-staple" });
+    expect(signup.status).toBe(200);
+    const cookie = sessionCookie(signup.headers["set-cookie"]);
+
+    // Email/password sign-up leaves the account unverified, so an allowlisted
+    // but unverified admin email must not be treated as admin.
+    const beforeVerification = await request(adminApp)
+      .get("/api/v1/me")
+      .set("cookie", cookie)
+      .set("origin", BASE_URL);
+    expect(beforeVerification.body.user).toMatchObject({
+      email,
+      emailVerified: false,
+      isAdmin: false,
+    });
+
+    // Proving mailbox ownership (as an OAuth/OIDC or SMTP flow would) flips it.
+    memory.rows.user!.find((user) => user.email === email)!.emailVerified =
+      true;
+
+    const asAdmin = await request(adminApp)
+      .get("/api/v1/me")
+      .set("cookie", cookie)
+      .set("origin", BASE_URL);
+    expect(asAdmin.body.user).toMatchObject({ email, isAdmin: true });
+
+    const asPlain = await request(plainApp)
+      .get("/api/v1/me")
+      .set("cookie", cookie)
+      .set("origin", BASE_URL);
+    expect(asPlain.body.user.isAdmin).toBe(false);
+  });
+
   it("guards the set-password proxy with authentication and validation", async () => {
     const memory = createMemoryAdapter();
     const auth = createOpenExcalidrawAuth({
@@ -629,6 +719,81 @@ describe("auth HTTP boundary", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+const databaseUrl = process.env.DATABASE_TEST_URL;
+const describeDatabase = databaseUrl ? describe : describe.skip;
+
+describeDatabase("disabled account lockout", () => {
+  const database = createDatabase(databaseUrl ?? "postgresql://unused");
+  const emails: string[] = [];
+
+  beforeAll(async () => {
+    await runMigrations({ pool: database.pool });
+  });
+
+  afterAll(async () => {
+    await database.pool.query(
+      `DELETE FROM "user" WHERE email = ANY($1::text[])`,
+      [emails],
+    );
+    await database.close();
+  });
+
+  it("blocks new sessions for a disabled user via the session hook", async () => {
+    const auth = createOpenExcalidrawAuth({
+      database: database.db,
+      mailer: new DisabledMailer(),
+      baseUrl: BASE_URL,
+      secret: SECRET,
+      smtpEnabled: false,
+      secureCookies: false,
+    });
+    const app = express();
+    app.use(express.json());
+    app.use(
+      createAuthRouter({
+        auth,
+        identity: createIdentityService(auth),
+        capabilities: authCapabilities({ smtpEnabled: false }),
+      }),
+    );
+
+    const email = `disabled-${randomUUID()}@example.test`;
+    emails.push(email);
+    const password = "correct-horse-battery-staple";
+    // Distinct forwarded IP => own rate-limit bucket (the memory store is
+    // process-global and keyed by IP+path).
+    const ip = "10.10.0.2";
+    const signup = await request(app)
+      .post("/api/auth/sign-up/email")
+      .set("origin", BASE_URL)
+      .set("x-forwarded-for", ip)
+      .send({ name: "Disabled", email, password });
+    expect(signup.status).toBe(200);
+
+    // Sign-in works while the account is active.
+    const before = await request(app)
+      .post("/api/auth/sign-in/email")
+      .set("origin", BASE_URL)
+      .set("x-forwarded-for", ip)
+      .send({ email, password });
+    expect(before.status).toBe(200);
+
+    await database.pool.query(
+      `UPDATE "user" SET disabled_at = now() WHERE email = $1`,
+      [email],
+    );
+
+    const after = await request(app)
+      .post("/api/auth/sign-in/email")
+      .set("origin", BASE_URL)
+      .set("x-forwarded-for", ip)
+      .send({ email, password });
+    expect(after.status).toBe(403);
+    expect(after.body.code).toBe("ACCOUNT_DISABLED");
+    expect(after.body.user).toBeUndefined();
   });
 });
 

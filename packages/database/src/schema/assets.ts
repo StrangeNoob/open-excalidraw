@@ -33,9 +33,9 @@ export const drawingAssets = pgTable(
     byteSize: integer("byte_size").notNull(),
     sha256: bytea("sha256").notNull(),
     fileVersion: integer("file_version"),
-    createdByUserId: uuid("created_by_user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "restrict" }),
+    createdByUserId: uuid("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

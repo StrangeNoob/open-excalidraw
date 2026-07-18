@@ -20,6 +20,7 @@ export const currentUserSchema = z
     name: z.string().min(1).max(120),
     image: z.string().url().nullable(),
     emailVerified: z.boolean(),
+    isAdmin: z.boolean(),
     createdAt: isoDateTimeSchema,
   })
   .strict();

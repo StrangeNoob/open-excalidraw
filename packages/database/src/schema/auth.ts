@@ -38,6 +38,8 @@ export const user = pgTable(
     email: citext("email").notNull(),
     emailVerified: boolean("email_verified").default(false).notNull(),
     image: text("image"),
+    // NULL means active; a timestamp both flags and dates the disable.
+    disabledAt: timestamp("disabled_at", { withTimezone: true }),
     ...timestamps,
   },
   (table) => [uniqueIndex("user_email_unique").on(table.email)],

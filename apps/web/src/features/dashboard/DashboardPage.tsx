@@ -7,6 +7,7 @@ import { type FormEvent, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { getDrawingCapabilities } from "../access";
+import { useAuth } from "../auth";
 import {
   DASHBOARD_QUERY_KEY,
   DashboardApiClient,
@@ -344,6 +345,7 @@ export const DashboardPage = ({
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const online = useOnlineStatus();
+  const { user } = useAuth();
   const [newTitle, setNewTitle] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
@@ -532,6 +534,12 @@ export const DashboardPage = ({
           <Link to="/app/settings">Settings</Link>
           {" · "}
           <Link to="/app/trash">Trash</Link>
+          {user?.isAdmin ? (
+            <>
+              {" · "}
+              <Link to="/app/admin">Admin</Link>
+            </>
+          ) : null}
         </div>
         <form className="create-drawing" onSubmit={submitCreate}>
           <label>
