@@ -189,6 +189,31 @@ const offline = {
   subscribe: () => () => undefined,
 };
 
+// Connectivity source whose state can be flipped mid-test, notifying the
+// useSyncExternalStore subscription so the page re-checks the share gate.
+const controllableConnectivity = (initial: "online" | "offline") => {
+  let state = initial;
+  const listeners = new Set<() => void>();
+  return {
+    getSnapshot: () => state,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    setState(next: "online" | "offline") {
+      state = next;
+      for (const listener of [...listeners]) listener();
+    },
+  };
+};
+
+const pendingMarker = (drawingId: string, title: string) => ({
+  createdAt: "2026-07-19T00:00:00.000Z",
+  drawingId,
+  title,
+  userId: USER,
+});
+
 const createDependencies = (options?: {
   assetIds?: string[];
   connectivity?: DrawingWorkspaceDependencies["connectivity"];
@@ -559,6 +584,105 @@ describe("DrawingPage", () => {
       expect(screen.getByRole("button", { name: "History" })).toBeVisible();
     },
   );
+
+  it("gates sharing while an offline-created drawing still has a pending marker", async () => {
+    const fixture = createDependencies({
+      connectivity: offline,
+      contentLoad: () => Promise.reject(new TypeError("Failed to fetch")),
+    });
+    fixture.sources.metadata.load.mockRejectedValue(
+      new TypeError("Failed to fetch"),
+    );
+    fixture.sources.pendingCreates.get.mockResolvedValue(
+      pendingMarker(DRAWING_A, "Offline idea"),
+    );
+    fixture.sources.recovery.get.mockResolvedValue(
+      recoveryRecord(drawing(DRAWING_A, "Cached drawing")),
+    );
+
+    render(
+      <DrawingPage
+        collaborationEnabled={false}
+        dependencies={fixture.dependencies}
+        drawingId={DRAWING_A}
+        userId={USER}
+      />,
+    );
+
+    const share = await screen.findByRole("button", {
+      name: "Sharing unlocks after this drawing first syncs",
+    });
+    expect(share).toBeDisabled();
+    // The gated label replaces the plain "Share" accessible name.
+    expect(screen.queryByRole("button", { name: "Share" })).toBeNull();
+  });
+
+  it("lifts the share gate when connectivity returns, without a remount", async () => {
+    const connectivity = controllableConnectivity("offline");
+    const fixture = createDependencies({
+      connectivity,
+      contentLoad: () => Promise.reject(new TypeError("Failed to fetch")),
+    });
+    fixture.sources.metadata.load.mockRejectedValue(
+      new TypeError("Failed to fetch"),
+    );
+    fixture.sources.pendingCreates.get.mockResolvedValue(
+      pendingMarker(DRAWING_A, "Offline idea"),
+    );
+    fixture.sources.recovery.get.mockResolvedValue(
+      recoveryRecord(drawing(DRAWING_A, "Cached drawing")),
+    );
+
+    render(
+      <DrawingPage
+        collaborationEnabled={false}
+        dependencies={fixture.dependencies}
+        drawingId={DRAWING_A}
+        userId={USER}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("button", {
+        name: "Sharing unlocks after this drawing first syncs",
+      }),
+    ).toBeDisabled();
+    expect(fixture.sources.createDrawing.createDrawing).not.toHaveBeenCalled();
+
+    await act(async () => {
+      connectivity.setState("online");
+      await Promise.resolve();
+    });
+
+    const share = await screen.findByRole("button", { name: "Share" });
+    expect(share).toBeEnabled();
+    // Reconnect ran the deferred server create that clears the marker.
+    expect(fixture.sources.createDrawing.createDrawing).toHaveBeenCalledWith(
+      "Offline idea",
+      DRAWING_A,
+    );
+    expect(fixture.sources.pendingCreates.remove).toHaveBeenCalledWith(
+      USER,
+      DRAWING_A,
+    );
+  });
+
+  it("leaves sharing enabled for an ordinary drawing with no pending marker", async () => {
+    const fixture = createDependencies();
+    render(
+      <DrawingPage
+        collaborationEnabled={false}
+        dependencies={fixture.dependencies}
+        drawingId={DRAWING_A}
+        userId={USER}
+      />,
+    );
+
+    await screen.findByRole("heading", { name: "Architecture" });
+    const share = screen.getByRole("button", { name: "Share" });
+    expect(share).toBeEnabled();
+    expect(fixture.sources.createDrawing.createDrawing).not.toHaveBeenCalled();
+  });
 
   it("loads canonical content, ignores the initial editor event, then uploads before an ETag save", async () => {
     const user = userEvent.setup();
