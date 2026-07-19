@@ -591,10 +591,15 @@ export const DrawingPage = ({
     if (!editorApi || !workspace) {
       return;
     }
+    // Local workspaces derive references from the merged scene, not
+    // snapshot.assetIds: an image added offline lives only in outbox elements
+    // and would otherwise be invisible to hydration once connectivity returns.
     const assetIds =
       collaborationEnabled && collaboration.status !== "idle"
         ? collectAssetReferences(editorApi.getSceneElementsIncludingDeleted())
-        : workspace.content.content.assetIds;
+        : workspace.local
+          ? collectAssetReferences(workspace.content.content.scene.elements)
+          : workspace.content.content.assetIds;
     // Assets restored from the local snapshot are already in the editor via
     // initialData.files. Re-fetching them would fail while offline and raise a
     // false warning; genuinely missing ones still fall through to the fetch.

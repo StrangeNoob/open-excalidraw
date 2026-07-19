@@ -529,7 +529,9 @@ describe("DrawingPage", () => {
     await screen.findByRole("heading", { name: "Cached drawing" });
     // The locally stored blob is seeded into the editor's file cache…
     expect(captured.initialData?.files?.image_1).toEqual(imageFile("image_1"));
-    // …and is never fetched from the unreachable server.
+    // …and is never fetched from the unreachable server. Settle any
+    // asynchronously scheduled hydration before asserting the negative.
+    await act(async () => {});
     expect(fixture.sources.assets.download).not.toHaveBeenCalled();
   });
 
@@ -558,6 +560,7 @@ describe("DrawingPage", () => {
 
     await screen.findByRole("heading", { name: "Cached drawing" });
     expect(captured.initialData?.files?.image_1).toEqual(imageFile("image_1"));
+    await act(async () => {});
     expect(fixture.sources.assets.download).not.toHaveBeenCalled();
   });
 
