@@ -1,6 +1,12 @@
 import { getTableConfig } from "drizzle-orm/pg-core";
 
-import { account, session, user, verification } from "../../src/schema/auth";
+import {
+  account,
+  session,
+  twoFactor,
+  user,
+  verification,
+} from "../../src/schema/auth";
 import { chatMessages } from "../../src/schema/chat";
 import { drawingAssets } from "../../src/schema/assets";
 import { auditEvents } from "../../src/schema/audit";
@@ -18,6 +24,7 @@ describe("database schema", () => {
       session,
       account,
       verification,
+      twoFactor,
       drawings,
       drawingMembers,
       drawingInvitations,
@@ -33,6 +40,7 @@ describe("database schema", () => {
       "session",
       "account",
       "verification",
+      "two_factor",
       "drawings",
       "drawing_members",
       "drawing_invitations",
