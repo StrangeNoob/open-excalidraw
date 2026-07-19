@@ -38,6 +38,18 @@
   margin: 1.5rem 0;
 }
 
+.auth-checkbox {
+  align-items: center;
+  flex-direction: row;
+  gap: 0.5rem;
+}
+
+.auth-checkbox input {
+  min-height: 0;
+  padding: 0;
+  width: auto;
+}
+
 .auth-next-step {
   background: var(--accent-wash);
   border: 1.5px dashed var(--accent-ink);

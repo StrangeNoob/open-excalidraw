@@ -25,18 +25,26 @@ export interface LinkedAccount {
 
 export interface AuthClient {
   changePassword(currentPassword: string, newPassword: string): Promise<void>;
+  disableTwoFactor(password: string): Promise<void>;
+  enableTwoFactor(
+    password: string,
+  ): Promise<{ backupCodes: string[]; totpURI: string }>;
+  generateBackupCodes(password: string): Promise<{ backupCodes: string[] }>;
   getSession(): Promise<SessionResponse>;
+  getTotpUri(password: string): Promise<{ totpURI: string }>;
   linkSocial(provider: OAuthProvider, returnPath: string): Promise<void>;
   listAccounts(): Promise<LinkedAccount[]>;
   requestPasswordReset(email: string, redirectTo: string): Promise<void>;
   resendVerification(email: string, callbackURL: string): Promise<void>;
   resetPassword(newPassword: string, token: string): Promise<void>;
   setPassword(newPassword: string): Promise<void>;
-  signIn(input: EmailSignInInput): Promise<void>;
+  signIn(input: EmailSignInInput): Promise<{ twoFactorRedirect: boolean }>;
   signOut(): Promise<void>;
   signUp(input: EmailSignUpInput): Promise<void>;
   startOAuth(provider: OAuthProvider, returnPath: string): Promise<void>;
   unlinkAccount(providerId: string): Promise<void>;
+  verifyBackupCode(code: string, trustDevice: boolean): Promise<void>;
+  verifyTotp(code: string, trustDevice: boolean): Promise<void>;
 }
 
 export interface CookieAuthClientOptions {
@@ -51,6 +59,23 @@ const oauthStartResponseSchema = z
   .passthrough();
 
 const linkedAccountsSchema = z.array(z.object({ providerId: z.string() }));
+
+// Enrolled users get a 200 whose body carries `twoFactorRedirect` instead of a
+// session; every other field of the sign-in body is irrelevant to the client.
+const signInResponseSchema = z
+  .object({ twoFactorRedirect: z.boolean().optional() })
+  .passthrough();
+
+const twoFactorEnableResponseSchema = z.object({
+  backupCodes: z.array(z.string()),
+  totpURI: z.string(),
+});
+
+const totpUriResponseSchema = z.object({ totpURI: z.string() });
+
+const backupCodesResponseSchema = z.object({
+  backupCodes: z.array(z.string()),
+});
 
 export class CookieAuthClient implements AuthClient {
   readonly #api: HttpApiClient;
@@ -96,11 +121,19 @@ export class CookieAuthClient implements AuthClient {
     });
   }
 
-  async signIn(input: EmailSignInInput): Promise<void> {
-    await this.#api.request("/auth/sign-in/email", {
-      body: JSON.stringify(input),
-      method: "POST",
-    });
+  async signIn(
+    input: EmailSignInInput,
+  ): Promise<{ twoFactorRedirect: boolean }> {
+    const response = await this.#api.request(
+      "/auth/sign-in/email",
+      {
+        body: JSON.stringify(input),
+        method: "POST",
+      },
+      signInResponseSchema,
+    );
+    // A 204 (no body) decodes to undefined; treat it as "no challenge".
+    return { twoFactorRedirect: response?.twoFactorRedirect === true };
   }
 
   async signUp(input: EmailSignUpInput): Promise<void> {
@@ -205,5 +238,54 @@ export class CookieAuthClient implements AuthClient {
     }
 
     this.#navigate(response.url);
+  }
+
+  async enableTwoFactor(
+    password: string,
+  ): Promise<{ backupCodes: string[]; totpURI: string }> {
+    return this.#api.request(
+      "/auth/two-factor/enable",
+      { body: JSON.stringify({ password }), method: "POST" },
+      twoFactorEnableResponseSchema,
+    );
+  }
+
+  async disableTwoFactor(password: string): Promise<void> {
+    await this.#api.request("/auth/two-factor/disable", {
+      body: JSON.stringify({ password }),
+      method: "POST",
+    });
+  }
+
+  async getTotpUri(password: string): Promise<{ totpURI: string }> {
+    return this.#api.request(
+      "/auth/two-factor/get-totp-uri",
+      { body: JSON.stringify({ password }), method: "POST" },
+      totpUriResponseSchema,
+    );
+  }
+
+  async generateBackupCodes(
+    password: string,
+  ): Promise<{ backupCodes: string[] }> {
+    return this.#api.request(
+      "/auth/two-factor/generate-backup-codes",
+      { body: JSON.stringify({ password }), method: "POST" },
+      backupCodesResponseSchema,
+    );
+  }
+
+  async verifyTotp(code: string, trustDevice: boolean): Promise<void> {
+    await this.#api.request("/auth/two-factor/verify-totp", {
+      body: JSON.stringify({ code, trustDevice }),
+      method: "POST",
+    });
+  }
+
+  async verifyBackupCode(code: string, trustDevice: boolean): Promise<void> {
+    await this.#api.request("/auth/two-factor/verify-backup-code", {
+      body: JSON.stringify({ code, trustDevice }),
+      method: "POST",
+    });
   }
 }

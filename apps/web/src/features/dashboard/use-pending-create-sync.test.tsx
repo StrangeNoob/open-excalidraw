@@ -48,7 +48,11 @@ const session: SessionResponse = {
 // Only getSession matters here; the rest satisfy the interface.
 const authClient = (): AuthClient => ({
   changePassword: vi.fn(),
+  disableTwoFactor: vi.fn(),
+  enableTwoFactor: vi.fn(),
+  generateBackupCodes: vi.fn(),
   getSession: vi.fn(() => Promise.resolve(session)),
+  getTotpUri: vi.fn(),
   linkSocial: vi.fn(),
   listAccounts: vi.fn(() => Promise.resolve([])),
   requestPasswordReset: vi.fn(),
@@ -60,6 +64,8 @@ const authClient = (): AuthClient => ({
   signUp: vi.fn(),
   startOAuth: vi.fn(),
   unlinkAccount: vi.fn(),
+  verifyBackupCode: vi.fn(),
+  verifyTotp: vi.fn(),
 });
 
 // Only createDrawing matters here; the rest satisfy the interface.
