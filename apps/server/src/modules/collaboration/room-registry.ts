@@ -53,6 +53,10 @@ export class RoomRegistry {
     return binding;
   }
 
+  public connectionCount(): number {
+    return this.#byConnection.size;
+  }
+
   public getBinding(connectionId: string): SocketAuthorizationBinding | null {
     return this.#byConnection.get(connectionId) ?? null;
   }
