@@ -57,6 +57,20 @@ export function createAdminRouter(input: CreateAdminRouterInput): Router {
     });
   });
 
+  router.post(
+    "/api/v1/admin/users/:userId/two-factor/disable",
+    (request, response) => {
+      void handle(request, response, input, async (identity, requestId) => {
+        await input.service.resetTwoFactor({
+          actorUserId: identity.userId,
+          targetUserId: request.params.userId,
+          requestId,
+        });
+        return { status: 204 };
+      });
+    },
+  );
+
   router.delete("/api/v1/admin/users/:userId", (request, response) => {
     void handle(request, response, input, async (identity, requestId) => {
       await input.service.deleteUser({

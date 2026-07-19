@@ -83,6 +83,15 @@ export const AdminPage = ({ api = defaultAdminApi }: AdminPageProps) => {
     },
   });
 
+  const resetTwoFactor = useMutation({
+    mutationFn: (user: AdminUser) => api.resetTwoFactor(user.id),
+    onError: (error) => setActionError(error.message),
+    onSuccess: () => {
+      setActionError(null);
+      void invalidateUsers();
+    },
+  });
+
   const deleteUser = useMutation({
     mutationFn: (user: AdminUser) => api.deleteUser(user.id),
     onError: (error) => setActionError(error.message),
@@ -97,7 +106,20 @@ export const AdminPage = ({ api = defaultAdminApi }: AdminPageProps) => {
   });
 
   const pending =
-    disableUser.isPending || enableUser.isPending || deleteUser.isPending;
+    disableUser.isPending ||
+    enableUser.isPending ||
+    resetTwoFactor.isPending ||
+    deleteUser.isPending;
+
+  const requestResetTwoFactor = (user: AdminUser) => {
+    if (
+      globalThis.confirm(
+        `Reset two-factor for ${user.email}? They will have to re-enroll.`,
+      )
+    ) {
+      resetTwoFactor.mutate(user);
+    }
+  };
 
   const requestDelete = (user: AdminUser) => {
     if (
@@ -234,6 +256,15 @@ export const AdminPage = ({ api = defaultAdminApi }: AdminPageProps) => {
                         Disable
                       </button>
                     )}
+                    {user.twoFactorEnabled ? (
+                      <button
+                        disabled={pending}
+                        onClick={() => requestResetTwoFactor(user)}
+                        type="button"
+                      >
+                        Reset 2FA
+                      </button>
+                    ) : null}
                     <button
                       className="danger-button"
                       disabled={pending}

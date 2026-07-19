@@ -121,6 +121,7 @@ describe("admin contracts", () => {
     emailVerified: true,
     createdAt: "2026-07-15T10:00:00.000+00:00",
     disabledAt: null,
+    twoFactorEnabled: false,
     drawingCount: 3,
   };
 
@@ -155,6 +156,10 @@ describe("admin contracts", () => {
         .storageBytes,
     ).toBe(2048);
     expect(adminUserSchema.parse(adminUser).disabledAt).toBeNull();
+    expect(
+      adminUserSchema.parse({ ...adminUser, twoFactorEnabled: true })
+        .twoFactorEnabled,
+    ).toBe(true);
     expect(
       adminUserSchema.parse({
         ...adminUser,

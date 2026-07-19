@@ -25,6 +25,12 @@ export interface AdminRepository {
     targetUserId: string;
     requestId: string;
   }): Promise<void>;
+  /** Clear the target's TOTP enrollment: drop two_factor rows and the flag. */
+  resetTwoFactor(input: {
+    actorUserId: string;
+    targetUserId: string;
+    requestId: string;
+  }): Promise<void>;
   /** Soft-delete then purge every drawing the target owns (blobs included). */
   purgeOwnedDrawings(input: {
     ownerUserId: string;

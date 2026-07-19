@@ -18,6 +18,7 @@ export interface AdminApi {
   listUsers(search: string): Promise<AdminUserList>;
   disableUser(userId: string): Promise<void>;
   enableUser(userId: string): Promise<void>;
+  resetTwoFactor(userId: string): Promise<void>;
   deleteUser(userId: string): Promise<void>;
 }
 
@@ -55,6 +56,13 @@ export class AdminApiClient implements AdminApi {
     await this.#api.request<void>(`/v1/admin/users/${userId}/enable`, {
       method: "POST",
     });
+  }
+
+  async resetTwoFactor(userId: string): Promise<void> {
+    await this.#api.request<void>(
+      `/v1/admin/users/${userId}/two-factor/disable`,
+      { method: "POST" },
+    );
   }
 
   async deleteUser(userId: string): Promise<void> {
