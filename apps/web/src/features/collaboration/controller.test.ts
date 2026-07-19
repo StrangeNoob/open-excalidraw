@@ -14,10 +14,12 @@ import type {
 import { waitFor } from "@testing-library/react";
 
 import type { CloudOutboxRecord } from "../connectivity/storage/cloudOutboxDb";
+import type { OverrideSnapshotScene } from "../persistence/override-snapshot-db";
 import {
   CollaborationController,
   type CollaborationControllerOptions,
   type CollaborationOutbox,
+  type OverrideSnapshotSink,
 } from "./controller";
 import type {
   PresenceBroadcast,
@@ -68,6 +70,33 @@ class MemoryOutbox implements CollaborationOutbox {
     if (record?.userId === userId && record.drawingId === drawingId) {
       this.records.delete(mutationId);
     }
+    return Promise.resolve();
+  }
+}
+
+class MemoryOverrideStore implements OverrideSnapshotSink {
+  readonly writes: {
+    at: number;
+    count: number;
+    drawingId: string;
+    scene: OverrideSnapshotScene;
+    userId: string;
+  }[] = [];
+
+  put(
+    userId: string,
+    drawingId: string,
+    scene: OverrideSnapshotScene,
+    at: number,
+    count: number,
+  ) {
+    this.writes.push({
+      at,
+      count,
+      drawingId,
+      scene: structuredClone(scene),
+      userId,
+    });
     return Promise.resolve();
   }
 }
@@ -173,6 +202,7 @@ const ready = (
 
 const setup = (options?: {
   outbox?: MemoryOutbox;
+  overrideSnapshots?: OverrideSnapshotSink;
   role?: RoomReadyEvent["role"];
   presenceEnabled?: boolean;
   presenceHeartbeatMs?: number;
@@ -194,6 +224,7 @@ const setup = (options?: {
     initialElements: [element(1)],
     initialRole: options?.initialRole,
     outbox,
+    overrideSnapshots: options?.overrideSnapshots,
     presenceEnabled: options?.presenceEnabled,
     presenceHeartbeatMs: options?.presenceHeartbeatMs,
     previewThrottleMs: 100,
@@ -591,6 +622,73 @@ describe("CollaborationController", () => {
       )
       .at(-1);
     expect(resent).toMatchObject({ baseRevision: "5", elements: [element(4)] });
+    expect(fixture.editor.getElements()[0]?.version).toBe(4);
+  });
+
+  it("surfaces and retains overridden edits when a queued element loses the rebase", async () => {
+    const outbox = new MemoryOutbox();
+    await outbox.put({
+      baseRevision: "1",
+      createdAt: "2026-07-11T00:00:00.000Z",
+      drawingId: DRAWING,
+      elements: [element(5)],
+      generation: 3,
+      mutationId: "00000000-0000-4000-8000-000000000055",
+      userId: USER,
+    });
+    const overrideSnapshots = new MemoryOverrideStore();
+    const fixture = setup({
+      deferReady: true,
+      initialRole: "editor",
+      outbox,
+      overrideSnapshots,
+    });
+    // Server advanced the same element past the queued offline edit (v10 > v5).
+    fixture.transport.server(ready("5", "editor", [element(10)]));
+
+    await waitFor(() =>
+      expect(fixture.controller.state.overriddenElements).toMatchObject({
+        count: 1,
+      }),
+    );
+    expect(fixture.controller.state.overriddenElements?.at).toEqual(
+      expect.any(Number),
+    );
+    // The retained pre-merge scene keeps the losing local copy recoverable.
+    expect(overrideSnapshots.writes).toHaveLength(1);
+    expect(overrideSnapshots.writes[0]).toMatchObject({
+      count: 1,
+      drawingId: DRAWING,
+      scene: { elements: [element(5)] },
+      userId: USER,
+    });
+    // The merge itself is untouched: the newer server copy is what renders.
+    expect(fixture.editor.getElements()[0]?.version).toBe(10);
+  });
+
+  it("records no override and writes nothing when the queued edit wins the rebase", async () => {
+    const outbox = new MemoryOutbox();
+    await outbox.put({
+      baseRevision: "1",
+      createdAt: "2026-07-11T00:00:00.000Z",
+      drawingId: DRAWING,
+      elements: [element(4)],
+      generation: 3,
+      mutationId: "00000000-0000-4000-8000-000000000044",
+      userId: USER,
+    });
+    const overrideSnapshots = new MemoryOverrideStore();
+    const fixture = setup({
+      deferReady: true,
+      initialRole: "editor",
+      outbox,
+      overrideSnapshots,
+    });
+    fixture.transport.server(ready("5", "editor", [element(3)]));
+
+    await waitFor(() => expect(fixture.controller.state.status).toBe("ready"));
+    expect(fixture.controller.state.overriddenElements).toBeNull();
+    expect(overrideSnapshots.writes).toEqual([]);
     expect(fixture.editor.getElements()[0]?.version).toBe(4);
   });
 

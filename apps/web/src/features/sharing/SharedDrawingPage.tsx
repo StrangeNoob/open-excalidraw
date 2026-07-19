@@ -30,6 +30,7 @@ const SHARE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const EMPTY_COLLABORATION_STATE: CollaborationState = {
   collaborators: new Map(),
   error: null,
+  overriddenElements: null,
   revision: "0",
   role: "viewer",
   status: "idle",

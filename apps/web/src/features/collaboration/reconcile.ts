@@ -25,7 +25,7 @@ export const changedAfterRebase = (
   });
 };
 
-const comparePriority = (
+export const comparePriority = (
   candidate: ExcalidrawElementDTO,
   current: ExcalidrawElementDTO,
 ) => {
