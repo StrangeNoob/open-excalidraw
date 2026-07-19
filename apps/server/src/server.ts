@@ -14,6 +14,10 @@ import { Server as SocketIoServer } from "socket.io";
 import { createApp } from "./app.js";
 import { createDocsRouter } from "./http/docs.js";
 import {
+  createMetricsRouter,
+  type LastMaintenanceRun,
+} from "./http/metrics.js";
+import {
   AdminService,
   createAdminRouter,
   parseAdminEmails,
@@ -172,6 +176,7 @@ const drawingRepository = new PostgresDrawingRepository(
 );
 const drawingService = new DrawingService(drawingRepository);
 const adminEmails = parseAdminEmails(process.env.ADMIN_EMAILS);
+const metricsToken = process.env.METRICS_TOKEN?.trim();
 const adminService = new AdminService(
   new PostgresAdminRepository(database.pool, (input) =>
     drawingRepository.purge(input),
@@ -185,6 +190,7 @@ const maintenanceIntervalMs = positiveEnvironmentInteger(
 let maintenanceInFlight: Promise<void> | null = null;
 let maintenanceAbortController: AbortController | null = null;
 let maintenanceStopping = false;
+let lastMaintenance: LastMaintenanceRun | null = null;
 const runMaintenance = (): Promise<void> => {
   if (maintenanceStopping) return Promise.resolve();
   if (maintenanceInFlight) return maintenanceInFlight;
@@ -194,6 +200,7 @@ const runMaintenance = (): Promise<void> => {
     const startedAt = Date.now();
     try {
       const result = await maintenanceJobs.run(abortController.signal);
+      lastMaintenance = { finishedAt: new Date(), result };
       const hasFailures = result.failures.length > 0;
       operationalLog(
         hasFailures ? "error" : "info",
@@ -352,6 +359,18 @@ const app = createApp({
     createChatRouter({ service: chatService, identity }),
     assetRouter,
     createDocsRouter(),
+    createMetricsRouter({
+      ...(metricsToken ? { token: metricsToken } : {}),
+      overview: () => adminService.getOverview(),
+      activeSessions: async () => {
+        const result = await database.pool.query<{ count: string }>(
+          `SELECT count(*) AS count FROM "session" WHERE expires_at > now()`,
+        );
+        return Number(result.rows[0]?.count ?? 0);
+      },
+      collabConnections: () => roomRegistry.connectionCount(),
+      lastMaintenance: () => lastMaintenance,
+    }),
   ],
   ...(staticDirectory ? { staticDirectory } : {}),
 });

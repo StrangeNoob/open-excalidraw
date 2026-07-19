@@ -150,6 +150,13 @@ denied. Verify via the SMTP verification email, or by signing in through
 Google/GitHub/OIDC (those providers supply a verified email). With SMTP disabled
 and password-only auth, admin access therefore requires an OAuth/OIDC account.
 
+Set `METRICS_TOKEN` to a long random string to enable `GET /metrics`, a
+Prometheus text-format endpoint authenticated with that value as a bearer
+token (`authorization: Bearer <token>` — Prometheus scrape configs support
+this natively). It reports user/drawing/storage totals, unexpired sessions,
+live collaboration connections, and the counters from the most recent
+maintenance run. Leave it blank to keep the endpoint answering `404`.
+
 Provider callback URLs must use the final `APP_BASE_URL`:
 `https://draw.example.com/api/auth/callback/google` and
 `https://draw.example.com/api/auth/callback/github`. Keep the UI, REST API,
