@@ -63,8 +63,10 @@ export default defineConfig({
     // fonts only make it into the precache if they are already on disk.
     excalidrawFonts(),
     VitePWA({
-      // Ship each new build's service worker without a user-facing prompt.
-      registerType: "autoUpdate",
+      // "prompt": a new service worker waits until the user opts in (see
+      // register-sw.ts). autoUpdate would reload every controlled tab the
+      // moment a deploy activates — mid-drawing-session.
+      registerType: "prompt",
       // The app entry registers the worker itself via virtual:pwa-register.
       injectRegister: false,
       // No service worker in dev or in vitest/e2e — production builds only.
@@ -87,6 +89,8 @@ export default defineConfig({
             sizes: "180x180",
             type: "image/png",
           },
+          // Chrome's installability criteria require a 192px and a 512px icon.
+          { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
           { src: "/icon-512.png", sizes: "512x512", type: "image/png" },
         ],
       },

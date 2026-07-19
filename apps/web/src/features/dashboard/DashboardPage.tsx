@@ -610,40 +610,42 @@ export const DashboardPage = ({
   // a server load caches, so DrawingPage's offline fallback opens it seamlessly.
   const createOfflineDrawing = async (title: string) => {
     if (!user) {
-      setActionError("Enter a drawing title.");
+      setActionError("You must be signed in to create a drawing.");
       return;
     }
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
-    const summary = drawingSummarySchema.parse({
-      contentRevision: "0",
-      createdAt: now,
-      id,
-      isTemplate: false,
-      metadataRevision: "0",
-      ownerName: user.name,
-      ownerUserId: user.id,
-      role: "owner",
-      tags: [],
-      thumbnailUpdatedAt: null,
-      title,
-      updatedAt: now,
-    });
     try {
-      await pendingCreates.put(user.id, id, title);
+      const summary = drawingSummarySchema.parse({
+        contentRevision: "0",
+        createdAt: now,
+        id,
+        isTemplate: false,
+        metadataRevision: "0",
+        ownerName: user.name,
+        ownerUserId: user.id,
+        role: "owner",
+        tags: [],
+        thumbnailUpdatedAt: null,
+        title,
+        updatedAt: now,
+      });
+      // The pending marker commits last: an interruption before it leaves only
+      // orphaned (invisible) recovery data, never a marker that would sync an
+      // empty drawing whose local scene was never written.
       await recovery.putMetadata(user.id, id, summary);
       await recovery.put(user.id, id, "0", {
         assetIds: [],
         scene: EMPTY_SCENE,
       });
+      await pendingCreates.put(user.id, id, title);
+      setActionError(null);
+      setNewTitle("");
+      setPendingRefresh((token) => token + 1);
+      (onOpenDrawing ?? ((next) => navigate(`/drawings/${next.id}`)))(summary);
     } catch {
       setActionError("Could not create this drawing offline.");
-      return;
     }
-    setActionError(null);
-    setNewTitle("");
-    setPendingRefresh((token) => token + 1);
-    (onOpenDrawing ?? ((next) => navigate(`/drawings/${next.id}`)))(summary);
   };
 
   const submitCreate = (event: FormEvent<HTMLFormElement>) => {

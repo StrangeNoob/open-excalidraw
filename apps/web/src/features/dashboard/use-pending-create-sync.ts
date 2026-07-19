@@ -39,47 +39,45 @@ export const usePendingCreateSync = ({
   // Records that 409'd this session: another user owns the id, so retrying is
   // pointless. Persists across renders; a page reload clears it.
   const skip = useRef(new Set<string>());
-  const running = useRef(false);
 
   useEffect(() => {
-    if (!userId || !online || running.current) {
+    if (!userId || !online) {
       return;
     }
-    running.current = true;
     let active = true;
 
+    // No in-flight guard: an offline→online bounce may briefly overlap two
+    // passes, which is safe — the create replays idempotently server-side and
+    // remove/invalidate are idempotent — whereas a guard would skip the rerun
+    // and strand pending creates until the next dependency change.
     void (async () => {
-      try {
-        const records = await store.listByUser(userId);
-        for (const record of records) {
-          if (!active) {
-            return;
-          }
-          if (skip.current.has(record.drawingId)) {
+      const records = await store.listByUser(userId);
+      for (const record of records) {
+        if (!active) {
+          return;
+        }
+        if (skip.current.has(record.drawingId)) {
+          continue;
+        }
+        try {
+          // v1: the server holds an empty scene for this drawing until it is
+          // next opened, when the collaboration outbox rebases the offline
+          // edits back onto it.
+          await api.createDrawing(record.title, record.drawingId);
+          await store.remove(userId, record.drawingId);
+          await queryClient.invalidateQueries({
+            queryKey: DASHBOARD_QUERY_KEY,
+          });
+        } catch (error) {
+          if (error instanceof ApiError && error.status === 409) {
+            skip.current.add(record.drawingId);
             continue;
           }
-          try {
-            // v1: the server holds an empty scene for this drawing until it is
-            // next opened, when the collaboration outbox rebases the offline
-            // edits back onto it.
-            await api.createDrawing(record.title, record.drawingId);
-            await store.remove(userId, record.drawingId);
-            await queryClient.invalidateQueries({
-              queryKey: DASHBOARD_QUERY_KEY,
-            });
-          } catch (error) {
-            if (error instanceof ApiError && error.status === 409) {
-              skip.current.add(record.drawingId);
-              continue;
-            }
-            // Network failure: stop; the next online transition retries.
-            return;
-          }
+          // Network failure: stop; the next online transition retries.
+          return;
         }
-      } finally {
-        running.current = false;
       }
-    })();
+    })().catch(() => undefined);
 
     return () => {
       active = false;
