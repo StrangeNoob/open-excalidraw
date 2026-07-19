@@ -39,6 +39,11 @@ export type AuthStatus = "error" | "loading" | "ready";
 export interface AuthContextValue {
   capabilities: AuthCapabilities;
   changePassword(currentPassword: string, newPassword: string): Promise<void>;
+  disableTwoFactor(password: string): Promise<void>;
+  enableTwoFactor(
+    password: string,
+  ): Promise<{ backupCodes: string[]; totpURI: string }>;
+  generateBackupCodes(password: string): Promise<{ backupCodes: string[] }>;
   linkSocial(provider: OAuthProvider, returnPath: string): Promise<void>;
   listAccounts(): Promise<LinkedAccount[]>;
   logout(): Promise<void>;
@@ -145,6 +150,14 @@ export const AuthProvider = ({
     [client, refresh],
   );
 
+  const disableTwoFactor = useCallback(
+    async (password: string) => {
+      await client.disableTwoFactor(password);
+      await refresh();
+    },
+    [client, refresh],
+  );
+
   const signUp = useCallback(
     async (input: EmailSignUpInput) => {
       await client.signUp(input);
@@ -192,6 +205,9 @@ export const AuthProvider = ({
       capabilities: session.capabilities,
       changePassword: (currentPassword, newPassword) =>
         client.changePassword(currentPassword, newPassword),
+      disableTwoFactor,
+      enableTwoFactor: (password) => client.enableTwoFactor(password),
+      generateBackupCodes: (password) => client.generateBackupCodes(password),
       linkSocial: (provider, returnPath) =>
         client.linkSocial(provider, returnPath),
       listAccounts: () => client.listAccounts(),
@@ -216,6 +232,7 @@ export const AuthProvider = ({
     }),
     [
       client,
+      disableTwoFactor,
       logout,
       refresh,
       session,

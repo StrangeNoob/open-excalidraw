@@ -74,9 +74,21 @@ class FakeAuthClient implements AuthClient {
     vi.fn<(code: string, trustDevice: boolean) => Promise<void>>();
 }
 
-const renderSettings = (accounts: LinkedAccount[]) => {
+const enabledSession: SessionResponse = {
+  ...session,
+  user: session.user && { ...session.user, twoFactorEnabled: true },
+};
+
+const TOTP_URI =
+  "otpauth://totp/Open%20Excalidraw:ada@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Open%20Excalidraw&digits=6&period=30";
+const BACKUP_CODES = ["aaaa-1111", "bbbb-2222", "cccc-3333"];
+
+const renderSettings = (
+  accounts: LinkedAccount[],
+  sessionResponse: SessionResponse = session,
+) => {
   const client = new FakeAuthClient();
-  client.getSession.mockResolvedValue(session);
+  client.getSession.mockResolvedValue(sessionResponse);
   client.listAccounts.mockResolvedValue(accounts);
   client.signOut.mockResolvedValue();
   client.changePassword.mockResolvedValue();
@@ -183,5 +195,155 @@ describe("SettingsPage", () => {
     await user.click(await screen.findByRole("button", { name: "Sign out" }));
 
     await waitFor(() => expect(client.signOut).toHaveBeenCalled());
+  });
+
+  it("enables two-factor authentication after verifying a code", async () => {
+    const client = renderSettings([{ providerId: "credential" }]);
+    client.enableTwoFactor.mockResolvedValue({
+      backupCodes: BACKUP_CODES,
+      totpURI: TOTP_URI,
+    });
+    client.verifyTotp.mockResolvedValue();
+
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Enable two-factor authentication",
+      }),
+    );
+    await user.type(
+      screen.getByLabelText("Confirm your password"),
+      "super-secret-1",
+    );
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+
+    await waitFor(() =>
+      expect(client.enableTwoFactor).toHaveBeenCalledWith("super-secret-1"),
+    );
+    // QR, manual setup key, and single-use backup codes are all shown.
+    expect(
+      await screen.findByRole("img", { name: "Two-factor QR code" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("JBSWY3DPEHPK3PXP")).toBeVisible();
+    expect(screen.getByText(/shown only once/i)).toBeVisible();
+    for (const backupCode of BACKUP_CODES) {
+      expect(screen.getByText(backupCode)).toBeVisible();
+    }
+
+    // Enrollment activates only after a valid code, so the refreshed session
+    // then reports it as on.
+    client.getSession.mockResolvedValue(enabledSession);
+    await user.type(screen.getByLabelText("Authentication code"), "123456");
+    await user.click(
+      screen.getByRole("button", { name: "Verify and turn on" }),
+    );
+
+    await waitFor(() =>
+      expect(client.verifyTotp).toHaveBeenCalledWith("123456", false),
+    );
+    expect(
+      await screen.findByText("Two-factor authentication is on."),
+    ).toBeVisible();
+  });
+
+  it("turns off two-factor authentication", async () => {
+    const client = renderSettings([{ providerId: "credential" }], enabledSession);
+    client.disableTwoFactor.mockResolvedValue();
+
+    expect(
+      await screen.findByText("Two-factor authentication is on."),
+    ).toBeVisible();
+    // The turn-off refresh reports the disabled session.
+    client.getSession.mockResolvedValue(session);
+
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", { name: "Turn off two-factor authentication" }),
+    );
+    await user.type(
+      screen.getByLabelText("Confirm your password"),
+      "super-secret-1",
+    );
+    await user.click(screen.getByRole("button", { name: "Turn off" }));
+
+    await waitFor(() =>
+      expect(client.disableTwoFactor).toHaveBeenCalledWith("super-secret-1"),
+    );
+    expect(
+      await screen.findByText("Two-factor authentication is off."),
+    ).toBeVisible();
+  });
+
+  it("regenerates backup codes", async () => {
+    const client = renderSettings([{ providerId: "credential" }], enabledSession);
+    const codes = ["new1-1111", "new2-2222"];
+    client.generateBackupCodes.mockResolvedValue({ backupCodes: codes });
+
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", { name: "Regenerate backup codes" }),
+    );
+    await user.type(
+      screen.getByLabelText("Confirm your password"),
+      "super-secret-1",
+    );
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+
+    await waitFor(() =>
+      expect(client.generateBackupCodes).toHaveBeenCalledWith("super-secret-1"),
+    );
+    expect(screen.getByText(/shown only once/i)).toBeVisible();
+    for (const backupCode of codes) {
+      expect(screen.getByText(backupCode)).toBeVisible();
+    }
+  });
+
+  it("shows an error when the password is rejected while enabling", async () => {
+    const client = renderSettings([{ providerId: "credential" }]);
+    client.enableTwoFactor.mockRejectedValue(new Error("Invalid password."));
+
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Enable two-factor authentication",
+      }),
+    );
+    await user.type(
+      screen.getByLabelText("Confirm your password"),
+      "wrong-password",
+    );
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+
+    expect(await screen.findByText("Invalid password.")).toBeVisible();
+  });
+
+  it("shows an error when the verification code is invalid", async () => {
+    const client = renderSettings([{ providerId: "credential" }]);
+    client.enableTwoFactor.mockResolvedValue({
+      backupCodes: BACKUP_CODES,
+      totpURI: TOTP_URI,
+    });
+    client.verifyTotp.mockRejectedValue(new Error("Invalid code."));
+
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Enable two-factor authentication",
+      }),
+    );
+    await user.type(
+      screen.getByLabelText("Confirm your password"),
+      "super-secret-1",
+    );
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await user.type(
+      await screen.findByLabelText("Authentication code"),
+      "000000",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Verify and turn on" }),
+    );
+
+    expect(await screen.findByText("Invalid code.")).toBeVisible();
   });
 });
