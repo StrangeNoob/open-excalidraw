@@ -166,6 +166,14 @@
   rotate: 1.5deg;
 }
 
+.pending-badge {
+  background: var(--highlight-wash);
+  border-color: var(--danger-ink);
+  color: var(--danger-ink);
+  rotate: 1.5deg;
+  text-transform: none;
+}
+
 .dashboard-page .danger-button {
   color: var(--danger-ink);
 }
@@ -207,6 +215,27 @@
   background: var(--blue-wash);
   border-color: var(--blue-ink);
   color: var(--blue-ink);
+}
+
+.dashboard-sync {
+  align-items: center;
+  color: var(--ink-soft);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: space-between;
+  margin-top: 2rem;
+}
+
+.dashboard-sync p {
+  margin: 0;
+}
+
+.dashboard-sync-offline {
+  border: 1.5px dashed var(--line);
+  border-radius: var(--wobble);
+  color: var(--danger-ink);
+  padding: 0.5rem 0.85rem;
 }
 
 .dashboard-empty,

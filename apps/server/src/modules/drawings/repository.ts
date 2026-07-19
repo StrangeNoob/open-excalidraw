@@ -13,6 +13,7 @@ import { insertAuditEvent } from "../audit.js";
 import { finalizeDrawingPurge, prepareDrawingPurge } from "./purge.js";
 import type {
   AccessibleDrawing,
+  CreateDrawingResult,
   DrawingBlobStore,
   DrawingRepository,
   PurgeDrawingResult,
@@ -109,12 +110,19 @@ export class PostgresDrawingRepository implements DrawingRepository {
   public async create(input: {
     ownerUserId: string;
     title: string;
+    id?: string;
     idempotencyKey?: string;
-  }): Promise<AccessibleDrawing> {
+  }): Promise<CreateDrawingResult> {
     const scene = JSON.stringify(EMPTY_SCENE);
-    const drawingId = input.idempotencyKey
-      ? deterministicDrawingId(input.ownerUserId, input.idempotencyKey)
-      : null;
+    // Client-minted ids (offline creates) share the idempotency-key replay
+    // semantics: re-inserting an id you already own returns the existing
+    // drawing (a lost-response retry is the common case for offline clients),
+    // while an id owned by someone else is a genuine conflict.
+    const drawingId =
+      input.id ??
+      (input.idempotencyKey
+        ? deterministicDrawingId(input.ownerUserId, input.idempotencyKey)
+        : null);
     const result = await this.pool.query<AccessibleDrawingRow>(
       `
         WITH created AS (
@@ -142,10 +150,12 @@ export class PostgresDrawingRepository implements DrawingRepository {
       ],
     );
     const row = result.rows[0];
+    // The ON CONFLICT owner guard filtered the row: the id belongs to another
+    // user.
     if (!row) {
-      throw new Error("Drawing insert did not return a row");
+      return { status: "conflict" };
     }
-    return mapAccessible(row);
+    return { status: "created", drawing: mapAccessible(row) };
   }
 
   public async duplicate(input: {

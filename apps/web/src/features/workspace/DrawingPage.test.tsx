@@ -11,12 +11,15 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useEffect } from "react";
 
+import type { CloudOutboxRecord } from "../connectivity/storage/cloudOutboxDb";
 import type { ExcalidrawHostProps } from "../editor";
 import {
   ContentRequestError,
   VersionConflictError,
+  type CloudRecoveryRecord,
   type LoadedContent,
 } from "../persistence";
+import { ApiError } from "../../shared/api";
 
 import { DrawingPage, type DrawingWorkspaceDependencies } from "./DrawingPage";
 import { effectiveWorkspaceRole } from "./access-state";
@@ -135,6 +138,40 @@ const loaded = (
   revision,
 });
 
+const recoveryRecord = (
+  metadata: DrawingSummary,
+  elements = [element(1)],
+  revision = "3",
+): CloudRecoveryRecord => ({
+  assetIds: [],
+  drawingId: metadata.id,
+  files: {},
+  metadata,
+  revision,
+  scene: {
+    appState,
+    elements,
+    source: "test",
+    type: "excalidraw",
+    version: 2,
+  },
+  updatedAt: "2026-07-11T00:00:00.000Z",
+  userId: USER,
+});
+
+const outboxRecord = (
+  generation: number,
+  elements: CloudOutboxRecord["elements"],
+): CloudOutboxRecord => ({
+  baseRevision: "3",
+  createdAt: "2026-07-11T00:00:00.000Z",
+  drawingId: DRAWING_A,
+  elements,
+  generation,
+  mutationId: `mutation-${generation}`,
+  userId: USER,
+});
+
 const imageFile = (id: string): BinaryFileData => ({
   created: 1,
   dataURL: "data:image/png;base64,AA==" as DataURL,
@@ -147,8 +184,14 @@ const online = {
   subscribe: () => () => undefined,
 };
 
+const offline = {
+  getSnapshot: () => "offline" as const,
+  subscribe: () => () => undefined,
+};
+
 const createDependencies = (options?: {
   assetIds?: string[];
+  connectivity?: DrawingWorkspaceDependencies["connectivity"];
   contentLoad?: () => Promise<LoadedContent>;
   role?: DrawingSummary["role"];
   title?: string;
@@ -183,7 +226,44 @@ const createDependencies = (options?: {
       ),
     ),
   };
-  const recovery = { put: vi.fn(() => Promise.resolve({} as never)) };
+  const recovery = {
+    get: vi.fn<
+      (
+        userId: string,
+        drawingId: string,
+      ) => Promise<CloudRecoveryRecord | undefined>
+    >(() => Promise.resolve(undefined)),
+    put: vi.fn(() => Promise.resolve({} as never)),
+    putMetadata: vi.fn(() => Promise.resolve()),
+  };
+  const outbox = {
+    list: vi.fn<
+      (userId: string, drawingId: string) => Promise<CloudOutboxRecord[]>
+    >(() => Promise.resolve([])),
+  };
+  const pendingCreates = {
+    // No pending marker by default; tests opt in per case.
+    get: vi.fn<
+      (
+        userId: string,
+        drawingId: string,
+      ) => Promise<
+        | {
+            createdAt: string;
+            drawingId: string;
+            title: string;
+            userId: string;
+          }
+        | undefined
+      >
+    >(() => Promise.resolve(undefined)),
+    remove: vi.fn(() => Promise.resolve()),
+  };
+  const createDrawing = {
+    createDrawing: vi.fn((title: string) =>
+      Promise.resolve(drawing(DRAWING_A, title, options?.role)),
+    ),
+  };
   const library = {
     load: vi.fn(() =>
       Promise.resolve({ items: [], updatedAt: "2026-07-11T00:00:00.000Z" }),
@@ -196,15 +276,27 @@ const createDependencies = (options?: {
   return {
     dependencies: {
       assets,
-      connectivity: online,
+      connectivity: options?.connectivity ?? online,
       content,
+      createDrawing,
       host: TestHost,
       library,
       metadata,
+      outbox,
+      pendingCreates,
       recovery,
     } satisfies DrawingWorkspaceDependencies,
     order,
-    sources: { assets, content, library, metadata, recovery },
+    sources: {
+      assets,
+      content,
+      createDrawing,
+      library,
+      metadata,
+      outbox,
+      pendingCreates,
+      recovery,
+    },
   };
 };
 
@@ -221,6 +313,226 @@ describe("DrawingPage", () => {
       effectiveWorkspaceRole("editor", null, "SOCKET_MEMBERSHIP_REVOKED"),
     ).toBeNull();
     expect(effectiveWorkspaceRole("editor", null, undefined)).toBe("editor");
+  });
+
+  it("caches the drawing summary on a successful server load", async () => {
+    const fixture = createDependencies();
+    render(
+      <DrawingPage
+        collaborationEnabled={false}
+        dependencies={fixture.dependencies}
+        drawingId={DRAWING_A}
+        userId={USER}
+      />,
+    );
+
+    await screen.findByRole("heading", { name: "Architecture" });
+    expect(fixture.sources.recovery.putMetadata).toHaveBeenCalledWith(
+      USER,
+      DRAWING_A,
+      expect.objectContaining({ id: DRAWING_A, title: "Architecture" }),
+    );
+  });
+
+  it("creates a pending drawing on the server before loading it when online", async () => {
+    const fixture = createDependencies();
+    fixture.sources.pendingCreates.get.mockResolvedValue({
+      createdAt: "2026-07-19T00:00:00.000Z",
+      drawingId: DRAWING_A,
+      title: "Offline idea",
+      userId: USER,
+    });
+    render(
+      <DrawingPage
+        collaborationEnabled={false}
+        dependencies={fixture.dependencies}
+        drawingId={DRAWING_A}
+        userId={USER}
+      />,
+    );
+
+    await screen.findByRole("heading", { name: "Architecture" });
+    expect(fixture.sources.createDrawing.createDrawing).toHaveBeenCalledWith(
+      "Offline idea",
+      DRAWING_A,
+    );
+    expect(fixture.sources.pendingCreates.remove).toHaveBeenCalledWith(
+      USER,
+      DRAWING_A,
+    );
+    // The create runs before the normal content load.
+    expect(
+      fixture.sources.createDrawing.createDrawing.mock.invocationCallOrder[0]!,
+    ).toBeLessThan(fixture.sources.content.load.mock.invocationCallOrder[0]!);
+  });
+
+  it("skips the server create and opens the local copy when offline", async () => {
+    const fixture = createDependencies({
+      connectivity: offline,
+      contentLoad: () => Promise.reject(new TypeError("Failed to fetch")),
+    });
+    fixture.sources.metadata.load.mockRejectedValue(
+      new TypeError("Failed to fetch"),
+    );
+    fixture.sources.pendingCreates.get.mockResolvedValue({
+      createdAt: "2026-07-19T00:00:00.000Z",
+      drawingId: DRAWING_A,
+      title: "Offline idea",
+      userId: USER,
+    });
+    fixture.sources.recovery.get.mockResolvedValue(
+      recoveryRecord(drawing(DRAWING_A, "Cached drawing")),
+    );
+
+    render(
+      <DrawingPage
+        collaborationEnabled={false}
+        dependencies={fixture.dependencies}
+        drawingId={DRAWING_A}
+        userId={USER}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Cached drawing" }),
+    ).toBeVisible();
+    expect(fixture.sources.createDrawing.createDrawing).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a load error without touching local data when the create conflicts", async () => {
+    const fixture = createDependencies();
+    fixture.sources.pendingCreates.get.mockResolvedValue({
+      createdAt: "2026-07-19T00:00:00.000Z",
+      drawingId: DRAWING_A,
+      title: "Offline idea",
+      userId: USER,
+    });
+    fixture.sources.createDrawing.createDrawing.mockRejectedValue(
+      new ApiError(409, {
+        code: "DRAWING_ID_CONFLICT",
+        detail: "This drawing id already belongs to another user",
+        requestId: "request-1",
+        status: 409,
+        title: "Conflict",
+      }),
+    );
+
+    render(
+      <DrawingPage
+        collaborationEnabled={false}
+        dependencies={fixture.dependencies}
+        drawingId={DRAWING_A}
+        userId={USER}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Could not open this drawing",
+      }),
+    ).toBeVisible();
+    // The marker survives and the normal load never ran.
+    expect(fixture.sources.pendingCreates.remove).not.toHaveBeenCalled();
+    expect(fixture.sources.content.load).not.toHaveBeenCalled();
+  });
+
+  it("hydrates from the local snapshot merged with the outbox when offline", async () => {
+    const fixture = createDependencies({
+      contentLoad: () => Promise.reject(new TypeError("Failed to fetch")),
+    });
+    fixture.sources.metadata.load.mockRejectedValue(
+      new TypeError("Failed to fetch"),
+    );
+    fixture.sources.recovery.get.mockResolvedValue(
+      recoveryRecord(drawing(DRAWING_A, "Cached drawing"), [element(1)]),
+    );
+    // Pending offline edit bumps the element past the snapshot's version.
+    fixture.sources.outbox.list.mockResolvedValue([
+      outboxRecord(1, [element(5)]),
+    ]);
+
+    const captured: { initialData: ExcalidrawInitialDataState | null } = {
+      initialData: null,
+    };
+    const CapturingHost = (props: ExcalidrawHostProps) => {
+      useEffect(() => {
+        captured.initialData = props.initialData as ExcalidrawInitialDataState;
+      }, [props.initialData]);
+      return <TestHost {...props} />;
+    };
+
+    render(
+      <DrawingPage
+        collaborationEnabled={false}
+        dependencies={{ ...fixture.dependencies, host: CapturingHost }}
+        drawingId={DRAWING_A}
+        userId={USER}
+      />,
+    );
+
+    // Opens with the cached title even though the server was unreachable.
+    expect(
+      await screen.findByRole("heading", { name: "Cached drawing" }),
+    ).toBeVisible();
+    expect(
+      screen.getByText("You're viewing your last local copy."),
+    ).toBeVisible();
+    expect(fixture.sources.recovery.get).toHaveBeenCalledWith(USER, DRAWING_A);
+    expect(fixture.sources.outbox.list).toHaveBeenCalledWith(USER, DRAWING_A);
+    // The reconciled outbox element (version 5) wins over the snapshot's (v1).
+    expect(captured.initialData?.elements).toEqual([element(5)]);
+  });
+
+  it("shows the real error and skips local fallback on an HTTP problem", async () => {
+    const fixture = createDependencies({
+      contentLoad: () => Promise.reject(new ContentRequestError(404, null)),
+    });
+    fixture.sources.metadata.load.mockRejectedValue(new ApiError(404, null));
+    fixture.sources.recovery.get.mockResolvedValue(
+      recoveryRecord(drawing(DRAWING_A, "Cached drawing")),
+    );
+
+    render(
+      <DrawingPage
+        collaborationEnabled={false}
+        dependencies={fixture.dependencies}
+        drawingId={DRAWING_A}
+        userId={USER}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Could not open this drawing",
+      }),
+    ).toBeVisible();
+    expect(fixture.sources.recovery.get).not.toHaveBeenCalled();
+  });
+
+  it("keeps the error when offline with no local snapshot", async () => {
+    const fixture = createDependencies({
+      contentLoad: () => Promise.reject(new TypeError("Failed to fetch")),
+    });
+    fixture.sources.metadata.load.mockRejectedValue(
+      new TypeError("Failed to fetch"),
+    );
+    // recovery.get resolves undefined by default: no snapshot to fall back to.
+
+    render(
+      <DrawingPage
+        collaborationEnabled={false}
+        dependencies={fixture.dependencies}
+        drawingId={DRAWING_A}
+        userId={USER}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Could not open this drawing",
+      }),
+    ).toBeVisible();
+    expect(fixture.sources.recovery.get).toHaveBeenCalledWith(USER, DRAWING_A);
   });
 
   it.each([

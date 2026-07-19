@@ -26,7 +26,9 @@ const unwrapDrawing = (
 ): DrawingSummary => ("drawing" in response ? response.drawing : response);
 
 export interface DashboardApi {
-  createDrawing(title: string): Promise<DrawingSummary>;
+  // An explicit id replays an offline-created drawing (retry-safe); omit it and
+  // the server mints one under an idempotency key.
+  createDrawing(title: string, id?: string): Promise<DrawingSummary>;
   deleteDrawing(drawing: DrawingSummary): Promise<void>;
   duplicateDrawing(drawing: DrawingSummary): Promise<DrawingSummary>;
   listDrawings(): Promise<DrawingListResponse>;
@@ -51,14 +53,15 @@ export class DashboardApiClient implements DashboardApi {
     this.#api = api;
   }
 
-  async createDrawing(title: string): Promise<DrawingSummary> {
+  async createDrawing(title: string, id?: string): Promise<DrawingSummary> {
     const response = await this.#api.request(
       "/v1/drawings",
       {
-        body: JSON.stringify({
-          idempotencyKey: crypto.randomUUID(),
-          title,
-        }),
+        // A supplied id is idempotent on its own; the random idempotency key is
+        // only for server-assigned ids.
+        body: JSON.stringify(
+          id ? { id, title } : { idempotencyKey: crypto.randomUUID(), title },
+        ),
         method: "POST",
       },
       drawingMutationResponseSchema,

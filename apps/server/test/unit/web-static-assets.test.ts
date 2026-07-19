@@ -35,4 +35,17 @@ describe("web static assets", () => {
 
     expect(dockerfile).toMatch(/^COPY apps\/web\/public apps\/web\/public$/m);
   });
+
+  it("serves the whole web build, so the service worker and manifest ship", async () => {
+    const dockerfile = await readFile(
+      join(ROOT, "apps/server/Dockerfile"),
+      "utf8",
+    );
+
+    // dist is copied wholesale, so vite's generated sw.js, workbox chunk, and
+    // manifest.webmanifest reach production without a path-by-path copy.
+    expect(dockerfile).toMatch(
+      /^COPY --from=build[^\n]* \/workspace\/apps\/web\/dist \.\/public$/m,
+    );
+  });
 });

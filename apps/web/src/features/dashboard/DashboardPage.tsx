@@ -1,23 +1,59 @@
-import type {
-  DrawingListResponse,
-  DrawingSummary,
+import {
+  drawingSummarySchema,
+  type DrawingListResponse,
+  type DrawingSummary,
 } from "@open-excalidraw/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
+import { ApiError } from "../../shared/api";
 import { getDrawingCapabilities } from "../access";
 import { useAuth } from "../auth";
+import { CloudRecoveryRepository } from "../persistence";
 import {
   DASHBOARD_QUERY_KEY,
   DashboardApiClient,
   TRASH_QUERY_KEY,
   type DashboardApi,
 } from "./dashboard-api";
+import { DashboardListDb, type DashboardListRecord } from "./dashboard-list-db";
+import { PendingCreateDb } from "./pending-create-db";
 import { useOnlineStatus } from "./use-online-status";
 
 const MAX_TAGS = 20;
+const EMPTY_PENDING_IDS: ReadonlySet<string> = new Set();
 const defaultDashboardApi = new DashboardApiClient();
+const defaultListCache = new DashboardListDb();
+const defaultPendingCreates = new PendingCreateDb();
+const defaultRecovery = new CloudRecoveryRepository();
+
+// Matches the server's EMPTY_SCENE so an offline-created drawing seeds a valid
+// recovery snapshot the workspace can open before the first sync.
+const EMPTY_SCENE = {
+  appState: {},
+  elements: [],
+  source: "open-excalidraw",
+  type: "excalidraw" as const,
+  version: 2,
+};
+
+const RELATIVE_UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
+  ["day", 86_400],
+  ["hour", 3_600],
+  ["minute", 60],
+];
+
+const formatRelativeTime = (iso: string): string => {
+  const seconds = Math.round((new Date(iso).getTime() - Date.now()) / 1_000);
+  const relative = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  for (const [unit, size] of RELATIVE_UNITS) {
+    if (Math.abs(seconds) >= size) {
+      return relative.format(Math.round(seconds / size), unit);
+    }
+  }
+  return relative.format(seconds, "second");
+};
 
 const parseTags = (value: string): string[] => [
   ...new Set(
@@ -49,6 +85,7 @@ const replaceDrawing = (
 
 const DrawingCard = ({
   drawing,
+  notSynced,
   onDelete,
   onDuplicate,
   onEditTags,
@@ -59,6 +96,7 @@ const DrawingCard = ({
   pending,
 }: {
   drawing: DrawingSummary;
+  notSynced: boolean;
   onDelete: (drawing: DrawingSummary) => void;
   onDuplicate: (drawing: DrawingSummary) => void;
   onEditTags: (drawing: DrawingSummary, tags: string[]) => void;
@@ -163,6 +201,9 @@ const DrawingCard = ({
         {drawing.isTemplate ? (
           <span className="role-badge template-badge">template</span>
         ) : null}
+        {notSynced ? (
+          <span className="role-badge pending-badge">Not synced yet</span>
+        ) : null}
       </div>
 
       <dl>
@@ -230,7 +271,9 @@ const DrawingCard = ({
         >
           Open
         </button>
-        {capabilities.renameDrawing ? (
+        {/* Everything below hits the server, so it stays hidden until this
+            drawing has synced. */}
+        {!notSynced && capabilities.renameDrawing ? (
           <button
             disabled={pending || offline}
             onClick={() => setRenaming(true)}
@@ -239,16 +282,18 @@ const DrawingCard = ({
             Rename
           </button>
         ) : null}
-        <button
-          disabled={pending || offline}
-          onClick={() => onDuplicate(drawing)}
-          type="button"
-        >
-          Duplicate
-        </button>
+        {!notSynced ? (
+          <button
+            disabled={pending || offline}
+            onClick={() => onDuplicate(drawing)}
+            type="button"
+          >
+            Duplicate
+          </button>
+        ) : null}
         {/* The template flag is drawing-level metadata, so it follows the
             same capability as renaming. */}
-        {capabilities.renameDrawing ? (
+        {!notSynced && capabilities.renameDrawing ? (
           <button
             disabled={pending || offline}
             onClick={() => onSetTemplate(drawing, !drawing.isTemplate)}
@@ -257,18 +302,20 @@ const DrawingCard = ({
             {drawing.isTemplate ? "Remove template" : "Make template"}
           </button>
         ) : null}
-        <button
-          disabled={pending || offline}
-          onClick={() => {
-            setTagsInput(drawing.tags.join(", "));
-            setTagsError(null);
-            setEditingTags(true);
-          }}
-          type="button"
-        >
-          Edit tags
-        </button>
-        {capabilities.deleteDrawing ? (
+        {!notSynced ? (
+          <button
+            disabled={pending || offline}
+            onClick={() => {
+              setTagsInput(drawing.tags.join(", "));
+              setTagsError(null);
+              setEditingTags(true);
+            }}
+            type="button"
+          >
+            Edit tags
+          </button>
+        ) : null}
+        {!notSynced && capabilities.deleteDrawing ? (
           <button
             className="danger-button"
             disabled={pending || offline}
@@ -294,6 +341,7 @@ const DrawingSection = ({
   onSetTemplate,
   offline,
   pending,
+  pendingIds,
   title,
 }: {
   drawings: DrawingSummary[];
@@ -306,6 +354,7 @@ const DrawingSection = ({
   onSetTemplate: (drawing: DrawingSummary, isTemplate: boolean) => void;
   offline: boolean;
   pending: boolean;
+  pendingIds: ReadonlySet<string>;
   title: string;
 }) => (
   <section aria-labelledby={`${title.toLowerCase()}-drawings-heading`}>
@@ -318,6 +367,7 @@ const DrawingSection = ({
           <DrawingCard
             drawing={drawing}
             key={drawing.id}
+            notSynced={pendingIds.has(drawing.id)}
             onDelete={onDelete}
             onDuplicate={onDuplicate}
             onEditTags={onEditTags}
@@ -335,25 +385,108 @@ const DrawingSection = ({
 
 export interface DashboardPageProps {
   api?: DashboardApi;
+  listCache?: DashboardListDb;
   onOpenDrawing?: (drawing: DrawingSummary) => void;
+  pendingCreates?: PendingCreateDb;
+  recovery?: CloudRecoveryRepository;
 }
 
 export const DashboardPage = ({
   api = defaultDashboardApi,
+  listCache = defaultListCache,
   onOpenDrawing,
+  pendingCreates = defaultPendingCreates,
+  recovery = defaultRecovery,
 }: DashboardPageProps) => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const online = useOnlineStatus();
   const { user } = useAuth();
+  const userId = user?.id;
   const [newTitle, setNewTitle] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [templateId, setTemplateId] = useState("");
+  const [fallback, setFallback] = useState<DashboardListRecord | null>(null);
+  const [fallbackChecked, setFallbackChecked] = useState(false);
+  // Offline-created drawings that have not yet synced: they live only in the
+  // pending store + recovery metadata, in neither the server nor cached list.
+  const [pendingEntries, setPendingEntries] = useState<DrawingSummary[]>([]);
+  const [pendingRefresh, setPendingRefresh] = useState(0);
   const dashboard = useQuery({
     queryFn: () => api.listDrawings(),
     queryKey: DASHBOARD_QUERY_KEY,
   });
+
+  // Write-through: persist each successful list, keyed by user, so an offline
+  // reload can render it. Fire-and-forget; a failed cache write must not break
+  // the dashboard. `userId` is in the deps so a late-arriving session still
+  // triggers the first write.
+  useEffect(() => {
+    if (userId && dashboard.isSuccess) {
+      void listCache.put(userId, dashboard.data).catch(() => undefined);
+    }
+  }, [userId, listCache, dashboard.data, dashboard.isSuccess]);
+
+  // Only a network-level failure (fetch rejection / offline) falls back to the
+  // cached list; an ApiError HTTP problem (401/403/500) is the real error and
+  // keeps the error state. Mirrors the isHttpProblem discrimination in
+  // DrawingPage.
+  useEffect(() => {
+    if (!userId || !dashboard.isError || dashboard.error instanceof ApiError) {
+      return;
+    }
+    let active = true;
+    void listCache
+      .get(userId)
+      .then((record) => {
+        if (active) {
+          setFallback(record ?? null);
+          setFallbackChecked(true);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setFallbackChecked(true);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [userId, listCache, dashboard.isError, dashboard.error]);
+
+  // Re-reads whenever a local create happens (pendingRefresh) or the server
+  // list changes (dashboard.data) — a completed background sync invalidates the
+  // list, so the entry drops out here as it reappears in the real owned list.
+  useEffect(() => {
+    if (!userId) {
+      return;
+    }
+    let active = true;
+    void pendingCreates
+      .listByUser(userId)
+      .then((records) =>
+        Promise.all(
+          records.map(async (record) => {
+            const snapshot = await recovery.get(userId, record.drawingId);
+            return snapshot?.metadata;
+          }),
+        ),
+      )
+      .then((summaries) => {
+        if (active) {
+          setPendingEntries(
+            summaries.filter((summary): summary is DrawingSummary =>
+              Boolean(summary),
+            ),
+          );
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [userId, pendingCreates, recovery, dashboard.data, pendingRefresh]);
 
   const createDrawing = useMutation({
     mutationFn: (title: string) => api.createDrawing(title),
@@ -472,6 +605,49 @@ export const DashboardPage = ({
     setTemplate.isPending ||
     deleteDrawing.isPending;
 
+  // Offline: mint the drawing locally so the workspace can open it now and the
+  // background sync creates it on the server later. The three writes mirror what
+  // a server load caches, so DrawingPage's offline fallback opens it seamlessly.
+  const createOfflineDrawing = async (title: string) => {
+    if (!user) {
+      setActionError("You must be signed in to create a drawing.");
+      return;
+    }
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    try {
+      const summary = drawingSummarySchema.parse({
+        contentRevision: "0",
+        createdAt: now,
+        id,
+        isTemplate: false,
+        metadataRevision: "0",
+        ownerName: user.name,
+        ownerUserId: user.id,
+        role: "owner",
+        tags: [],
+        thumbnailUpdatedAt: null,
+        title,
+        updatedAt: now,
+      });
+      // The pending marker commits last: an interruption before it leaves only
+      // orphaned (invisible) recovery data, never a marker that would sync an
+      // empty drawing whose local scene was never written.
+      await recovery.putMetadata(user.id, id, summary);
+      await recovery.put(user.id, id, "0", {
+        assetIds: [],
+        scene: EMPTY_SCENE,
+      });
+      await pendingCreates.put(user.id, id, title);
+      setActionError(null);
+      setNewTitle("");
+      setPendingRefresh((token) => token + 1);
+      (onOpenDrawing ?? ((next) => navigate(`/drawings/${next.id}`)))(summary);
+    } catch {
+      setActionError("Could not create this drawing offline.");
+    }
+  };
+
   const submitCreate = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const title = newTitle.trim();
@@ -481,7 +657,12 @@ export const DashboardPage = ({
       return;
     }
 
-    createDrawing.mutate(title);
+    if (online) {
+      createDrawing.mutate(title);
+      return;
+    }
+
+    void createOfflineDrawing(title);
   };
 
   const requestDelete = (drawing: DrawingSummary) => {
@@ -494,10 +675,17 @@ export const DashboardPage = ({
     }
   };
 
-  const templates = dashboard.data
-    ? [...dashboard.data.owned, ...dashboard.data.shared].filter(
-        (drawing) => drawing.isTemplate,
-      )
+  // Live data wins; a cached list only stands in when the live fetch failed at
+  // the network level. Offline the mutation controls are disabled, so the
+  // cached list is read-only and never diverges from what mutations would edit.
+  const list = dashboard.data ?? fallback?.list;
+  const fromCache = !dashboard.data && Boolean(fallback);
+  const lastSyncedAt = dashboard.data
+    ? new Date(dashboard.dataUpdatedAt).toISOString()
+    : fallback?.fetchedAt;
+
+  const templates = list
+    ? [...list.owned, ...list.shared].filter((drawing) => drawing.isTemplate)
     : [];
 
   const submitFromTemplate = (event: FormEvent<HTMLFormElement>) => {
@@ -509,12 +697,10 @@ export const DashboardPage = ({
     }
   };
 
-  const allTags = dashboard.data
+  const allTags = list
     ? [
         ...new Set(
-          [...dashboard.data.owned, ...dashboard.data.shared].flatMap(
-            (drawing) => drawing.tags,
-          ),
+          [...list.owned, ...list.shared].flatMap((drawing) => drawing.tags),
         ),
       ].sort()
     : [];
@@ -524,6 +710,21 @@ export const DashboardPage = ({
     activeTag
       ? drawings.filter((drawing) => drawing.tags.includes(activeTag))
       : drawings;
+
+  // Drop any pending entry the server has since acknowledged, then prepend the
+  // rest so they surface in Owned with a "Not synced yet" badge. Gated on
+  // userId so a signed-out session never renders a previous user's entries.
+  const ownedIds = new Set(list ? list.owned.map((drawing) => drawing.id) : []);
+  const unsyncedOwned = (userId ? pendingEntries : []).filter(
+    (entry) => !ownedIds.has(entry.id),
+  );
+  const pendingIds = new Set(unsyncedOwned.map((entry) => entry.id));
+  const ownedDrawings = [...unsyncedOwned, ...(list ? list.owned : [])];
+  // Show sections whenever there is a list, or unsynced entries to surface —
+  // but never mask a real HTTP error behind them.
+  const showSections =
+    Boolean(list) ||
+    (unsyncedOwned.length > 0 && !(dashboard.error instanceof ApiError));
 
   return (
     <main className="dashboard-page">
@@ -551,7 +752,10 @@ export const DashboardPage = ({
               value={newTitle}
             />
           </label>
-          <button disabled={pending || !online} type="submit">
+          {/* Enabled offline: routes to a local create that syncs on
+              reconnect. Template creation stays online-only (it copies a
+              server-side drawing). */}
+          <button disabled={pending} type="submit">
             Create drawing
           </button>
         </form>
@@ -590,16 +794,32 @@ export const DashboardPage = ({
 
       {dashboard.isPending ? (
         <p aria-live="polite">Loading drawings…</p>
-      ) : dashboard.isError ? (
-        <section className="dashboard-error" role="alert">
-          <h2>Could not load your drawings</h2>
-          <p>{dashboard.error.message}</p>
-          <button onClick={() => void dashboard.refetch()} type="button">
-            Try again
-          </button>
-        </section>
-      ) : (
+      ) : showSections ? (
         <>
+          <div
+            className={`dashboard-sync${
+              fromCache ? " dashboard-sync-offline" : ""
+            }`}
+          >
+            <p role="status">
+              {fromCache ? "Showing your last saved copy. " : null}
+              {lastSyncedAt
+                ? `Last synced ${formatRelativeTime(lastSyncedAt)}`
+                : "Not synced yet"}
+            </p>
+            <button
+              disabled={!online}
+              onClick={() => void dashboard.refetch()}
+              title={
+                online
+                  ? "Refresh your drawings"
+                  : "You are offline — reconnect to refresh"
+              }
+              type="button"
+            >
+              Refresh
+            </button>
+          </div>
           {allTags.length > 0 ? (
             <nav aria-label="Filter by tag" className="tag-filter-bar">
               {/* ponytail: single-select filter; multi-select if anyone asks */}
@@ -628,7 +848,7 @@ export const DashboardPage = ({
           ) : null}
           <div className="dashboard-sections">
             <DrawingSection
-              drawings={byTag(dashboard.data.owned)}
+              drawings={byTag(ownedDrawings)}
               emptyMessage={
                 activeTag
                   ? `No owned drawings tagged “${activeTag}”.`
@@ -650,10 +870,11 @@ export const DashboardPage = ({
               }
               offline={!online}
               pending={pending}
+              pendingIds={pendingIds}
               title="Owned"
             />
             <DrawingSection
-              drawings={byTag(dashboard.data.shared)}
+              drawings={byTag(list ? list.shared : [])}
               emptyMessage={
                 activeTag
                   ? `No shared drawings tagged “${activeTag}”.`
@@ -675,10 +896,27 @@ export const DashboardPage = ({
               }
               offline={!online}
               pending={pending}
+              pendingIds={EMPTY_PENDING_IDS}
               title="Shared"
             />
           </div>
         </>
+      ) : dashboard.isError &&
+        !(dashboard.error instanceof ApiError) &&
+        !fallbackChecked ? (
+        // A network failure whose cache lookup is still pending: keep the
+        // loading state until we know whether a cached list exists.
+        <p aria-live="polite">Loading drawings…</p>
+      ) : dashboard.isError ? (
+        <section className="dashboard-error" role="alert">
+          <h2>Could not load your drawings</h2>
+          <p>{dashboard.error.message}</p>
+          <button onClick={() => void dashboard.refetch()} type="button">
+            Try again
+          </button>
+        </section>
+      ) : (
+        <p aria-live="polite">Loading drawings…</p>
       )}
     </main>
   );

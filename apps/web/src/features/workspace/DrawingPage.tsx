@@ -9,6 +9,7 @@ import type {
 } from "@excalidraw/excalidraw/types";
 import {
   type DrawingSummary,
+  type ExcalidrawElementDTO,
   type SaveContentRequest,
 } from "@open-excalidraw/contracts";
 import {
@@ -34,11 +35,15 @@ import {
   type ConnectivitySource,
   useConnectivity,
 } from "../connectivity";
-import { CloudOutboxDb } from "../connectivity/storage/cloudOutboxDb";
+import {
+  CloudOutboxDb,
+  type CloudOutboxRecord,
+} from "../connectivity/storage/cloudOutboxDb";
 import { ChatClient, ChatPanel, type ChatSource } from "../chat";
 import {
   CollaborationController,
   isEventLocalProblem,
+  reconcileClientElements,
   SocketIoTransport,
   type CollaborationState,
 } from "../collaboration";
@@ -57,11 +62,13 @@ import {
   CloudRecoveryRepository,
   ConflictRecoveryBanner,
   ContentClient,
+  ContentRequestError,
   createRecoveryWriter,
   projectSaveRequest,
   type AutosaveControllerOptions,
   type AutosaveSnapshot,
   type AutosaveState,
+  type CloudRecoveryRecord,
   type LoadedContent,
 } from "../persistence";
 import {
@@ -71,6 +78,16 @@ import {
   type RestoreResponse,
 } from "../revisions";
 import { SharingClient, SharingDialog, type SharingSource } from "../sharing";
+
+import { ApiError } from "../../shared/api";
+
+// Deep imports (not the dashboard barrel) so the workspace chunk never pulls in
+// the lazy DashboardPage.
+import {
+  DashboardApiClient,
+  type DashboardApi,
+} from "../dashboard/dashboard-api";
+import { PendingCreateDb } from "../dashboard/pending-create-db";
 
 import { DrawingMetadataClient, type DrawingMetadataSource } from "./api";
 import { effectiveWorkspaceRole, isMembershipRevoked } from "./access-state";
@@ -85,7 +102,13 @@ type AssetSource = Pick<
   AssetClient,
   "deleteThumbnail" | "download" | "upload" | "uploadThumbnail"
 >;
-type RecoverySource = Pick<CloudRecoveryRepository, "put">;
+type RecoverySource = Pick<
+  CloudRecoveryRepository,
+  "get" | "put" | "putMetadata"
+>;
+type OutboxSource = Pick<CloudOutboxDb, "list">;
+type PendingCreateSource = Pick<PendingCreateDb, "get" | "remove">;
+type DrawingCreateSource = Pick<DashboardApi, "createDrawing">;
 type UpdateSceneData = Parameters<ExcalidrawImperativeAPI["updateScene"]>[0];
 type PendingRealtimeChange = {
   appState: Parameters<ExcalidrawChangeHandler>[1];
@@ -101,11 +124,14 @@ export interface DrawingWorkspaceDependencies {
   connectivity?: ConnectivitySource;
   content?: ContentSource;
   createAutosave?: (options: AutosaveControllerOptions) => AutosaveController;
+  createDrawing?: DrawingCreateSource;
   createRealtimeTransport?: () => SocketIoTransport;
   host?: ComponentType<ExcalidrawHostProps>;
   hydrate?: typeof hydrateAssets;
   library?: LibrarySource;
   metadata?: DrawingMetadataSource;
+  outbox?: OutboxSource;
+  pendingCreates?: PendingCreateSource;
   recovery?: RecoverySource;
   revisions?: RevisionSource;
   sharing?: SharingSource;
@@ -127,6 +153,8 @@ interface WorkspaceLoad {
   drawing: DrawingSummary;
   drawingId: string;
   initialData: ExcalidrawInitialDataState;
+  // True when hydrated from the local recovery snapshot after an offline load.
+  local: boolean;
   userId: string;
 }
 
@@ -165,8 +193,11 @@ export const DrawingPage = ({
     assets: new AssetClient(),
     chat: new ChatClient(),
     content: new ContentClient(),
+    createDrawing: new DashboardApiClient(),
     library: new LibraryClient(),
     metadata: new DrawingMetadataClient(),
+    outbox: new CloudOutboxDb(),
+    pendingCreates: new PendingCreateDb(),
     recovery: new CloudRecoveryRepository(),
     revisions: new RevisionClient(),
     sharing: new SharingClient(),
@@ -183,6 +214,7 @@ export const DrawingPage = ({
         dependencies?.createAutosave ??
         ((options: AutosaveControllerOptions) =>
           new AutosaveController(options)),
+      createDrawing: dependencies?.createDrawing ?? ownedDefaults.createDrawing,
       createRealtimeTransport:
         dependencies?.createRealtimeTransport ??
         (() => new SocketIoTransport()),
@@ -190,6 +222,9 @@ export const DrawingPage = ({
       Host: dependencies?.host ?? ExcalidrawHost,
       library: dependencies?.library ?? ownedDefaults.library,
       metadata: dependencies?.metadata ?? ownedDefaults.metadata,
+      outbox: dependencies?.outbox ?? ownedDefaults.outbox,
+      pendingCreates:
+        dependencies?.pendingCreates ?? ownedDefaults.pendingCreates,
       recovery: dependencies?.recovery ?? ownedDefaults.recovery,
       revisions: dependencies?.revisions ?? ownedDefaults.revisions,
       sharing: dependencies?.sharing ?? ownedDefaults.sharing,
@@ -359,60 +394,115 @@ export const DrawingPage = ({
       }
     });
 
-    void Promise.all([
-      resolved.metadata.load(drawingId),
-      resolved.content.load(drawingId),
-    ])
+    const applyWorkspace = (
+      drawing: DrawingSummary,
+      content: LoadedContent,
+      local: boolean,
+    ) => {
+      const capabilities = getDrawingCapabilities(drawing.role);
+      if (capabilities.editScene) {
+        const uploads = new AssetUploadManager({ client: resolved.assets });
+        const persistence = new CloudPersistence(
+          drawingId,
+          resolved.content,
+          uploads,
+        );
+        activeController = resolved.createAutosave({
+          ...(autosaveDebounceMs === undefined
+            ? {}
+            : { debounceMs: autosaveDebounceMs }),
+          initialRevision: content.revision,
+          persist: (snapshot, revision, idempotencyKey) =>
+            persistence.persist(snapshot, revision, idempotencyKey),
+          writeRecovery: createRecoveryWriter(
+            resolved.recovery as CloudRecoveryRepository,
+            userId,
+            drawingId,
+          ),
+        });
+        // Excalidraw emits onChange while applying initial data. Acknowledging
+        // the canonical projection first prevents that event from becoming a
+        // synthetic dirty save.
+        activeController.acceptServer(toAcknowledgedContent(content));
+        unsubscribe = activeController.subscribe(setAutosave);
+        setController(activeController);
+      }
+
+      setLoad({
+        content,
+        drawing,
+        drawingId,
+        initialData: toInitialData(content),
+        local,
+        userId,
+      });
+    };
+
+    const failLoad = (caught: unknown) => {
+      if (active) {
+        setLoadError({
+          drawingId,
+          error: toError(caught, "Could not open this drawing."),
+          userId,
+        });
+      }
+    };
+
+    void createPendingBeforeLoad(
+      resolved.connectivity,
+      resolved.pendingCreates,
+      resolved.createDrawing,
+      userId,
+      drawingId,
+    )
+      .then(() =>
+        Promise.all([
+          resolved.metadata.load(drawingId),
+          resolved.content.load(drawingId),
+        ]),
+      )
       .then(([drawing, content]) => {
         if (!active) {
           return;
         }
-
-        const capabilities = getDrawingCapabilities(drawing.role);
-        if (capabilities.editScene) {
-          const uploads = new AssetUploadManager({ client: resolved.assets });
-          const persistence = new CloudPersistence(
-            drawingId,
-            resolved.content,
-            uploads,
-          );
-          activeController = resolved.createAutosave({
-            ...(autosaveDebounceMs === undefined
-              ? {}
-              : { debounceMs: autosaveDebounceMs }),
-            initialRevision: content.revision,
-            persist: (snapshot, revision, idempotencyKey) =>
-              persistence.persist(snapshot, revision, idempotencyKey),
-            writeRecovery: createRecoveryWriter(
-              resolved.recovery as CloudRecoveryRepository,
-              userId,
-              drawingId,
-            ),
-          });
-          // Excalidraw emits onChange while applying initial data. Acknowledging
-          // the canonical projection first prevents that event from becoming a
-          // synthetic dirty save.
-          activeController.acceptServer(toAcknowledgedContent(content));
-          unsubscribe = activeController.subscribe(setAutosave);
-          setController(activeController);
-        }
-
-        setLoad({
-          content,
-          drawing,
-          drawingId,
-          initialData: toInitialData(content),
-          userId,
-        });
+        // Cache the summary so a later offline reload can reopen this drawing.
+        void resolved.recovery
+          .putMetadata(userId, drawingId, drawing)
+          .catch(() => undefined);
+        applyWorkspace(drawing, content, false);
       })
       .catch((caught: unknown) => {
-        if (active) {
-          setLoadError({
-            drawingId,
-            error: toError(caught, "Could not open this drawing."),
-            userId,
-          });
+        if (!active) {
+          return;
         }
+        // Only a network-level failure (offline / fetch rejection) falls back to
+        // the local snapshot. HTTP problem responses (401/403/404/…) are the
+        // real error and must not be masked by a stale local copy.
+        if (isHttpProblem(caught)) {
+          failLoad(caught);
+          return;
+        }
+        void loadLocalWorkspace(
+          resolved.recovery,
+          resolved.outbox,
+          userId,
+          drawingId,
+        )
+          .then((localWorkspace) => {
+            if (!active) {
+              return;
+            }
+            if (localWorkspace) {
+              applyWorkspace(
+                localWorkspace.drawing,
+                localWorkspace.content,
+                true,
+              );
+            } else {
+              failLoad(caught);
+            }
+          })
+          .catch(() => failLoad(caught));
       });
 
     return () => {
@@ -546,8 +636,19 @@ export const DrawingPage = ({
       if (!dependencies?.recovery) {
         void ownedDefaults.recovery.close();
       }
+      if (!dependencies?.outbox) {
+        void ownedDefaults.outbox.close();
+      }
+      if (!dependencies?.pendingCreates) {
+        void ownedDefaults.pendingCreates.close();
+      }
     },
-    [dependencies?.recovery, ownedDefaults],
+    [
+      dependencies?.outbox,
+      dependencies?.pendingCreates,
+      dependencies?.recovery,
+      ownedDefaults,
+    ],
   );
 
   const onChange = useCallback<ExcalidrawChangeHandler>(
@@ -636,7 +737,12 @@ export const DrawingPage = ({
       setConflictLoadError(null);
       setLoad((current) =>
         current && current.drawingId === drawingId && current.userId === userId
-          ? { ...current, content: server, initialData: toInitialData(server) }
+          ? {
+              ...current,
+              content: server,
+              initialData: toInitialData(server),
+              local: false,
+            }
           : current,
       );
       editorApi?.updateScene({
@@ -720,11 +826,24 @@ export const DrawingPage = ({
     autosave,
     collaborationEnabled ? collaboration : null,
     restoringRevision,
+    workspace.local,
   );
+  // Local hydration surfaces until live collaboration takes over on reconnect.
+  const viewingLocalCopy = workspace.local && collaboration.status !== "ready";
 
   return (
     <main className="drawing-workspace">
       <div className="workspace-overlays">
+        {viewingLocalCopy ? (
+          <section className="workspace-collaboration-warning" role="status">
+            <strong>You're viewing your last local copy.</strong>
+            <span>
+              These are your locally saved changes. They sync automatically when
+              you reconnect.
+            </span>
+          </section>
+        ) : null}
+
         {!capabilities.editScene ? (
           <ViewerBanner ownerName={workspace.drawing.ownerName} />
         ) : null}
@@ -990,6 +1109,7 @@ const saveStatusLabel = (
   autosave: AutosaveState,
   collaboration: CollaborationState | null,
   restoringRevision: boolean,
+  local: boolean,
 ): string => {
   if (restoringRevision) {
     return "Restoring revision…";
@@ -999,6 +1119,11 @@ const saveStatusLabel = (
   }
   if (connectivity === "offline") {
     return "Offline — changes are kept in local recovery";
+  }
+  // Loaded from the local snapshot while the server was unreachable; the
+  // outbox syncs once collaboration reconnects.
+  if (local && (!collaboration || collaboration.status !== "ready")) {
+    return "Viewing your last local copy — changes sync on reconnect";
   }
   if (collaboration) {
     switch (collaboration.status) {
@@ -1099,5 +1224,96 @@ const toAcknowledgedContent = (content: LoadedContent): LoadedContent => {
       assetIds: request.assetIds,
       scene: request.scene,
     },
+  };
+};
+
+// A network-level failure (offline, fetch rejection) is not an HTTP response;
+// the API clients only raise these typed errors for real 4xx/5xx responses.
+const isHttpProblem = (caught: unknown): boolean =>
+  caught instanceof ApiError || caught instanceof ContentRequestError;
+
+// A drawing minted offline does not exist on the server yet. Opening it online
+// must create it FIRST (a plain load would 404). Success clears the marker; a
+// 409 (id taken by another account) or any HTTP problem propagates to the load
+// error state without touching local data; a network failure just falls
+// through to the normal load, whose offline fallback opens the local copy.
+const createPendingBeforeLoad = async (
+  connectivity: ConnectivitySource,
+  pendingCreates: PendingCreateSource,
+  createDrawing: DrawingCreateSource,
+  userId: string,
+  drawingId: string,
+): Promise<void> => {
+  if (connectivity.getSnapshot() !== "online") {
+    return;
+  }
+  let marker;
+  try {
+    marker = await pendingCreates.get(userId, drawingId);
+  } catch {
+    return;
+  }
+  if (!marker) {
+    return;
+  }
+  try {
+    // v1: the server holds an empty scene until this page's collaboration
+    // reconnect rebases the offline edits back onto it.
+    await createDrawing.createDrawing(marker.title, drawingId);
+  } catch (error) {
+    if (error instanceof ApiError) {
+      throw error;
+    }
+    // Network failure: leave the marker and let the normal load fall back to
+    // the local copy.
+    return;
+  }
+  await pendingCreates.remove(userId, drawingId).catch(() => undefined);
+};
+
+const loadLocalWorkspace = async (
+  recovery: RecoverySource,
+  outbox: OutboxSource,
+  userId: string,
+  drawingId: string,
+): Promise<{ content: LoadedContent; drawing: DrawingSummary } | null> => {
+  const snapshot = await recovery.get(userId, drawingId);
+  // Need both the scene snapshot and the cached summary to open the page.
+  if (!snapshot?.metadata) {
+    return null;
+  }
+  const pending = await outbox.list(userId, drawingId);
+  return {
+    content: mergeLocalContent(snapshot, pending),
+    drawing: snapshot.metadata,
+  };
+};
+
+// Folds pending offline mutations into the recovery snapshot the same way the
+// collaboration controller rebases them on reconnect: reconcile in generation
+// order (the outbox already sorts), last shared-scene-state wins.
+const mergeLocalContent = (
+  snapshot: CloudRecoveryRecord,
+  pending: readonly CloudOutboxRecord[],
+): LoadedContent => {
+  let elements: ExcalidrawElementDTO[] = snapshot.scene.elements;
+  let sharedSceneState: CloudOutboxRecord["sharedSceneState"];
+  for (const record of pending) {
+    elements = reconcileClientElements(elements, record.elements);
+    if (record.sharedSceneState) {
+      sharedSceneState = record.sharedSceneState;
+    }
+  }
+  const appState = sharedSceneState
+    ? { ...snapshot.scene.appState, ...sharedSceneState }
+    : snapshot.scene.appState;
+  return {
+    content: {
+      assetIds: snapshot.assetIds,
+      revision: snapshot.revision,
+      savedAt: snapshot.updatedAt,
+      scene: { ...snapshot.scene, appState, elements },
+    },
+    revision: snapshot.revision,
   };
 };

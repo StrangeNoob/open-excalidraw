@@ -35,6 +35,9 @@ export interface DrawingBlobStore {
   remove(key: string): Promise<void>;
 }
 
+export type CreateDrawingResult =
+  { status: "created"; drawing: AccessibleDrawing } | { status: "conflict" };
+
 export type RenameDrawingResult =
   | { status: "updated"; drawing: AccessibleDrawing }
   | { status: "conflict"; currentRevision: bigint }
@@ -66,8 +69,9 @@ export interface DrawingRepository {
   create(input: {
     ownerUserId: string;
     title: string;
+    id?: string;
     idempotencyKey?: string;
-  }): Promise<AccessibleDrawing>;
+  }): Promise<CreateDrawingResult>;
   rename(input: {
     drawingId: string;
     actorUserId: string;
