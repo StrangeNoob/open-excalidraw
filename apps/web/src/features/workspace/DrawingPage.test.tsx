@@ -12,12 +12,18 @@ import userEvent from "@testing-library/user-event";
 import { useEffect } from "react";
 
 import type { CloudOutboxRecord } from "../connectivity/storage/cloudOutboxDb";
+import type {
+  RealtimeTransportHandlers,
+  RoomReadyEvent,
+} from "../collaboration";
 import type { ExcalidrawHostProps } from "../editor";
 import {
   ContentRequestError,
   VersionConflictError,
   type CloudRecoveryRecord,
   type LoadedContent,
+  type OverrideSnapshotRecord,
+  type OverrideSnapshotScene,
 } from "../persistence";
 import { ApiError } from "../../shared/api";
 
@@ -1056,6 +1062,138 @@ describe("DrawingPage", () => {
         screen.getByRole("button", { name: "Chat" }),
       ).not.toHaveTextContent("1"),
     );
+  });
+
+  it("surfaces an override banner and saves a recoverable .excalidraw copy", async () => {
+    const user = userEvent.setup();
+    const { dependencies } = createDependencies();
+
+    const overrideStore = new Map<string, OverrideSnapshotRecord>();
+    const overrideSnapshots = {
+      get: vi.fn((userId: string, drawingId: string) =>
+        Promise.resolve(overrideStore.get(`${userId}:${drawingId}`)),
+      ),
+      put: vi.fn(
+        (
+          userId: string,
+          drawingId: string,
+          scene: OverrideSnapshotScene,
+          at: number,
+          count: number,
+        ) => {
+          overrideStore.set(`${userId}:${drawingId}`, {
+            at,
+            count,
+            drawingId,
+            userId,
+            ...scene,
+          });
+          return Promise.resolve();
+        },
+      ),
+    };
+
+    let handlers: RealtimeTransportHandlers | null = null;
+    const fakeTransport = {
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+      emit: vi.fn(),
+      setHandlers: (next: RealtimeTransportHandlers | null) => {
+        handlers = next;
+      },
+      onChatMessage: () => () => undefined,
+    };
+
+    const roomReady: RoomReadyEvent = {
+      assetManifest: [],
+      collaborators: [],
+      connectionId: "connection-a",
+      revision: "5",
+      role: "owner",
+      snapshot: {
+        appState,
+        // The server advanced this element past the queued offline edit (v2).
+        elements: [element(10)],
+        source: "test",
+        type: "excalidraw",
+        version: 2,
+      },
+      type: "room.ready",
+    };
+
+    const created: Blob[] = [];
+    const createSpy = vi
+      .spyOn(URL, "createObjectURL")
+      .mockImplementation((blob: Blob | MediaSource) => {
+        created.push(blob as Blob);
+        return "blob:mock";
+      });
+    const revokeSpy = vi
+      .spyOn(URL, "revokeObjectURL")
+      .mockImplementation(() => undefined);
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
+
+    try {
+      render(
+        <DrawingPage
+          dependencies={{
+            ...dependencies,
+            createRealtimeTransport: () => fakeTransport as never,
+            overrideSnapshots,
+          }}
+          drawingId={DRAWING_A}
+          userId={USER}
+        />,
+      );
+
+      await waitFor(() => expect(handlers).not.toBeNull());
+      // A local edit becomes an unsynced (dirty) change while offline.
+      await user.click(
+        await screen.findByRole("button", { name: "Make edit" }),
+      );
+      // Reconnect: the room-ready merge overrides that edit with the newer copy.
+      act(() => handlers?.onServerEvent(roomReady));
+
+      expect(
+        await screen.findByText(
+          /Your offline changes to 1 element were replaced by newer edits/,
+        ),
+      ).toBeVisible();
+      await waitFor(() =>
+        expect(overrideSnapshots.put).toHaveBeenCalledTimes(1),
+      );
+
+      await user.click(screen.getByRole("button", { name: "Save a copy" }));
+      await waitFor(() => expect(created).toHaveLength(1));
+      const payload = JSON.parse(await created[0]!.text()) as {
+        appState: Record<string, unknown>;
+        elements: { fileId?: string; id: string; version: number }[];
+        files: Record<string, unknown>;
+        type: string;
+        version: number;
+      };
+      expect(payload.type).toBe("excalidraw");
+      expect(payload.version).toBe(2);
+      expect(payload.elements).toEqual([element(2, "image_1")]);
+      expect(payload.files).toHaveProperty("image_1");
+      expect(payload.appState).toMatchObject({
+        viewBackgroundColor: "#ffffff",
+      });
+
+      // Dismiss clears the banner without touching the retained snapshot.
+      await user.click(screen.getByRole("button", { name: "Dismiss" }));
+      await waitFor(() =>
+        expect(
+          screen.queryByText(/Your offline changes to 1 element/),
+        ).toBeNull(),
+      );
+    } finally {
+      clickSpy.mockRestore();
+      createSpy.mockRestore();
+      revokeSpy.mockRestore();
+    }
   });
 
   it("captures on the idle window once, then re-arms threading the last sha", async () => {

@@ -47,6 +47,12 @@ export type CollaborationStatus =
 export interface CollaborationState {
   collaborators: Map<SocketId, Collaborator>;
   error: RealtimeProblem | null;
+  /**
+   * Set when a reconnect merge overrode owned local edits with newer server
+   * copies. Transient and serializable; the pre-merge scene itself lives in the
+   * override snapshot store. `at` (epoch ms) also keys the store record.
+   */
+  overriddenElements: { at: number; count: number } | null;
   revision: string;
   role: Role | null;
   status: CollaborationStatus;

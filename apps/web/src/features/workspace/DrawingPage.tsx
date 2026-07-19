@@ -65,12 +65,14 @@ import {
   ContentClient,
   ContentRequestError,
   createRecoveryWriter,
+  OverrideSnapshotDb,
   projectSaveRequest,
   type AutosaveControllerOptions,
   type AutosaveSnapshot,
   type AutosaveState,
   type CloudRecoveryRecord,
   type LoadedContent,
+  type OverrideSnapshotRecord,
 } from "../persistence";
 import {
   RevisionClient,
@@ -107,6 +109,8 @@ type RecoverySource = Pick<
   CloudRecoveryRepository,
   "get" | "put" | "putMetadata"
 >;
+// The controller writes overrides (put); the "Save a copy" action reads (get).
+type OverrideSnapshotSource = Pick<OverrideSnapshotDb, "get" | "put">;
 type OutboxSource = Pick<CloudOutboxDb, "list">;
 type PendingCreateSource = Pick<PendingCreateDb, "get" | "remove">;
 type DrawingCreateSource = Pick<DashboardApi, "createDrawing">;
@@ -132,6 +136,7 @@ export interface DrawingWorkspaceDependencies {
   library?: LibrarySource;
   metadata?: DrawingMetadataSource;
   outbox?: OutboxSource;
+  overrideSnapshots?: OverrideSnapshotSource;
   pendingCreates?: PendingCreateSource;
   recovery?: RecoverySource;
   revisions?: RevisionSource;
@@ -175,6 +180,7 @@ const EMPTY_AUTOSAVE_STATE: AutosaveState = {
 const EMPTY_COLLABORATION_STATE: CollaborationState = {
   collaborators: new Map(),
   error: null,
+  overriddenElements: null,
   revision: "0",
   role: null,
   status: "idle",
@@ -198,6 +204,7 @@ export const DrawingPage = ({
     library: new LibraryClient(),
     metadata: new DrawingMetadataClient(),
     outbox: new CloudOutboxDb(),
+    overrideSnapshots: new OverrideSnapshotDb(),
     pendingCreates: new PendingCreateDb(),
     recovery: new CloudRecoveryRepository(),
     revisions: new RevisionClient(),
@@ -224,6 +231,8 @@ export const DrawingPage = ({
       library: dependencies?.library ?? ownedDefaults.library,
       metadata: dependencies?.metadata ?? ownedDefaults.metadata,
       outbox: dependencies?.outbox ?? ownedDefaults.outbox,
+      overrideSnapshots:
+        dependencies?.overrideSnapshots ?? ownedDefaults.overrideSnapshots,
       pendingCreates:
         dependencies?.pendingCreates ?? ownedDefaults.pendingCreates,
       recovery: dependencies?.recovery ?? ownedDefaults.recovery,
@@ -249,6 +258,10 @@ export const DrawingPage = ({
   const pendingRealtimeChangeRef = useRef<PendingRealtimeChange | null>(null);
   const [collaboration, setCollaboration] = useState<CollaborationState>(
     EMPTY_COLLABORATION_STATE,
+  );
+  // Keyed by the override event's `at` so a later, distinct override re-shows.
+  const [dismissedOverrideAt, setDismissedOverrideAt] = useState<number | null>(
+    null,
   );
   const [sharingOpen, setSharingOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -535,6 +548,7 @@ export const DrawingPage = ({
       initialElements: workspace.content.content.scene.elements,
       initialRole: workspace.drawing.role,
       outbox,
+      overrideSnapshots: resolved.overrideSnapshots,
       transport,
       uploadAssets: (nextDrawingId, files, fileIds) =>
         uploads.uploadReferenced(nextDrawingId, files, fileIds),
@@ -583,6 +597,7 @@ export const DrawingPage = ({
     drawingId,
     editorApi,
     resolved.assets,
+    resolved.overrideSnapshots,
     userId,
     workspace,
   ]);
@@ -660,12 +675,16 @@ export const DrawingPage = ({
       if (!dependencies?.outbox) {
         void ownedDefaults.outbox.close();
       }
+      if (!dependencies?.overrideSnapshots) {
+        void ownedDefaults.overrideSnapshots.close();
+      }
       if (!dependencies?.pendingCreates) {
         void ownedDefaults.pendingCreates.close();
       }
     },
     [
       dependencies?.outbox,
+      dependencies?.overrideSnapshots,
       dependencies?.pendingCreates,
       dependencies?.recovery,
       ownedDefaults,
@@ -973,6 +992,45 @@ export const DrawingPage = ({
             {accessRevoked ? <a href="/app">Back to dashboard</a> : null}
           </section>
         ) : null}
+
+        {collaborationEnabled &&
+        collaboration.overriddenElements &&
+        collaboration.overriddenElements.at !== dismissedOverrideAt ? (
+          <section className="workspace-collaboration-warning" role="status">
+            <strong>
+              Your offline changes to {collaboration.overriddenElements.count}{" "}
+              element
+              {collaboration.overriddenElements.count === 1 ? "" : "s"} were
+              replaced by newer edits.
+            </strong>
+            <span>
+              A copy of your pre-merge drawing is saved on this device.
+            </span>
+            <button
+              onClick={() =>
+                void exportOverrideSnapshot(
+                  resolved.overrideSnapshots,
+                  workspace.drawing.title,
+                  userId,
+                  drawingId,
+                )
+              }
+              type="button"
+            >
+              Save a copy
+            </button>
+            <button
+              onClick={() =>
+                setDismissedOverrideAt(
+                  collaboration.overriddenElements?.at ?? null,
+                )
+              }
+              type="button"
+            >
+              Dismiss
+            </button>
+          </section>
+        ) : null}
       </div>
 
       <WorkspaceHost
@@ -1204,13 +1262,48 @@ const exportSnapshot = (
   title: string,
   snapshot: { request: SaveContentRequest; files?: unknown },
   suffix: string,
+) =>
+  downloadJson(
+    `${safeFilename(title)}-${suffix}.excalidraw.json`,
+    snapshot.request,
+  );
+
+// Exports the retained pre-merge scene as a standard Excalidraw file so an
+// overridden offline edit stays recoverable off-device.
+const exportOverrideSnapshot = async (
+  store: OverrideSnapshotSource,
+  title: string,
+  userId: string,
+  drawingId: string,
 ) => {
-  const blob = new Blob([JSON.stringify(snapshot.request, null, 2)], {
+  const record = await store.get(userId, drawingId);
+  if (!record) return;
+  downloadJson(`${safeFilename(title)}-recovered.excalidraw`, {
+    appState: record.appState,
+    elements: record.elements,
+    files: record.files,
+    source: "https://open-excalidraw.local",
+    type: "excalidraw",
+    version: 2,
+  } satisfies OverrideExcalidrawFile);
+};
+
+interface OverrideExcalidrawFile {
+  appState: OverrideSnapshotRecord["appState"];
+  elements: OverrideSnapshotRecord["elements"];
+  files: OverrideSnapshotRecord["files"];
+  source: string;
+  type: "excalidraw";
+  version: 2;
+}
+
+const downloadJson = (filename: string, data: unknown) => {
+  const blob = new Blob([JSON.stringify(data, null, 2)], {
     type: "application/json",
   });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
-  anchor.download = `${safeFilename(title)}-${suffix}.excalidraw.json`;
+  anchor.download = filename;
   anchor.href = url;
   anchor.click();
   URL.revokeObjectURL(url);

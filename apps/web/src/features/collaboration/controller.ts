@@ -12,8 +12,13 @@ import type {
 } from "@open-excalidraw/contracts";
 
 import type { CloudOutboxRecord } from "../connectivity/storage/cloudOutboxDb";
+import type { OverrideSnapshotScene } from "../persistence/override-snapshot-db";
 import { createCollaboratorMap, updateCollaboratorPresence } from "./presence";
-import { changedAfterRebase, reconcileClientElements } from "./reconcile";
+import {
+  changedAfterRebase,
+  comparePriority,
+  reconcileClientElements,
+} from "./reconcile";
 import type {
   CollaborationState,
   PresenceBroadcast,
@@ -34,6 +39,16 @@ export interface CollaborationOutbox {
   remove(userId: string, drawingId: string, mutationId: string): Promise<void>;
 }
 
+export interface OverrideSnapshotSink {
+  put(
+    userId: string,
+    drawingId: string,
+    scene: OverrideSnapshotScene,
+    at: number,
+    count: number,
+  ): Promise<void>;
+}
+
 export interface CollaborationControllerOptions {
   clientInstanceId?: string;
   createId?: () => string;
@@ -50,6 +65,12 @@ export interface CollaborationControllerOptions {
   initialRole?: Role;
   now?: () => number;
   outbox: CollaborationOutbox;
+  /**
+   * Retains the pre-merge owned scene when a reconnect merge overrides local
+   * edits, so the loss stays recoverable. Optional: without it, overrides are
+   * still counted but no recovery snapshot (and so no banner) is produced.
+   */
+  overrideSnapshots?: OverrideSnapshotSink;
   /**
    * Disable all presence.update emits. Required for share-link viewers: the
    * server rejects every emit from their receive-only sockets and disconnects
@@ -72,6 +93,7 @@ export interface CollaborationControllerOptions {
 const INITIAL_STATE: CollaborationState = {
   collaborators: new Map(),
   error: null,
+  overriddenElements: null,
   revision: "0",
   role: null,
   status: "idle",
@@ -84,6 +106,7 @@ export class CollaborationController {
   readonly #createId: () => string;
   readonly #editor: CollaborationControllerOptions["editor"];
   readonly #outbox: CollaborationOutbox;
+  readonly #overrideSnapshots?: OverrideSnapshotSink;
   readonly #transport: RealtimeTransport;
   readonly #uploadAssets?: CollaborationControllerOptions["uploadAssets"];
   readonly #now: () => number;
@@ -135,6 +158,7 @@ export class CollaborationController {
     this.#createId = options.createId ?? (() => crypto.randomUUID());
     this.#editor = options.editor;
     this.#outbox = options.outbox;
+    this.#overrideSnapshots = options.overrideSnapshots;
     this.#transport = options.transport;
     this.#uploadAssets = options.uploadAssets;
     this.#now = options.now ?? (() => Date.now());
@@ -386,6 +410,10 @@ export class CollaborationController {
   async #ready(event: RoomReadyEvent) {
     this.#resyncing = false;
     this.#remotePreviews.clear();
+    // Snapshot the local canonical before the server copy replaces it, so an
+    // owned edit the merge below overrides can still be composed and recovered.
+    const preMergeCanonical = this.#canonicalElements;
+    const preMergeSharedSceneState = this.#canonicalSharedSceneState;
     this.#canonicalElements = [...event.snapshot.elements];
     this.#canonicalSharedSceneState = normalizeSharedSceneState(
       event.snapshot.appState,
@@ -427,11 +455,15 @@ export class CollaborationController {
       mergedSharedSceneState = this.#dirtySharedSceneState;
     }
 
+    const overriddenCount = countOverridden(pending, this.#dirty, merged);
+
     const collaborators = createCollaboratorMap(event.collaborators);
     this.#applyRemote(merged, mergedSharedSceneState, collaborators);
     this.#setState({
       collaborators,
       error: null,
+      // Reset per room.ready: a clean reconnect clears any stale override banner.
+      overriddenElements: null,
       revision: event.revision,
       role: event.role,
       status: "ready",
@@ -452,6 +484,48 @@ export class CollaborationController {
     ) {
       this.#scheduleDurable();
     }
+
+    // Retained after the scene is applied above so the idb write never delays
+    // room-ready; the banner is gated on the write, which never breaks the join.
+    if (overriddenCount > 0) {
+      const preMergeElements = foldOwnedScene(preMergeCanonical, pending, [
+        ...this.#dirty.values(),
+      ]);
+      await this.#retainOverrideSnapshot(
+        {
+          appState: foldOwnedSharedSceneState(
+            preMergeSharedSceneState,
+            pending,
+            this.#dirtySharedSceneState,
+          ),
+          elements: preMergeElements,
+          files: filesForElements(
+            preMergeElements,
+            filesForOwnedScene(pending, this.#latestFiles),
+          ),
+        },
+        overriddenCount,
+      );
+    }
+  }
+
+  async #retainOverrideSnapshot(scene: OverrideSnapshotScene, count: number) {
+    if (!this.#overrideSnapshots) return;
+    const at = this.#now();
+    try {
+      await this.#overrideSnapshots.put(
+        this.#userId,
+        this.#drawingId,
+        scene,
+        at,
+        count,
+      );
+    } catch {
+      // Best-effort recovery: without the persisted copy there is nothing to
+      // offer, so leave the banner off rather than surfacing an error.
+      return;
+    }
+    this.#setState({ overriddenElements: { at, count } });
   }
 
   async #committed(
@@ -724,20 +798,18 @@ export class CollaborationController {
 
   async #ownedCanonicalScene() {
     const pending = await this.#outbox.list(this.#userId, this.#drawingId);
-    let owned = [...this.#canonicalElements];
-    for (const record of pending) {
-      owned = reconcileClientElements(owned, record.elements);
-    }
-    return reconcileClientElements(owned, [...this.#dirty.values()]);
+    return foldOwnedScene(this.#canonicalElements, pending, [
+      ...this.#dirty.values(),
+    ]);
   }
 
   async #ownedSharedSceneState(): Promise<SharedSceneState> {
     const pending = await this.#outbox.list(this.#userId, this.#drawingId);
-    let owned = this.#canonicalSharedSceneState;
-    for (const record of pending) {
-      if (record.sharedSceneState) owned = record.sharedSceneState;
-    }
-    return this.#dirtySharedSceneState ?? owned;
+    return foldOwnedSharedSceneState(
+      this.#canonicalSharedSceneState,
+      pending,
+      this.#dirtySharedSceneState,
+    );
   }
 
   async #applyCanonicalWithOwned(appState?: Record<string, unknown>) {
@@ -865,6 +937,69 @@ const filesForElements = (
     if (fileId && files[fileId]) selected[fileId] = files[fileId];
   }
   return selected;
+};
+
+const foldOwnedScene = (
+  canonical: readonly ExcalidrawElementDTO[],
+  pending: readonly CloudOutboxRecord[],
+  dirty: readonly ExcalidrawElementDTO[],
+): ExcalidrawElementDTO[] => {
+  let owned = [...canonical];
+  for (const record of pending) {
+    owned = reconcileClientElements(owned, record.elements);
+  }
+  return reconcileClientElements(owned, dirty);
+};
+
+const foldOwnedSharedSceneState = (
+  canonical: SharedSceneState,
+  pending: readonly CloudOutboxRecord[],
+  dirty: SharedSceneState | null,
+): SharedSceneState => {
+  let owned = canonical;
+  for (const record of pending) {
+    if (record.sharedSceneState) owned = record.sharedSceneState;
+  }
+  return dirty ?? owned;
+};
+
+/** Best-effort asset gather for a recovery snapshot: outbox blobs plus the last
+ * scene's files, keyed by whatever the owned elements still reference. */
+const filesForOwnedScene = (
+  pending: readonly CloudOutboxRecord[],
+  latestFiles: BinaryFiles,
+): BinaryFiles => {
+  const available: BinaryFiles = { ...latestFiles };
+  for (const record of pending) {
+    if (record.files) Object.assign(available, record.files);
+  }
+  return available;
+};
+
+/**
+ * Owned elements whose queued or dirty edit lost the reconnect merge to a newer
+ * server copy. Keyed by id so the highest-priority local copy per element wins:
+ * element versions only ever climb, so if that copy is not the merged survivor
+ * the server strictly outranked it (comparePriority < 0). A copy the server tied
+ * or the user's own later edit reclaimed is not a loss and is not counted.
+ */
+const countOverridden = (
+  pending: readonly CloudOutboxRecord[],
+  dirty: ReadonlyMap<string, ExcalidrawElementDTO>,
+  merged: readonly ExcalidrawElementDTO[],
+): number => {
+  const survivorById = new Map(merged.map((element) => [element.id, element]));
+  const localById = new Map<string, ExcalidrawElementDTO>();
+  for (const record of pending) {
+    for (const element of record.elements) localById.set(element.id, element);
+  }
+  for (const element of dirty.values()) localById.set(element.id, element);
+  let count = 0;
+  for (const [id, local] of localById) {
+    const survivor = survivorById.get(id);
+    if (survivor && comparePriority(local, survivor) < 0) count += 1;
+  }
+  return count;
 };
 
 const toSharedAppState = (
