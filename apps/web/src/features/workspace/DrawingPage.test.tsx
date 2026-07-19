@@ -483,6 +483,115 @@ describe("DrawingPage", () => {
     expect(captured.initialData?.elements).toEqual([element(5)]);
   });
 
+  const captureInitialData = () => {
+    const captured: { initialData: ExcalidrawInitialDataState | null } = {
+      initialData: null,
+    };
+    const Host = (props: ExcalidrawHostProps) => {
+      useEffect(() => {
+        captured.initialData = props.initialData as ExcalidrawInitialDataState;
+      }, [props.initialData]);
+      return <TestHost {...props} />;
+    };
+    return { captured, Host };
+  };
+
+  const offlineImageFixture = () => {
+    const fixture = createDependencies({
+      contentLoad: () => Promise.reject(new TypeError("Failed to fetch")),
+    });
+    fixture.sources.metadata.load.mockRejectedValue(
+      new TypeError("Failed to fetch"),
+    );
+    return fixture;
+  };
+
+  it("renders an embedded image offline from the recovery snapshot blob", async () => {
+    const fixture = offlineImageFixture();
+    fixture.sources.recovery.get.mockResolvedValue({
+      ...recoveryRecord(drawing(DRAWING_A, "Cached drawing"), [
+        element(1, "image_1"),
+      ]),
+      assetIds: ["image_1"],
+      files: { image_1: imageFile("image_1") },
+    });
+    const { captured, Host } = captureInitialData();
+
+    render(
+      <DrawingPage
+        collaborationEnabled={false}
+        dependencies={{ ...fixture.dependencies, host: Host }}
+        drawingId={DRAWING_A}
+        userId={USER}
+      />,
+    );
+
+    await screen.findByRole("heading", { name: "Cached drawing" });
+    // The locally stored blob is seeded into the editor's file cache…
+    expect(captured.initialData?.files?.image_1).toEqual(imageFile("image_1"));
+    // …and is never fetched from the unreachable server.
+    expect(fixture.sources.assets.download).not.toHaveBeenCalled();
+  });
+
+  it("renders an embedded image offline from an outbox record blob", async () => {
+    const fixture = offlineImageFixture();
+    fixture.sources.recovery.get.mockResolvedValue({
+      ...recoveryRecord(drawing(DRAWING_A, "Cached drawing"), [element(1)]),
+      assetIds: ["image_1"],
+    });
+    fixture.sources.outbox.list.mockResolvedValue([
+      {
+        ...outboxRecord(1, [element(5, "image_1")]),
+        files: { image_1: imageFile("image_1") },
+      },
+    ]);
+    const { captured, Host } = captureInitialData();
+
+    render(
+      <DrawingPage
+        collaborationEnabled={false}
+        dependencies={{ ...fixture.dependencies, host: Host }}
+        drawingId={DRAWING_A}
+        userId={USER}
+      />,
+    );
+
+    await screen.findByRole("heading", { name: "Cached drawing" });
+    expect(captured.initialData?.files?.image_1).toEqual(imageFile("image_1"));
+    expect(fixture.sources.assets.download).not.toHaveBeenCalled();
+  });
+
+  it("still opens offline when a referenced blob is missing locally", async () => {
+    const fixture = offlineImageFixture();
+    fixture.sources.recovery.get.mockResolvedValue({
+      ...recoveryRecord(drawing(DRAWING_A, "Cached drawing"), [
+        element(1, "image_1"),
+      ]),
+      assetIds: ["image_1"],
+    });
+    // No blob anywhere: the missing asset falls through to today's fetch,
+    // which fails while offline without breaking the load.
+    fixture.sources.assets.download.mockRejectedValue(new Error("offline"));
+
+    render(
+      <DrawingPage
+        collaborationEnabled={false}
+        dependencies={fixture.dependencies}
+        drawingId={DRAWING_A}
+        userId={USER}
+      />,
+    );
+
+    await screen.findByRole("heading", { name: "Cached drawing" });
+    await waitFor(() =>
+      expect(fixture.sources.assets.download).toHaveBeenCalledWith(
+        DRAWING_A,
+        "image_1",
+        expect.anything(),
+      ),
+    );
+  });
+
   it("shows the real error and skips local fallback on an HTTP problem", async () => {
     const fixture = createDependencies({
       contentLoad: () => Promise.reject(new ContentRequestError(404, null)),

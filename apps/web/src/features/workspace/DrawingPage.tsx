@@ -4,6 +4,7 @@ import {
   useHandleLibrary,
 } from "@excalidraw/excalidraw";
 import type {
+  BinaryFiles,
   ExcalidrawImperativeAPI,
   ExcalidrawInitialDataState,
 } from "@excalidraw/excalidraw/types";
@@ -398,6 +399,7 @@ export const DrawingPage = ({
       drawing: DrawingSummary,
       content: LoadedContent,
       local: boolean,
+      files?: BinaryFiles,
     ) => {
       const capabilities = getDrawingCapabilities(drawing.role);
       if (capabilities.editScene) {
@@ -432,7 +434,11 @@ export const DrawingPage = ({
         content,
         drawing,
         drawingId,
-        initialData: toInitialData(content),
+        // Offline loads seed the editor's file cache from locally stored blobs
+        // so embedded images render without a server fetch.
+        initialData: files
+          ? { ...toInitialData(content), files }
+          : toInitialData(content),
         local,
         userId,
       });
@@ -497,6 +503,7 @@ export const DrawingPage = ({
                 localWorkspace.drawing,
                 localWorkspace.content,
                 true,
+                localWorkspace.files,
               );
             } else {
               failLoad(caught);
@@ -588,7 +595,16 @@ export const DrawingPage = ({
       collaborationEnabled && collaboration.status !== "idle"
         ? collectAssetReferences(editorApi.getSceneElementsIncludingDeleted())
         : workspace.content.content.assetIds;
-    if (assetIds.length === 0) {
+    // Assets restored from the local snapshot are already in the editor via
+    // initialData.files. Re-fetching them would fail while offline and raise a
+    // false warning; genuinely missing ones still fall through to the fetch.
+    const localFiles = workspace.local
+      ? workspace.initialData.files
+      : undefined;
+    const pendingIds = localFiles
+      ? assetIds.filter((fileId) => !localFiles[fileId])
+      : assetIds;
+    if (pendingIds.length === 0) {
       return;
     }
 
@@ -600,7 +616,7 @@ export const DrawingPage = ({
       }
     });
     void resolved
-      .hydrate(editorApi, resolved.assets, drawingId, assetIds, abort.signal)
+      .hydrate(editorApi, resolved.assets, drawingId, pendingIds, abort.signal)
       .then((result: HydrationResult) => {
         if (generation === hydrationGeneration.current && !result.cancelled) {
           setAssetFailures(result.failed);
@@ -1276,7 +1292,11 @@ const loadLocalWorkspace = async (
   outbox: OutboxSource,
   userId: string,
   drawingId: string,
-): Promise<{ content: LoadedContent; drawing: DrawingSummary } | null> => {
+): Promise<{
+  content: LoadedContent;
+  drawing: DrawingSummary;
+  files: BinaryFiles;
+} | null> => {
   const snapshot = await recovery.get(userId, drawingId);
   // Need both the scene snapshot and the cached summary to open the page.
   if (!snapshot?.metadata) {
@@ -1286,6 +1306,12 @@ const loadLocalWorkspace = async (
   return {
     content: mergeLocalContent(snapshot, pending),
     drawing: snapshot.metadata,
+    // Locally stored image blobs, later outbox records winning per fileId —
+    // the same precedence mergeLocalContent applies to elements.
+    files: pending.reduce<BinaryFiles>(
+      (merged, record) => Object.assign(merged, record.files),
+      { ...snapshot.files },
+    ),
   };
 };
 
