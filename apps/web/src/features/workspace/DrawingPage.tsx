@@ -186,6 +186,10 @@ const EMPTY_COLLABORATION_STATE: CollaborationState = {
   status: "idle",
 };
 
+// Shown while an offline-created drawing still has its pending-create marker:
+// sharing would 404 (or expose a sparse scene) until the first sync lands.
+const SHARING_GATED_LABEL = "Sharing unlocks after this drawing first syncs";
+
 export const DrawingPage = ({
   autosaveDebounceMs,
   collaborationEnabled = true,
@@ -264,6 +268,9 @@ export const DrawingPage = ({
     null,
   );
   const [sharingOpen, setSharingOpen] = useState(false);
+  // True while this user still holds a pending-create marker for the drawing:
+  // the offline-created scene has not synced, so sharing stays gated.
+  const [sharingGated, setSharingGated] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatUnread, setChatUnread] = useState(0);
@@ -405,6 +412,7 @@ export const DrawingPage = ({
         setAssetFailures(new Map());
         setRestoringRevision(false);
         setChatUnread(0);
+        setSharingGated(false);
       }
     });
 
@@ -474,12 +482,15 @@ export const DrawingPage = ({
       userId,
       drawingId,
     )
-      .then(() =>
-        Promise.all([
+      .then((pending) => {
+        if (active) {
+          setSharingGated(pending);
+        }
+        return Promise.all([
           resolved.metadata.load(drawingId),
           resolved.content.load(drawingId),
-        ]),
-      )
+        ]);
+      })
       .then(([drawing, content]) => {
         if (!active) {
           return;
@@ -531,6 +542,32 @@ export const DrawingPage = ({
       activeController?.dispose();
     };
   }, [autosaveDebounceMs, drawingId, loadGeneration, resolved, userId]);
+
+  // The load effect only runs on open, so a drawing opened offline keeps its
+  // pending-create marker (and gated sharing) until reconnect. Re-run the
+  // create when connectivity returns to sync it and lift the gate in place.
+  useEffect(() => {
+    if (connectivity !== "online" || !sharingGated) {
+      return;
+    }
+    let active = true;
+    void createPendingBeforeLoad(
+      resolved.connectivity,
+      resolved.pendingCreates,
+      resolved.createDrawing,
+      userId,
+      drawingId,
+    )
+      .then((pending) => {
+        if (active) {
+          setSharingGated(pending);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [connectivity, drawingId, resolved, sharingGated, userId]);
 
   useEffect(() => {
     if (!collaborationEnabled || !editorApi || !workspace) {
@@ -1090,8 +1127,11 @@ export const DrawingPage = ({
             </button>
             {capabilities.manageSharing ? (
               <button
+                aria-label={sharingGated ? SHARING_GATED_LABEL : undefined}
                 className="canvas-action canvas-action--primary"
+                disabled={sharingGated}
                 onClick={() => setSharingOpen(true)}
+                title={sharingGated ? SHARING_GATED_LABEL : undefined}
                 type="button"
               >
                 Share
@@ -1113,6 +1153,8 @@ export const DrawingPage = ({
           </MainMenu.Item>
           {capabilities.manageSharing ? (
             <MainMenu.Item
+              aria-label={sharingGated ? SHARING_GATED_LABEL : undefined}
+              disabled={sharingGated}
               icon={shareIcon}
               onSelect={() => setSharingOpen(true)}
             >
@@ -1351,24 +1393,27 @@ const isHttpProblem = (caught: unknown): boolean =>
 // 409 (id taken by another account) or any HTTP problem propagates to the load
 // error state without touching local data; a network failure just falls
 // through to the normal load, whose offline fallback opens the local copy.
+// Returns whether a pending-create marker still stands afterwards, i.e. the
+// drawing has not synced yet and sharing must stay gated.
 const createPendingBeforeLoad = async (
   connectivity: ConnectivitySource,
   pendingCreates: PendingCreateSource,
   createDrawing: DrawingCreateSource,
   userId: string,
   drawingId: string,
-): Promise<void> => {
-  if (connectivity.getSnapshot() !== "online") {
-    return;
-  }
+): Promise<boolean> => {
   let marker;
   try {
     marker = await pendingCreates.get(userId, drawingId);
   } catch {
-    return;
+    return false;
   }
   if (!marker) {
-    return;
+    return false;
+  }
+  if (connectivity.getSnapshot() !== "online") {
+    // Offline: the drawing cannot sync yet, so the marker stands.
+    return true;
   }
   try {
     // v1: the server holds an empty scene until this page's collaboration
@@ -1380,9 +1425,10 @@ const createPendingBeforeLoad = async (
     }
     // Network failure: leave the marker and let the normal load fall back to
     // the local copy.
-    return;
+    return true;
   }
   await pendingCreates.remove(userId, drawingId).catch(() => undefined);
+  return false;
 };
 
 const loadLocalWorkspace = async (
