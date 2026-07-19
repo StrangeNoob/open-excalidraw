@@ -133,6 +133,7 @@ describe("admin contracts", () => {
         image: null,
         emailVerified: true,
         isAdmin: true,
+        twoFactorEnabled: false,
         createdAt: "2026-07-15T10:00:00.000+00:00",
       }).isAdmin,
     ).toBe(true);

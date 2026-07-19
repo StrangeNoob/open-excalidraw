@@ -125,6 +125,7 @@ const renderAdmin = (api: AdminApi) => {
       image: null,
       isAdmin: true,
       name: "Ada",
+      twoFactorEnabled: false,
     },
   });
   const queryClient = new QueryClient({

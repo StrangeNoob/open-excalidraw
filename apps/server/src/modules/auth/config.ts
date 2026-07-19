@@ -15,7 +15,7 @@ import {
 } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError } from "better-auth/api";
-import { genericOAuth } from "better-auth/plugins";
+import { genericOAuth, twoFactor } from "better-auth/plugins";
 
 import {
   DisabledManualResetLinkSink,
@@ -95,6 +95,29 @@ export function buildBetterAuthOptions(
         transaction: true,
       }),
   );
+
+  // twoFactor is always on (opt-in per user); genericOAuth stays conditional.
+  // No options: appName is the TOTP issuer, skipVerificationOnEnable defaults
+  // false so enrollment only flips twoFactorEnabled after a verify-totp, and
+  // omitting otpOptions leaves sendOTP unset so /two-factor/send-otp is dead.
+  const plugins: NonNullable<BetterAuthOptions["plugins"]> = [twoFactor()];
+  if (hasCompleteOidc(input.oidc)) {
+    plugins.push(
+      genericOAuth({
+        config: [
+          {
+            providerId: "oidc",
+            discoveryUrl: oidcDiscoveryUrl(input.oidc.issuerUrl),
+            clientId: input.oidc.clientId,
+            clientSecret: input.oidc.clientSecret,
+            scopes: ["openid", "profile", "email"],
+            pkce: true,
+            disableSignUp,
+          },
+        ],
+      }),
+    );
+  }
 
   return {
     appName: input.productName ?? "Open Excalidraw",
@@ -224,25 +247,7 @@ export function buildBetterAuthOptions(
       },
     },
     socialProviders,
-    ...(hasCompleteOidc(input.oidc)
-      ? {
-          plugins: [
-            genericOAuth({
-              config: [
-                {
-                  providerId: "oidc",
-                  discoveryUrl: oidcDiscoveryUrl(input.oidc.issuerUrl),
-                  clientId: input.oidc.clientId,
-                  clientSecret: input.oidc.clientSecret,
-                  scopes: ["openid", "profile", "email"],
-                  pkce: true,
-                  disableSignUp,
-                },
-              ],
-            }),
-          ],
-        }
-      : {}),
+    plugins,
     rateLimit: {
       enabled: true,
       storage: "memory",

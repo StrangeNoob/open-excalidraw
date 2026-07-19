@@ -84,6 +84,7 @@ export function createAuthRouter(input: CreateAuthRouterInput): Router {
                 identity,
                 input.adminEmails ?? NO_ADMINS,
               ),
+              twoFactorEnabled: identity.twoFactorEnabled,
               createdAt: identity.createdAt.toISOString(),
             }
           : null,

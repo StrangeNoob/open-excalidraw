@@ -1,5 +1,7 @@
 import { createDatabase, runMigrations } from "@open-excalidraw/database";
 import { DisabledMailer } from "@open-excalidraw/mail";
+import { base32 } from "@better-auth/utils/base32";
+import { createOTP } from "@better-auth/utils/otp";
 import type { DBAdapter, DBAdapterInstance, Where } from "better-auth";
 import express from "express";
 import { randomUUID } from "node:crypto";
@@ -108,10 +110,8 @@ describe("Better Auth configuration", () => {
     expect(options.socialProviders?.github).toMatchObject({
       disableSignUp: true,
     });
-    const plugin = options.plugins?.[0] as unknown as {
-      options: { config: Array<Record<string, unknown>> };
-    };
-    expect(plugin.options.config[0]?.disableSignUp).toBe(true);
+    const plugin = findGenericOAuth(options);
+    expect(plugin?.options.config[0]?.disableSignUp).toBe(true);
 
     expect(
       authCapabilities({ smtpEnabled: false, disableSignups: true }),
@@ -146,13 +146,12 @@ describe("Better Auth configuration", () => {
       },
     });
 
-    expect(options.plugins).toHaveLength(1);
-    const plugin = options.plugins?.[0] as unknown as {
-      id: string;
-      options: { config: Array<Record<string, unknown>> };
-    };
-    expect(plugin.id).toBe("generic-oauth");
-    expect(plugin.options.config[0]).toMatchObject({
+    expect(options.plugins?.map((plugin) => plugin.id)).toEqual([
+      "two-factor",
+      "generic-oauth",
+    ]);
+    const plugin = findGenericOAuth(options);
+    expect(plugin?.options.config[0]).toMatchObject({
       providerId: "oidc",
       discoveryUrl:
         "https://idp.example.test/realms/main/.well-known/openid-configuration",
@@ -181,12 +180,13 @@ describe("Better Auth configuration", () => {
         clientSecret: "oidc-secret",
       },
     });
-    const plugin = options.plugins?.[0] as unknown as {
-      options: { config: Array<Record<string, unknown>> };
-    };
-    expect(plugin.options.config[0]?.discoveryUrl).toBe(discoveryUrl);
+    const plugin = findGenericOAuth(options);
+    expect(plugin?.options.config[0]?.discoveryUrl).toBe(discoveryUrl);
 
-    expect(buildBetterAuthOptions(base).plugins).toBeUndefined();
+    // twoFactor is always registered; generic-oauth only with complete OIDC.
+    expect(buildBetterAuthOptions(base).plugins?.map((p) => p.id)).toEqual([
+      "two-factor",
+    ]);
     expect(
       buildBetterAuthOptions({
         ...base,
@@ -195,8 +195,8 @@ describe("Better Auth configuration", () => {
           clientId: "oidc-id",
           clientSecret: "",
         },
-      }).plugins,
-    ).toBeUndefined();
+      }).plugins?.map((p) => p.id),
+    ).toEqual(["two-factor"]);
   });
 
   it("passes through discovery URLs with query strings or trailing slashes", () => {
@@ -212,10 +212,8 @@ describe("Better Auth configuration", () => {
         smtpEnabled: false,
         oidc: { issuerUrl, clientId: "oidc-id", clientSecret: "oidc-secret" },
       });
-      const plugin = options.plugins?.[0] as unknown as {
-        options: { config: Array<Record<string, unknown>> };
-      };
-      expect(plugin.options.config[0]?.discoveryUrl).toBe(issuerUrl);
+      const plugin = findGenericOAuth(options);
+      expect(plugin?.options.config[0]?.discoveryUrl).toBe(issuerUrl);
     }
   });
 
@@ -240,10 +238,8 @@ describe("Better Auth configuration", () => {
       ...base,
       oidc: { ...oidc, issuerUrl: "http://localhost:8080/realms/main" },
     });
-    const plugin = options.plugins?.[0] as unknown as {
-      options: { config: Array<Record<string, unknown>> };
-    };
-    expect(plugin.options.config[0]?.discoveryUrl).toBe(
+    const plugin = findGenericOAuth(options);
+    expect(plugin?.options.config[0]?.discoveryUrl).toBe(
       "http://localhost:8080/realms/main/.well-known/openid-configuration",
     );
   });
@@ -811,6 +807,40 @@ describe("auth HTTP boundary", () => {
   });
 });
 
+describe("two-factor plugin surface", () => {
+  it("registers the two-factor routes but leaves send-otp dead without sendOTP", async () => {
+    const memory = createMemoryAdapter();
+    const auth = createOpenExcalidrawAuth({
+      database: {} as never,
+      databaseAdapter: memory.factory,
+      mailer: new DisabledMailer(),
+      baseUrl: BASE_URL,
+      secret: SECRET,
+      smtpEnabled: false,
+      secureCookies: false,
+    });
+    const app = express();
+    app.use(express.json());
+    app.use(
+      createAuthRouter({
+        auth,
+        identity: createIdentityService(auth),
+        capabilities: authCapabilities({ smtpEnabled: false }),
+      }),
+    );
+
+    // No otpOptions.sendOTP is configured, so the route exists (not 404) but
+    // refuses every call: email OTP can never become a usable second factor.
+    const res = await request(app)
+      .post("/api/auth/two-factor/send-otp")
+      .set("origin", BASE_URL)
+      .set("x-forwarded-for", "10.30.0.1")
+      .send({});
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(res.body)).toMatch(/otp isn't configured/i);
+  });
+});
+
 const databaseUrl = process.env.DATABASE_TEST_URL;
 const describeDatabase = databaseUrl ? describe : describe.skip;
 
@@ -885,6 +915,333 @@ describeDatabase("disabled account lockout", () => {
     expect(after.body.user).toBeUndefined();
   });
 });
+
+describeDatabase("two-factor authentication", () => {
+  const database = createDatabase(databaseUrl ?? "postgresql://unused");
+  const emails: string[] = [];
+  const password = "correct-horse-battery-staple";
+  let ipCounter = 0;
+
+  // Every request gets a fresh forwarded IP so the plugin's 3-req/10s
+  // /two-factor/* limit (and the sign-in limit) never bites: rate limiting is
+  // keyed by IP + path, and the challenge state lives in a signed cookie plus
+  // a verification row, not the request IP.
+  const nextIp = () =>
+    `10.40.${Math.floor(ipCounter / 250)}.${(ipCounter++ % 250) + 1}`;
+
+  beforeAll(async () => {
+    await runMigrations({ pool: database.pool });
+  });
+
+  afterAll(async () => {
+    await database.pool.query(
+      `DELETE FROM "user" WHERE email = ANY($1::text[])`,
+      [emails],
+    );
+    await database.close();
+  });
+
+  function createApp() {
+    const auth = createOpenExcalidrawAuth({
+      database: database.db,
+      mailer: new DisabledMailer(),
+      baseUrl: BASE_URL,
+      secret: SECRET,
+      smtpEnabled: false,
+      secureCookies: false,
+    });
+    const app = express();
+    app.use(express.json());
+    app.use(
+      createAuthRouter({
+        auth,
+        identity: createIdentityService(auth),
+        capabilities: authCapabilities({ smtpEnabled: false }),
+      }),
+    );
+    return app;
+  }
+
+  // Mint a code the plugin will accept: the enable response only hands back the
+  // otpauth URI, so recover the raw secret from its base32 param and drive the
+  // same createOTP the plugin verifies against.
+  async function totpCode(totpURI: string): Promise<string> {
+    const secretParam = new URL(totpURI).searchParams.get("secret");
+    if (!secretParam) throw new Error("totpURI is missing its secret");
+    const rawSecret = new TextDecoder().decode(base32.decode(secretParam));
+    return createOTP(rawSecret, { digits: 6, period: 30 }).totp();
+  }
+
+  async function signUp(app: express.Express, email: string): Promise<string> {
+    emails.push(email);
+    const res = await request(app)
+      .post("/api/auth/sign-up/email")
+      .set("origin", BASE_URL)
+      .set("x-forwarded-for", nextIp())
+      .send({ name: "Two Factor", email, password });
+    expect(res.status).toBe(200);
+    return sessionCookie(res.headers["set-cookie"]);
+  }
+
+  // Full enrollment: sign up, enable, then verify a code to flip the flag on.
+  async function enroll(
+    app: express.Express,
+    email: string,
+  ): Promise<{ totpURI: string; backupCodes: string[] }> {
+    const cookie = await signUp(app, email);
+    const enable = await request(app)
+      .post("/api/auth/two-factor/enable")
+      .set("origin", BASE_URL)
+      .set("x-forwarded-for", nextIp())
+      .set("cookie", cookie)
+      .send({ password });
+    expect(enable.status).toBe(200);
+    const totpURI = enable.body.totpURI as string;
+    const backupCodes = enable.body.backupCodes as string[];
+    const verify = await request(app)
+      .post("/api/auth/two-factor/verify-totp")
+      .set("origin", BASE_URL)
+      .set("x-forwarded-for", nextIp())
+      .set("cookie", cookie)
+      .send({ code: await totpCode(totpURI) });
+    expect(verify.status).toBe(200);
+    return { totpURI, backupCodes };
+  }
+
+  function signIn(app: express.Express, email: string, cookie?: string) {
+    const req = request(app)
+      .post("/api/auth/sign-in/email")
+      .set("origin", BASE_URL)
+      .set("x-forwarded-for", nextIp());
+    if (cookie) {
+      req.set("cookie", cookie);
+    }
+    return req.send({ email, password });
+  }
+
+  it("enrolls a user only after a verify-totp confirms the secret", async () => {
+    const app = createApp();
+    const email = `2fa-enroll-${randomUUID()}@example.test`;
+    const cookie = await signUp(app, email);
+
+    const before = await request(app)
+      .get("/api/v1/me")
+      .set("x-forwarded-for", nextIp())
+      .set("cookie", cookie);
+    expect(before.body.user).toMatchObject({ twoFactorEnabled: false });
+
+    const enable = await request(app)
+      .post("/api/auth/two-factor/enable")
+      .set("origin", BASE_URL)
+      .set("x-forwarded-for", nextIp())
+      .set("cookie", cookie)
+      .send({ password });
+    expect(enable.status).toBe(200);
+    expect(typeof enable.body.totpURI).toBe("string");
+    expect(Array.isArray(enable.body.backupCodes)).toBe(true);
+    expect(enable.body.backupCodes.length).toBeGreaterThan(0);
+
+    // Enrollment is incomplete until a code is verified (no skip-on-enable).
+    const midway = await request(app)
+      .get("/api/v1/me")
+      .set("x-forwarded-for", nextIp())
+      .set("cookie", cookie);
+    expect(midway.body.user).toMatchObject({ twoFactorEnabled: false });
+
+    const verify = await request(app)
+      .post("/api/auth/two-factor/verify-totp")
+      .set("origin", BASE_URL)
+      .set("x-forwarded-for", nextIp())
+      .set("cookie", cookie)
+      .send({ code: await totpCode(enable.body.totpURI) });
+    expect(verify.status).toBe(200);
+
+    const after = await request(app)
+      .get("/api/v1/me")
+      .set("x-forwarded-for", nextIp())
+      .set("cookie", sessionCookie(verify.headers["set-cookie"]));
+    expect(after.body.user).toMatchObject({ twoFactorEnabled: true });
+  });
+
+  it("challenges at password sign-in and completes via verify-totp", async () => {
+    const app = createApp();
+    const email = `2fa-challenge-${randomUUID()}@example.test`;
+    const { totpURI } = await enroll(app, email);
+
+    const challenge = await signIn(app, email);
+    expect(challenge.status).toBe(200);
+    expect(challenge.body).toMatchObject({ twoFactorRedirect: true });
+
+    const challengeCookie = sessionCookie(challenge.headers["set-cookie"]);
+    // The challenge response carries no authenticated session yet.
+    const pending = await request(app)
+      .get("/api/v1/me")
+      .set("x-forwarded-for", nextIp())
+      .set("cookie", challengeCookie);
+    expect(pending.body.user).toBeNull();
+
+    const verify = await request(app)
+      .post("/api/auth/two-factor/verify-totp")
+      .set("origin", BASE_URL)
+      .set("x-forwarded-for", nextIp())
+      .set("cookie", challengeCookie)
+      .send({ code: await totpCode(totpURI) });
+    expect(verify.status).toBe(200);
+
+    const me = await request(app)
+      .get("/api/v1/me")
+      .set("x-forwarded-for", nextIp())
+      .set("cookie", sessionCookie(verify.headers["set-cookie"]));
+    expect(me.body.user).toMatchObject({ email, twoFactorEnabled: true });
+  });
+
+  it("rejects wrong codes and locks the account after ten sign-in failures", async () => {
+    const app = createApp();
+    const email = `2fa-lockout-${randomUUID()}@example.test`;
+    const { totpURI } = await enroll(app, email);
+
+    // verify-totp caps a single challenge at five attempts, and the account
+    // locks at ten cumulative failures, so drive two challenges of five.
+    for (let challenge = 0; challenge < 2; challenge += 1) {
+      const signedIn = await signIn(app, email);
+      expect(signedIn.body).toMatchObject({ twoFactorRedirect: true });
+      const challengeCookie = sessionCookie(signedIn.headers["set-cookie"]);
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const res = await request(app)
+          .post("/api/auth/two-factor/verify-totp")
+          .set("origin", BASE_URL)
+          .set("x-forwarded-for", nextIp())
+          .set("cookie", challengeCookie)
+          .send({ code: "000000" });
+        expect(res.status).toBe(401);
+      }
+    }
+
+    const locked = await database.pool.query(
+      `SELECT failed_verification_count, locked_until
+         FROM two_factor
+        WHERE user_id = (SELECT id FROM "user" WHERE email = $1)`,
+      [email],
+    );
+    expect(locked.rows[0].failed_verification_count).toBe(10);
+    expect(locked.rows[0].locked_until).not.toBeNull();
+    expect(new Date(locked.rows[0].locked_until).getTime()).toBeGreaterThan(
+      Date.now(),
+    );
+
+    // The lock is enforced even against an otherwise valid code.
+    const signedIn = await signIn(app, email);
+    const blocked = await request(app)
+      .post("/api/auth/two-factor/verify-totp")
+      .set("origin", BASE_URL)
+      .set("x-forwarded-for", nextIp())
+      .set("cookie", sessionCookie(signedIn.headers["set-cookie"]))
+      .send({ code: await totpCode(totpURI) });
+    expect(blocked.status).toBe(429);
+  });
+
+  it("signs in with a backup code once and rejects its reuse", async () => {
+    const app = createApp();
+    const email = `2fa-backup-${randomUUID()}@example.test`;
+    const { backupCodes } = await enroll(app, email);
+    const code = backupCodes[0];
+
+    const first = await signIn(app, email);
+    const accept = await request(app)
+      .post("/api/auth/two-factor/verify-backup-code")
+      .set("origin", BASE_URL)
+      .set("x-forwarded-for", nextIp())
+      .set("cookie", sessionCookie(first.headers["set-cookie"]))
+      .send({ code });
+    expect(accept.status).toBe(200);
+    const me = await request(app)
+      .get("/api/v1/me")
+      .set("x-forwarded-for", nextIp())
+      .set("cookie", sessionCookie(accept.headers["set-cookie"]));
+    expect(me.body.user).toMatchObject({ email });
+
+    const second = await signIn(app, email);
+    const reuse = await request(app)
+      .post("/api/auth/two-factor/verify-backup-code")
+      .set("origin", BASE_URL)
+      .set("x-forwarded-for", nextIp())
+      .set("cookie", sessionCookie(second.headers["set-cookie"]))
+      .send({ code });
+    expect(reuse.status).toBe(401);
+  });
+
+  it("skips the challenge on later sign-ins from a trusted device", async () => {
+    const app = createApp();
+    const email = `2fa-trust-${randomUUID()}@example.test`;
+    const { totpURI } = await enroll(app, email);
+
+    const challenge = await signIn(app, email);
+    const verify = await request(app)
+      .post("/api/auth/two-factor/verify-totp")
+      .set("origin", BASE_URL)
+      .set("x-forwarded-for", nextIp())
+      .set("cookie", sessionCookie(challenge.headers["set-cookie"]))
+      .send({ code: await totpCode(totpURI), trustDevice: true });
+    expect(verify.status).toBe(200);
+    const trusted = sessionCookie(verify.headers["set-cookie"]);
+
+    await request(app)
+      .post("/api/auth/sign-out")
+      .set("origin", BASE_URL)
+      .set("x-forwarded-for", nextIp())
+      .set("cookie", trusted);
+
+    // The trust-device cookie survives sign-out and bypasses the challenge.
+    const second = await signIn(app, email, trusted);
+    expect(second.status).toBe(200);
+    expect(second.body.twoFactorRedirect).toBeUndefined();
+
+    const me = await request(app)
+      .get("/api/v1/me")
+      .set("x-forwarded-for", nextIp())
+      .set("cookie", sessionCookie(second.headers["set-cookie"]));
+    expect(me.body.user).toMatchObject({ email, twoFactorEnabled: true });
+  });
+
+  it("refuses a post-challenge session for an account disabled mid-flow", async () => {
+    const app = createApp();
+    const email = `2fa-disabled-${randomUUID()}@example.test`;
+    const { totpURI } = await enroll(app, email);
+
+    const challenge = await signIn(app, email);
+    expect(challenge.body).toMatchObject({ twoFactorRedirect: true });
+    const challengeCookie = sessionCookie(challenge.headers["set-cookie"]);
+
+    await database.pool.query(
+      `UPDATE "user" SET disabled_at = now() WHERE email = $1`,
+      [email],
+    );
+
+    // A valid code still cannot mint a session: the session.create.before hook
+    // fires on the post-challenge createSession and refuses the disabled user.
+    const verify = await request(app)
+      .post("/api/auth/two-factor/verify-totp")
+      .set("origin", BASE_URL)
+      .set("x-forwarded-for", nextIp())
+      .set("cookie", challengeCookie)
+      .send({ code: await totpCode(totpURI) });
+    expect(verify.status).toBe(403);
+    expect(verify.body.code).toBe("ACCOUNT_DISABLED");
+
+    const me = await request(app)
+      .get("/api/v1/me")
+      .set("x-forwarded-for", nextIp())
+      .set("cookie", sessionCookie(verify.headers["set-cookie"]));
+    expect(me.body.user).toBeNull();
+  });
+});
+
+function findGenericOAuth(options: {
+  plugins?: ReadonlyArray<{ id: string }>;
+}) {
+  return options.plugins?.find((plugin) => plugin.id === "generic-oauth") as
+    { options: { config: Array<Record<string, unknown>> } } | undefined;
+}
 
 function sessionCookie(header: string | string[] | undefined): string {
   const lines =

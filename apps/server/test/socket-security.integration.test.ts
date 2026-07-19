@@ -245,6 +245,7 @@ function makeIdentity(
     name: "Member",
     image: null,
     emailVerified: true,
+    twoFactorEnabled: false,
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     sessionId: "session-1",
     sessionExpiresAt: new Date("2026-07-11T11:00:00.000Z"),

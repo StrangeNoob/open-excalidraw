@@ -739,6 +739,7 @@ const identity = (userId: string): RequestIdentity => ({
   name: userId === VIEWER_ID ? "Viewer" : "Editor",
   sessionExpiresAt: new Date("2026-07-11T11:00:00.000Z"),
   sessionId: `session-${userId}`,
+  twoFactorEnabled: false,
   userId,
 });
 

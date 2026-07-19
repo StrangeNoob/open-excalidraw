@@ -25,6 +25,9 @@ export const currentUserSchema = z
       description:
         "Whether this user has a verified email listed in `ADMIN_EMAILS`.",
     }),
+    twoFactorEnabled: z.boolean().meta({
+      description: "Whether the user has completed TOTP two-factor enrollment.",
+    }),
     createdAt: isoDateTimeSchema,
   })
   .strict();

@@ -32,6 +32,7 @@ const session: SessionResponse = {
     image: null,
     isAdmin: false,
     name: "Ada",
+    twoFactorEnabled: false,
   },
 };
 

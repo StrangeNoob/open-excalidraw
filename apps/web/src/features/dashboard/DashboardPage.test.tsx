@@ -187,6 +187,7 @@ const buildSession = (isAdmin: boolean): SessionResponse => ({
     image: null,
     isAdmin,
     name: "Ada",
+    twoFactorEnabled: false,
   },
 });
 

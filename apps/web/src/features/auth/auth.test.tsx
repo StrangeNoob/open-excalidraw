@@ -52,6 +52,7 @@ const signedInSession: SessionResponse = {
     image: null,
     isAdmin: false,
     name: "Ada",
+    twoFactorEnabled: false,
   },
 };
 
