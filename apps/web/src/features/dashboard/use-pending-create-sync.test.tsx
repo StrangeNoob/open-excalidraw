@@ -196,7 +196,11 @@ describe("usePendingCreateSync", () => {
     await waitFor(() =>
       expect(push.content.save).toHaveBeenCalledWith(
         DRAWING_ID,
-        expect.objectContaining({ assetIds: ["file-1"] }),
+        // The exact recovered scene must reach the server, not a rebuilt one.
+        expect.objectContaining({
+          assetIds: ["file-1"],
+          scene: snapshot().scene,
+        }),
         "0",
         expect.any(String),
       ),
@@ -224,6 +228,9 @@ describe("usePendingCreateSync", () => {
     });
     const queryClient = renderSync(store, stubApi(createDrawing), push);
 
+    // The conflict replay must actually reach the save before the cleanup
+    // assertions mean anything.
+    await waitFor(() => expect(push.content.save).toHaveBeenCalledTimes(1));
     // A stale local snapshot must not clobber the newer server scene, so the
     // marker still clears and the list refreshes.
     await waitFor(async () =>
@@ -239,13 +246,25 @@ describe("usePendingCreateSync", () => {
   it("keeps the marker when the content push fails on the network", async () => {
     const store = await seededStore();
     const createDrawing = vi.fn(() => Promise.resolve(createdSummary()));
+    let rejectSave!: (error: Error) => void;
     const push = stubPush({
-      content: { save: vi.fn(() => Promise.reject(new Error("offline"))) },
+      content: {
+        save: vi.fn(
+          () =>
+            new Promise<never>((_, reject) => {
+              rejectSave = reject;
+            }),
+        ),
+      },
       recovery: { get: vi.fn(() => Promise.resolve(snapshot())) },
     });
     const queryClient = renderSync(store, stubApi(createDrawing), push);
 
     await waitFor(() => expect(push.content.save).toHaveBeenCalledTimes(1));
+    rejectSave(new Error("offline"));
+    // Let the rejection handler finish before asserting what it left behind.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
     // The create replay is idempotent, so leaving the marker lets the next
     // transition retry create + push end-to-end.
     expect(await store.get(USER_ID, DRAWING_ID)).toMatchObject({
