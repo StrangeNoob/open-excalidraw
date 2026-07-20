@@ -1053,7 +1053,7 @@ describeDatabase("two-factor authentication", () => {
       .set("origin", BASE_URL)
       .set("x-forwarded-for", nextIp())
       .set("cookie", cookie)
-      .send({ code: await totpCode(enable.body.totpURI) });
+      .send({ code: await totpCode(String(enable.body.totpURI)) });
     expect(verify.status).toBe(200);
 
     const after = await request(app)
@@ -1117,17 +1117,19 @@ describeDatabase("two-factor authentication", () => {
       }
     }
 
-    const locked = await database.pool.query(
+    const locked = await database.pool.query<{
+      failed_verification_count: number;
+      locked_until: Date | null;
+    }>(
       `SELECT failed_verification_count, locked_until
          FROM two_factor
         WHERE user_id = (SELECT id FROM "user" WHERE email = $1)`,
       [email],
     );
-    expect(locked.rows[0].failed_verification_count).toBe(10);
-    expect(locked.rows[0].locked_until).not.toBeNull();
-    expect(new Date(locked.rows[0].locked_until).getTime()).toBeGreaterThan(
-      Date.now(),
-    );
+    const [lockRow] = locked.rows;
+    expect(lockRow?.failed_verification_count).toBe(10);
+    expect(lockRow?.locked_until).not.toBeNull();
+    expect(lockRow?.locked_until?.getTime() ?? 0).toBeGreaterThan(Date.now());
 
     // The lock is enforced even against an otherwise valid code.
     const signedIn = await signIn(app, email);
