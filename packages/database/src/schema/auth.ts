@@ -135,7 +135,10 @@ export const twoFactor = pgTable(
     ...timestamps,
   },
   (table) => [
-    index("two_factor_user_id_idx").on(table.userId),
+    // The plugin keeps one enrollment per user (delete-then-create on enable);
+    // unique turns a concurrent double-enable into an error instead of a
+    // duplicate row that breaks findOne lookups.
+    uniqueIndex("two_factor_user_id_idx").on(table.userId),
     index("two_factor_secret_idx").on(table.secret),
   ],
 );

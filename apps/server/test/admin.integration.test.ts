@@ -149,6 +149,7 @@ describe("admin HTTP domain", () => {
     const target = fixture.repository.seedUser({
       name: "Enrolled",
       email: "enrolled@example.test",
+      twoFactorEnabled: true,
     });
 
     const anonymous = await request(fixture.app).post(
@@ -166,6 +167,7 @@ describe("admin HTTP domain", () => {
       .set("x-test-user", adminId);
     expect(reset.status).toBe(204);
     expect(fixture.repository.twoFactorReset.has(target)).toBe(true);
+    expect(fixture.repository.users.get(target)?.twoFactorEnabled).toBe(false);
 
     // A user who never enrolled resets just the same.
     const again = await request(fixture.app)
@@ -591,7 +593,11 @@ class InMemoryAdminRepository implements AdminRepository {
   public failDeleteUserOnce = false;
   private seq = 0;
 
-  public seedUser(input: { name: string; email: string }): string {
+  public seedUser(input: {
+    name: string;
+    email: string;
+    twoFactorEnabled?: boolean;
+  }): string {
     const id = randomUUID();
     this.seq += 1;
     this.users.set(id, {
@@ -601,7 +607,7 @@ class InMemoryAdminRepository implements AdminRepository {
       emailVerified: true,
       createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, this.seq)).toISOString(),
       disabledAt: null,
-      twoFactorEnabled: false,
+      twoFactorEnabled: input.twoFactorEnabled ?? false,
       drawingCount: 0,
     });
     return id;
@@ -650,6 +656,11 @@ class InMemoryAdminRepository implements AdminRepository {
   public resetTwoFactor(input: { targetUserId: string }): Promise<void> {
     this.calls.push(`resetTwoFactor:${input.targetUserId}`);
     this.twoFactorReset.add(input.targetUserId);
+    // Mirror the real repository: reset also clears the user's flag.
+    const user = this.users.get(input.targetUserId);
+    if (user) {
+      user.twoFactorEnabled = false;
+    }
     return Promise.resolve();
   }
 

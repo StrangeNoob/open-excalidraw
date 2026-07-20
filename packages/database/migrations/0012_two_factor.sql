@@ -15,5 +15,5 @@ CREATE TABLE two_factor (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX two_factor_user_id_idx ON two_factor (user_id);
+CREATE UNIQUE INDEX two_factor_user_id_idx ON two_factor (user_id);
 CREATE INDEX two_factor_secret_idx ON two_factor (secret);

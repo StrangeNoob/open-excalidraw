@@ -345,7 +345,7 @@ const TwoFactorSection = () => {
       <button disabled={submitting} type="submit">
         {submitting ? "Please wait…" : submitLabel}
       </button>
-      <button onClick={reset} type="button">
+      <button disabled={submitting} onClick={reset} type="button">
         Cancel
       </button>
     </form>
@@ -427,7 +427,7 @@ const TwoFactorSection = () => {
             <button disabled={submitting} type="submit">
               {submitting ? "Verifying…" : "Verify and turn on"}
             </button>
-            <button onClick={reset} type="button">
+            <button disabled={submitting} onClick={reset} type="button">
               Cancel
             </button>
           </form>
