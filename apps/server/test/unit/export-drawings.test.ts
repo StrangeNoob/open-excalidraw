@@ -178,6 +178,27 @@ describe("exportDrawings", () => {
     ]);
   });
 
+  it("counts a drawing with no scene data as failed without writing", async () => {
+    const { storage } = stubStorage({});
+    const { writes, writeFile } = collectWrites();
+
+    const summary = await exportDrawings({
+      drawings: [{ id: "draw-null", title: "Broken", scene: null }],
+      loadAssets: () => Promise.resolve([]),
+      storage,
+      outputDirectory: "/out",
+      writeFile,
+    });
+
+    expect(summary).toEqual({
+      exported: 0,
+      assetsInlined: 0,
+      missingAssets: 0,
+      failed: 1,
+    });
+    expect(writes).toHaveLength(0);
+  });
+
   it("reads and writes nothing in dry-run mode", async () => {
     const { storage, reads } = stubStorage({
       "assets/file-1": Buffer.from("x"),

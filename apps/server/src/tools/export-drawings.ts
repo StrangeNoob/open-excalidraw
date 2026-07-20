@@ -78,6 +78,10 @@ export async function exportDrawings(
         continue;
       }
 
+      if (!drawing.scene) {
+        throw new Error("drawing has no scene data");
+      }
+
       const files: Record<string, ExportedFile> = {};
       for (const asset of assets) {
         try {
