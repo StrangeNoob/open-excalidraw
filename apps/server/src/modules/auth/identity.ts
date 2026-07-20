@@ -9,6 +9,7 @@ export interface RequestIdentity {
   name: string;
   image: string | null;
   emailVerified: boolean;
+  twoFactorEnabled: boolean;
   createdAt: Date;
   sessionId: string;
   sessionExpiresAt: Date;
@@ -54,6 +55,13 @@ export function createIdentityService(
         name: result.user.name,
         image: result.user.image ?? null,
         emailVerified: result.user.emailVerified,
+        // The twoFactor plugin adds this field through the adapter; the
+        // widened BetterAuthOptions return type erases it from getSession's
+        // inferred user, so read it defensively like the session hook reads
+        // disabledAt.
+        twoFactorEnabled: Boolean(
+          (result.user as { twoFactorEnabled?: boolean }).twoFactorEnabled,
+        ),
         createdAt: result.user.createdAt,
         sessionId: result.session.id,
         sessionExpiresAt: result.session.expiresAt,

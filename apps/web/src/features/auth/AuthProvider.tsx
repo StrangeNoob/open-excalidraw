@@ -39,6 +39,11 @@ export type AuthStatus = "error" | "loading" | "ready";
 export interface AuthContextValue {
   capabilities: AuthCapabilities;
   changePassword(currentPassword: string, newPassword: string): Promise<void>;
+  disableTwoFactor(password: string): Promise<void>;
+  enableTwoFactor(
+    password: string,
+  ): Promise<{ backupCodes: string[]; totpURI: string }>;
+  generateBackupCodes(password: string): Promise<{ backupCodes: string[] }>;
   linkSocial(provider: OAuthProvider, returnPath: string): Promise<void>;
   listAccounts(): Promise<LinkedAccount[]>;
   logout(): Promise<void>;
@@ -47,12 +52,14 @@ export interface AuthContextValue {
   resendVerification(email: string, callbackURL: string): Promise<void>;
   resetPassword(newPassword: string, token: string): Promise<void>;
   setPassword(newPassword: string): Promise<void>;
-  signIn(input: EmailSignInInput): Promise<SessionResponse>;
+  signIn(input: EmailSignInInput): Promise<{ twoFactorRedirect: boolean }>;
   signUp(input: EmailSignUpInput): Promise<SessionResponse>;
   startOAuth(provider: OAuthProvider, returnPath: string): Promise<void>;
   status: AuthStatus;
   unlinkAccount(providerId: string): Promise<void>;
   user: SessionResponse["user"];
+  verifyBackupCode(code: string, trustDevice: boolean): Promise<void>;
+  verifyTotp(code: string, trustDevice: boolean): Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -116,8 +123,37 @@ export const AuthProvider = ({
 
   const signIn = useCallback(
     async (input: EmailSignInInput) => {
-      await client.signIn(input);
-      return refresh();
+      const result = await client.signIn(input);
+      // A pending 2FA challenge means no session exists yet, so there is
+      // nothing to refresh until the code is verified.
+      if (!result.twoFactorRedirect) {
+        await refresh();
+      }
+      return result;
+    },
+    [client, refresh],
+  );
+
+  const verifyTotp = useCallback(
+    async (code: string, trustDevice: boolean) => {
+      await client.verifyTotp(code, trustDevice);
+      await refresh();
+    },
+    [client, refresh],
+  );
+
+  const verifyBackupCode = useCallback(
+    async (code: string, trustDevice: boolean) => {
+      await client.verifyBackupCode(code, trustDevice);
+      await refresh();
+    },
+    [client, refresh],
+  );
+
+  const disableTwoFactor = useCallback(
+    async (password: string) => {
+      await client.disableTwoFactor(password);
+      await refresh();
     },
     [client, refresh],
   );
@@ -169,6 +205,9 @@ export const AuthProvider = ({
       capabilities: session.capabilities,
       changePassword: (currentPassword, newPassword) =>
         client.changePassword(currentPassword, newPassword),
+      disableTwoFactor,
+      enableTwoFactor: (password) => client.enableTwoFactor(password),
+      generateBackupCodes: (password) => client.generateBackupCodes(password),
       linkSocial: (provider, returnPath) =>
         client.linkSocial(provider, returnPath),
       listAccounts: () => client.listAccounts(),
@@ -188,8 +227,21 @@ export const AuthProvider = ({
       status,
       unlinkAccount: (providerId) => client.unlinkAccount(providerId),
       user: session.user,
+      verifyBackupCode,
+      verifyTotp,
     }),
-    [client, logout, refresh, session, signIn, signUp, status],
+    [
+      client,
+      disableTwoFactor,
+      logout,
+      refresh,
+      session,
+      signIn,
+      signUp,
+      status,
+      verifyBackupCode,
+      verifyTotp,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

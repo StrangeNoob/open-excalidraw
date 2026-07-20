@@ -70,6 +70,10 @@ const AuthPage = ({ mode }: { mode: AuthPageMode }) => {
   });
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [challenge, setChallenge] = useState(false);
+  const [code, setCode] = useState("");
+  const [useBackupCode, setUseBackupCode] = useState(false);
+  const [trustDevice, setTrustDevice] = useState(false);
   const [signupNextStep, setSignupNextStep] = useState<
     "signin" | "verification" | null
   >(null);
@@ -104,10 +108,14 @@ const AuthPage = ({ mode }: { mode: AuthPageMode }) => {
           return;
         }
       } else {
-        await auth.signIn({
+        const { twoFactorRedirect } = await auth.signIn({
           email: credentials.email.trim(),
           password: credentials.password,
         });
+        if (twoFactorRedirect) {
+          setChallenge(true);
+          return;
+        }
       }
 
       finishAuthentication(navigate, returnPath);
@@ -160,6 +168,106 @@ const AuthPage = ({ mode }: { mode: AuthPageMode }) => {
       setSubmitting(false);
     }
   };
+
+  const submitChallenge = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const enteredCode = code.trim();
+    if (!enteredCode) {
+      setError(
+        useBackupCode
+          ? "Enter a backup code."
+          : "Enter your authentication code.",
+      );
+      return;
+    }
+
+    setSubmitting(true);
+    setError(null);
+    try {
+      if (useBackupCode) {
+        await auth.verifyBackupCode(enteredCode, trustDevice);
+      } else {
+        await auth.verifyTotp(enteredCode, trustDevice);
+      }
+      finishAuthentication(navigate, returnPath);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "That code did not work. Please try again.",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const backToPassword = () => {
+    setChallenge(false);
+    setCode("");
+    setUseBackupCode(false);
+    setTrustDevice(false);
+    setError(null);
+  };
+
+  if (challenge) {
+    return (
+      <main className="auth-page">
+        <section aria-labelledby="auth-2fa-title" className="auth-card">
+          <Link className="auth-brand" to="/">
+            <BrandMark size={26} />
+            Open Excalidraw
+          </Link>
+          <h1 id="auth-2fa-title">Two-factor authentication</h1>
+          <p>
+            {useBackupCode
+              ? "Enter one of your saved backup codes."
+              : "Enter the 6-digit code from your authenticator app."}
+          </p>
+          <form noValidate onSubmit={(event) => void submitChallenge(event)}>
+            <label>
+              {useBackupCode ? "Backup code" : "Authentication code"}
+              <input
+                autoComplete="one-time-code"
+                inputMode={useBackupCode ? "text" : "numeric"}
+                name="code"
+                onChange={(event) => setCode(event.target.value)}
+                value={code}
+              />
+            </label>
+            <label className="auth-checkbox">
+              <input
+                checked={trustDevice}
+                name="trustDevice"
+                onChange={(event) => setTrustDevice(event.target.checked)}
+                type="checkbox"
+              />
+              Trust this device for 30 days
+            </label>
+
+            {error ? <p role="alert">{error}</p> : null}
+            <button disabled={submitting} type="submit">
+              {submitting ? "Verifying…" : "Verify"}
+            </button>
+            <button
+              onClick={() => {
+                setUseBackupCode((current) => !current);
+                setCode("");
+                setError(null);
+              }}
+              type="button"
+            >
+              {useBackupCode
+                ? "Use an authenticator code"
+                : "Use a backup code instead"}
+            </button>
+            <button onClick={backToPassword} type="button">
+              Back to sign in
+            </button>
+          </form>
+        </section>
+      </main>
+    );
+  }
 
   if (isSignUp && signupsDisabled) {
     return (

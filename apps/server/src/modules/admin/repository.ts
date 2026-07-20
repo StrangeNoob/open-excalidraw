@@ -21,6 +21,7 @@ interface UserRow extends QueryResultRow {
   email_verified: boolean;
   created_at: Date;
   disabled_at: Date | null;
+  two_factor_enabled: boolean;
   drawing_count: string;
   total: string;
 }
@@ -59,6 +60,7 @@ export class PostgresAdminRepository implements AdminRepository {
     const result = await this.pool.query<UserRow>(
       `SELECT
          u.id, u.name, u.email, u.email_verified, u.created_at, u.disabled_at,
+         u.two_factor_enabled,
          (SELECT count(*) FROM drawings d
             WHERE d.owner_user_id = u.id AND d.deleted_at IS NULL)
            AS drawing_count,
@@ -122,6 +124,27 @@ export class PostgresAdminRepository implements AdminRepository {
         throw new AdminDomainError("USER_NOT_FOUND", 404, "User not found");
       }
       await insertAdminAudit(client, "admin.user_enabled", input);
+    });
+  }
+
+  public async resetTwoFactor(input: {
+    actorUserId: string;
+    targetUserId: string;
+    requestId: string;
+  }): Promise<void> {
+    await this.transaction(async (client) => {
+      const updated = await client.query(
+        `UPDATE "user" SET two_factor_enabled = false WHERE id = $1`,
+        [input.targetUserId],
+      );
+      if (updated.rowCount === 0) {
+        throw new AdminDomainError("USER_NOT_FOUND", 404, "User not found");
+      }
+      // No enrollment => 0 rows deleted; the reset stays idempotent.
+      await client.query(`DELETE FROM two_factor WHERE user_id = $1`, [
+        input.targetUserId,
+      ]);
+      await insertAdminAudit(client, "admin.user_two_factor_reset", input);
     });
   }
 
@@ -192,6 +215,7 @@ function toAdminUser(row: UserRow): AdminUser {
     emailVerified: row.email_verified,
     createdAt: row.created_at.toISOString(),
     disabledAt: row.disabled_at ? row.disabled_at.toISOString() : null,
+    twoFactorEnabled: row.two_factor_enabled,
     drawingCount: Number(row.drawing_count),
   };
 }

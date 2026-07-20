@@ -2,6 +2,7 @@ import {
   boolean,
   customType,
   index,
+  integer,
   pgTable,
   text,
   timestamp,
@@ -40,6 +41,7 @@ export const user = pgTable(
     image: text("image"),
     // NULL means active; a timestamp both flags and dates the disable.
     disabledAt: timestamp("disabled_at", { withTimezone: true }),
+    twoFactorEnabled: boolean("two_factor_enabled").default(false).notNull(),
     ...timestamps,
   },
   (table) => [uniqueIndex("user_email_unique").on(table.email)],
@@ -108,6 +110,36 @@ export const verification = pgTable(
   (table) => [
     index("verification_identifier_idx").on(table.identifier),
     index("verification_expires_at_idx").on(table.expiresAt),
+  ],
+);
+
+/**
+ * Better Auth's twoFactor plugin storage. The drizzle adapter resolves the
+ * plugin's `twoFactor` model to this table by the exported variable name, so
+ * the variable must stay `twoFactor` even though the table is `two_factor`.
+ */
+export const twoFactor = pgTable(
+  "two_factor",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    secret: text("secret").notNull(),
+    backupCodes: text("backup_codes").notNull(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    verified: boolean("verified").default(true).notNull(),
+    failedVerificationCount: integer("failed_verification_count")
+      .default(0)
+      .notNull(),
+    lockedUntil: timestamp("locked_until", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    // The plugin keeps one enrollment per user (delete-then-create on enable);
+    // unique turns a concurrent double-enable into an error instead of a
+    // duplicate row that breaks findOne lookups.
+    uniqueIndex("two_factor_user_id_idx").on(table.userId),
+    index("two_factor_secret_idx").on(table.secret),
   ],
 );
 

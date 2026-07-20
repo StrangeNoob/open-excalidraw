@@ -44,6 +44,12 @@ export class AdminService {
     await this.repository.enableUser(input);
   }
 
+  public async resetTwoFactor(input: TargetAction): Promise<void> {
+    // A recovery escape hatch, not a lockout, so it needs no self-target guard.
+    await this.assertExists(input.targetUserId);
+    await this.repository.resetTwoFactor(input);
+  }
+
   public async deleteUser(input: TargetAction): Promise<void> {
     await this.assertTargetable(input);
     // Disable first: revokes the target's sessions so it cannot create new

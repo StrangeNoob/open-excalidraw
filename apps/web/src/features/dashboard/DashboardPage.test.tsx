@@ -187,6 +187,7 @@ const buildSession = (isAdmin: boolean): SessionResponse => ({
     image: null,
     isAdmin,
     name: "Ada",
+    twoFactorEnabled: false,
   },
 });
 
@@ -204,12 +205,28 @@ class FakeAuthClient implements AuthClient {
   readonly resetPassword =
     vi.fn<(newPassword: string, token: string) => Promise<void>>();
   readonly setPassword = vi.fn<(newPassword: string) => Promise<void>>();
-  readonly signIn = vi.fn<(input: EmailSignInInput) => Promise<void>>();
+  readonly signIn =
+    vi.fn<
+      (input: EmailSignInInput) => Promise<{ twoFactorRedirect: boolean }>
+    >();
   readonly signOut = vi.fn<() => Promise<void>>();
   readonly signUp = vi.fn<(input: EmailSignUpInput) => Promise<void>>();
   readonly startOAuth =
     vi.fn<(provider: OAuthProvider, returnPath: string) => Promise<void>>();
   readonly unlinkAccount = vi.fn<(providerId: string) => Promise<void>>();
+  readonly disableTwoFactor = vi.fn<(password: string) => Promise<void>>();
+  readonly enableTwoFactor =
+    vi.fn<
+      (password: string) => Promise<{ backupCodes: string[]; totpURI: string }>
+    >();
+  readonly generateBackupCodes =
+    vi.fn<(password: string) => Promise<{ backupCodes: string[] }>>();
+  readonly getTotpUri =
+    vi.fn<(password: string) => Promise<{ totpURI: string }>>();
+  readonly verifyBackupCode =
+    vi.fn<(code: string, trustDevice: boolean) => Promise<void>>();
+  readonly verifyTotp =
+    vi.fn<(code: string, trustDevice: boolean) => Promise<void>>();
 }
 
 const renderDashboard = (

@@ -179,6 +179,7 @@ describeDatabase("content persistence", () => {
           name: "Content Owner",
           image: null,
           emailVerified: true,
+          twoFactorEnabled: false,
           createdAt: new Date(),
           sessionId: randomUUID(),
           sessionExpiresAt: new Date(Date.now() + 60_000),

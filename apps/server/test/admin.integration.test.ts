@@ -144,6 +144,44 @@ describe("admin HTTP domain", () => {
     expect(fixture.repository.disabled.has(target)).toBe(false);
   });
 
+  it("resets two-factor enrollment, idempotently, and gates access", async () => {
+    const fixture = createFixture();
+    const target = fixture.repository.seedUser({
+      name: "Enrolled",
+      email: "enrolled@example.test",
+      twoFactorEnabled: true,
+    });
+
+    const anonymous = await request(fixture.app).post(
+      `/api/v1/admin/users/${target}/two-factor/disable`,
+    );
+    expect(anonymous.status).toBe(401);
+
+    const nonAdmin = await request(fixture.app)
+      .post(`/api/v1/admin/users/${target}/two-factor/disable`)
+      .set("x-test-user", randomUUID());
+    expect(nonAdmin.status).toBe(403);
+
+    const reset = await request(fixture.app)
+      .post(`/api/v1/admin/users/${target}/two-factor/disable`)
+      .set("x-test-user", adminId);
+    expect(reset.status).toBe(204);
+    expect(fixture.repository.twoFactorReset.has(target)).toBe(true);
+    expect(fixture.repository.users.get(target)?.twoFactorEnabled).toBe(false);
+
+    // A user who never enrolled resets just the same.
+    const again = await request(fixture.app)
+      .post(`/api/v1/admin/users/${target}/two-factor/disable`)
+      .set("x-test-user", adminId);
+    expect(again.status).toBe(204);
+
+    const unknown = await request(fixture.app)
+      .post(`/api/v1/admin/users/${randomUUID()}/two-factor/disable`)
+      .set("x-test-user", adminId);
+    expect(unknown.status).toBe(404);
+    expect(unknown.body.code).toBe("USER_NOT_FOUND");
+  });
+
   it("disables, purges owned drawings, then deletes the user and refuses self", async () => {
     const fixture = createFixture();
     const target = fixture.repository.seedUser({
@@ -233,6 +271,7 @@ describeDatabase("admin persistence", () => {
   const targetId = randomUUID();
   const otherId = randomUUID();
   const disableId = randomUUID();
+  const twoFactorId = randomUUID();
   const ownedDrawingId = randomUUID();
   const otherDrawingId = randomUUID();
   const assetKey = `drawings/${ownedDrawingId}/assets/file-1`;
@@ -249,7 +288,8 @@ describeDatabase("admin persistence", () => {
        VALUES ($1, 'Actor', $2, true),
               ($3, 'Target', $4, true),
               ($5, 'Other', $6, true),
-              ($7, 'Disable', $8, true)`,
+              ($7, 'Disable', $8, true),
+              ($9, 'TwoFactor', $10, true)`,
       [
         actorId,
         `${actorId}@example.test`,
@@ -259,6 +299,8 @@ describeDatabase("admin persistence", () => {
         `${otherId}@example.test`,
         disableId,
         `${disableId}@example.test`,
+        twoFactorId,
+        `${twoFactorId}@example.test`,
       ],
     );
     const scene = JSON.stringify(emptyScene());
@@ -301,14 +343,14 @@ describeDatabase("admin persistence", () => {
       [[ownedDrawingId, otherDrawingId]],
     );
     await database.pool.query(`DELETE FROM "user" WHERE id = ANY($1::uuid[])`, [
-      [actorId, targetId, otherId, disableId],
+      [actorId, targetId, otherId, disableId, twoFactorId],
     ]);
     await database.close();
   });
 
   it("counts users, active drawings, and active asset bytes", async () => {
     const overview = await service.getOverview();
-    expect(overview.users - baseline.users).toBe(4);
+    expect(overview.users - baseline.users).toBe(5);
     expect(overview.drawings - baseline.drawings).toBe(2);
     expect(overview.storageBytes - baseline.storageBytes).toBe(1234);
   });
@@ -370,6 +412,54 @@ describeDatabase("admin persistence", () => {
       requestId,
     });
     expect(await disabledAtFor(disableId)).toBeNull();
+  });
+
+  it("reset drops two_factor rows, clears the flag, surfaces it, and audits idempotently", async () => {
+    await database.pool.query(
+      `UPDATE "user" SET two_factor_enabled = true WHERE id = $1`,
+      [twoFactorId],
+    );
+    await database.pool.query(
+      `INSERT INTO two_factor (secret, backup_codes, user_id)
+       VALUES ('secret', 'codes', $1)`,
+      [twoFactorId],
+    );
+
+    const enrolled = await service.listUsers({
+      search: `${twoFactorId}@example.test`,
+    });
+    expect(enrolled.users[0]?.twoFactorEnabled).toBe(true);
+
+    await service.resetTwoFactor({
+      actorUserId: actorId,
+      targetUserId: twoFactorId,
+      requestId,
+    });
+
+    const flag = await database.pool.query<{ two_factor_enabled: boolean }>(
+      `SELECT two_factor_enabled FROM "user" WHERE id = $1`,
+      [twoFactorId],
+    );
+    expect(flag.rows[0]?.two_factor_enabled).toBe(false);
+    const rows = await database.pool.query(
+      `SELECT 1 FROM two_factor WHERE user_id = $1`,
+      [twoFactorId],
+    );
+    expect(rows.rowCount).toBe(0);
+
+    // Idempotent: resetting a now-unenrolled user still succeeds and audits.
+    await service.resetTwoFactor({
+      actorUserId: actorId,
+      targetUserId: twoFactorId,
+      requestId,
+    });
+    const audit = await database.pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM audit_events
+       WHERE event_type = 'admin.user_two_factor_reset'
+         AND metadata->>'targetUserId' = $1`,
+      [twoFactorId],
+    );
+    expect(audit.rows[0]?.n).toBe(2);
   });
 
   it("rejects mutating a vanished user and writes no phantom audit row", async () => {
@@ -470,6 +560,7 @@ function identityFor(userId: string, emailVerified = true): RequestIdentity {
     name: "Test User",
     image: null,
     emailVerified,
+    twoFactorEnabled: false,
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
     sessionId: randomUUID(),
     sessionExpiresAt: new Date("2027-01-01T00:00:00.000Z"),
@@ -483,6 +574,7 @@ interface SeededUser {
   emailVerified: boolean;
   createdAt: string;
   disabledAt: string | null;
+  twoFactorEnabled: boolean;
   drawingCount: number;
 }
 
@@ -495,12 +587,17 @@ class InMemoryAdminRepository implements AdminRepository {
   public readonly users = new Map<string, SeededUser>();
   public readonly disabled = new Set<string>();
   public readonly sessionsRevoked = new Set<string>();
+  public readonly twoFactorReset = new Set<string>();
   public readonly calls: string[] = [];
   public lastLimit = 0;
   public failDeleteUserOnce = false;
   private seq = 0;
 
-  public seedUser(input: { name: string; email: string }): string {
+  public seedUser(input: {
+    name: string;
+    email: string;
+    twoFactorEnabled?: boolean;
+  }): string {
     const id = randomUUID();
     this.seq += 1;
     this.users.set(id, {
@@ -510,6 +607,7 @@ class InMemoryAdminRepository implements AdminRepository {
       emailVerified: true,
       createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, this.seq)).toISOString(),
       disabledAt: null,
+      twoFactorEnabled: input.twoFactorEnabled ?? false,
       drawingCount: 0,
     });
     return id;
@@ -552,6 +650,17 @@ class InMemoryAdminRepository implements AdminRepository {
 
   public enableUser(input: { targetUserId: string }): Promise<void> {
     this.disabled.delete(input.targetUserId);
+    return Promise.resolve();
+  }
+
+  public resetTwoFactor(input: { targetUserId: string }): Promise<void> {
+    this.calls.push(`resetTwoFactor:${input.targetUserId}`);
+    this.twoFactorReset.add(input.targetUserId);
+    // Mirror the real repository: reset also clears the user's flag.
+    const user = this.users.get(input.targetUserId);
+    if (user) {
+      user.twoFactorEnabled = false;
+    }
     return Promise.resolve();
   }
 

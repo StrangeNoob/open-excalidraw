@@ -108,6 +108,7 @@ describe("initial PostgreSQL migration", () => {
       "0009_drawing_purge_state.sql",
       "0010_user_libraries.sql",
       "0011_admin_user_management.sql",
+      "0012_two_factor.sql",
     ]);
     expect(second.alreadyApplied).toEqual(first.applied);
     expect(record.rows).toEqual(first.applied);
@@ -198,6 +199,7 @@ describe("database constraints", () => {
       "drawing_user_tags.user_id->user.id (CASCADE)",
       "drawings.owner_user_id->user.id (RESTRICT)",
       "session.user_id->user.id (CASCADE)",
+      "two_factor.user_id->user.id (CASCADE)",
       "user_libraries.user_id->user.id (CASCADE)",
     ]);
 
@@ -219,6 +221,8 @@ describe("database constraints", () => {
         "drawing_assets_storage_key_unique",
         "drawing_assets_drawing_file_unique",
         "drawing_revisions_drawing_revision_unique",
+        "two_factor_user_id_idx",
+        "two_factor_secret_idx",
       ]),
     );
   });

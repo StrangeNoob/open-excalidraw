@@ -35,6 +35,7 @@ const createAdminUser = (
   emailVerified: true,
   id: `00000000-0000-4000-8000-${String(offset).padStart(12, "0")}`,
   name,
+  twoFactorEnabled: false,
   ...overrides,
 });
 
@@ -64,6 +65,12 @@ class FakeAdminApi implements AdminApi {
   readonly enableUser = vi.fn((userId: string) => {
     this.users = this.users.map((user) =>
       user.id === userId ? { ...user, disabledAt: null } : user,
+    );
+    return Promise.resolve();
+  });
+  readonly resetTwoFactor = vi.fn((userId: string) => {
+    this.users = this.users.map((user) =>
+      user.id === userId ? { ...user, twoFactorEnabled: false } : user,
     );
     return Promise.resolve();
   });
@@ -97,12 +104,28 @@ class FakeAuthClient implements AuthClient {
   readonly resetPassword =
     vi.fn<(newPassword: string, token: string) => Promise<void>>();
   readonly setPassword = vi.fn<(newPassword: string) => Promise<void>>();
-  readonly signIn = vi.fn<(input: EmailSignInInput) => Promise<void>>();
+  readonly signIn =
+    vi.fn<
+      (input: EmailSignInInput) => Promise<{ twoFactorRedirect: boolean }>
+    >();
   readonly signOut = vi.fn<() => Promise<void>>();
   readonly signUp = vi.fn<(input: EmailSignUpInput) => Promise<void>>();
   readonly startOAuth =
     vi.fn<(provider: OAuthProvider, returnPath: string) => Promise<void>>();
   readonly unlinkAccount = vi.fn<(providerId: string) => Promise<void>>();
+  readonly disableTwoFactor = vi.fn<(password: string) => Promise<void>>();
+  readonly enableTwoFactor =
+    vi.fn<
+      (password: string) => Promise<{ backupCodes: string[]; totpURI: string }>
+    >();
+  readonly generateBackupCodes =
+    vi.fn<(password: string) => Promise<{ backupCodes: string[] }>>();
+  readonly getTotpUri =
+    vi.fn<(password: string) => Promise<{ totpURI: string }>>();
+  readonly verifyBackupCode =
+    vi.fn<(code: string, trustDevice: boolean) => Promise<void>>();
+  readonly verifyTotp =
+    vi.fn<(code: string, trustDevice: boolean) => Promise<void>>();
 }
 
 const renderAdmin = (api: AdminApi) => {
@@ -125,6 +148,7 @@ const renderAdmin = (api: AdminApi) => {
       image: null,
       isAdmin: true,
       name: "Ada",
+      twoFactorEnabled: false,
     },
   });
   const queryClient = new QueryClient({
@@ -245,6 +269,49 @@ describe("AdminPage", () => {
       expect(screen.queryByText("Grace")).not.toBeInTheDocument(),
     );
     expect(confirm).toHaveBeenCalledTimes(2);
+  });
+
+  it("resets two-factor for an enrolled user only after confirmation", async () => {
+    const user = userEvent.setup();
+    const api = new FakeAdminApi({ drawings: 0, storageBytes: 0, users: 2 }, [
+      createAdminUser("Grace", 2, { twoFactorEnabled: true }),
+    ]);
+    // mockReset drops any confirm spy an earlier test left in place, so the
+    // call-count assertion below counts only this test's two clicks.
+    const confirm = vi.spyOn(globalThis, "confirm");
+    confirm.mockReset();
+    confirm.mockReturnValueOnce(false).mockReturnValueOnce(true);
+    renderAdmin(api);
+
+    const card = (await screen.findByText("Grace")).closest("article")!;
+    const button = within(card).getByRole("button", { name: "Reset 2FA" });
+
+    await user.click(button);
+    expect(api.resetTwoFactor).not.toHaveBeenCalled();
+
+    await user.click(button);
+    await waitFor(() =>
+      expect(api.resetTwoFactor).toHaveBeenCalledWith(GRACE_ID),
+    );
+    // The button is gated on twoFactorEnabled, so it disappears once reset.
+    await waitFor(() =>
+      expect(
+        within(card).queryByRole("button", { name: "Reset 2FA" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(confirm).toHaveBeenCalledTimes(2);
+  });
+
+  it("hides the reset button for a user without two-factor", async () => {
+    const api = new FakeAdminApi({ drawings: 0, storageBytes: 0, users: 1 }, [
+      createAdminUser("Grace", 2),
+    ]);
+    renderAdmin(api);
+
+    const card = (await screen.findByText("Grace")).closest("article")!;
+    expect(
+      within(card).queryByRole("button", { name: "Reset 2FA" }),
+    ).not.toBeInTheDocument();
   });
 
   it("hides action buttons on the current user's own row", async () => {

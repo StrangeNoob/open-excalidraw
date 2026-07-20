@@ -28,6 +28,9 @@ export const adminUserSchema = z
     disabledAt: isoDateTimeSchema.nullable().meta({
       description: "Null when active; a timestamp when disabled.",
     }),
+    twoFactorEnabled: z.boolean().meta({
+      description: "True when the user has TOTP two-factor enrollment.",
+    }),
     drawingCount: z
       .number()
       .int()

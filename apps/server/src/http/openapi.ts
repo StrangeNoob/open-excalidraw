@@ -377,6 +377,24 @@ export const openApiDocument = {
         },
       },
     },
+    "/api/v1/admin/users/{userId}/two-factor/disable": {
+      parameters: [adminUserIdParameter],
+      post: {
+        tags: ["Admin"],
+        summary: "Reset a user's two-factor enrollment",
+        description:
+          "Deletes the user's TOTP enrollment and backup codes and clears " +
+          "`twoFactorEnabled`, so a user who lost both their device and " +
+          "backup codes can sign in and re-enroll. Idempotent when the user " +
+          "has no enrollment.",
+        responses: {
+          "204": { description: "Two-factor enrollment reset." },
+          "401": unauthorized,
+          "403": problem("Administrator access is required."),
+          "404": problem("User not found."),
+        },
+      },
+    },
     "/api/v1/admin/users/{userId}": {
       parameters: [adminUserIdParameter],
       delete: {

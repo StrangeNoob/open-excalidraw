@@ -52,13 +52,23 @@ const signedInSession: SessionResponse = {
     image: null,
     isAdmin: false,
     name: "Ada",
+    twoFactorEnabled: false,
   },
 };
 
 class FakeAuthClient implements AuthClient {
   readonly changePassword =
     vi.fn<(currentPassword: string, newPassword: string) => Promise<void>>();
+  readonly disableTwoFactor = vi.fn<(password: string) => Promise<void>>();
+  readonly enableTwoFactor =
+    vi.fn<
+      (password: string) => Promise<{ backupCodes: string[]; totpURI: string }>
+    >();
+  readonly generateBackupCodes =
+    vi.fn<(password: string) => Promise<{ backupCodes: string[] }>>();
   readonly getSession = vi.fn<() => Promise<SessionResponse>>();
+  readonly getTotpUri =
+    vi.fn<(password: string) => Promise<{ totpURI: string }>>();
   readonly linkSocial =
     vi.fn<(provider: OAuthProvider, returnPath: string) => Promise<void>>();
   readonly listAccounts = vi.fn<() => Promise<LinkedAccount[]>>();
@@ -70,11 +80,18 @@ class FakeAuthClient implements AuthClient {
     vi.fn<(email: string, callbackURL: string) => Promise<void>>();
   readonly resetPassword =
     vi.fn<(newPassword: string, token: string) => Promise<void>>();
-  readonly signIn = vi.fn<(input: EmailSignInInput) => Promise<void>>();
+  readonly signIn =
+    vi.fn<
+      (input: EmailSignInInput) => Promise<{ twoFactorRedirect: boolean }>
+    >();
   readonly signOut = vi.fn<() => Promise<void>>();
   readonly signUp = vi.fn<(input: EmailSignUpInput) => Promise<void>>();
   readonly startOAuth =
     vi.fn<(provider: OAuthProvider, returnPath: string) => Promise<void>>();
+  readonly verifyBackupCode =
+    vi.fn<(code: string, trustDevice: boolean) => Promise<void>>();
+  readonly verifyTotp =
+    vi.fn<(code: string, trustDevice: boolean) => Promise<void>>();
 }
 
 const renderAuthRoute = (
@@ -159,7 +176,7 @@ describe("auth pages", () => {
     client.getSession
       .mockResolvedValueOnce(anonymousSession)
       .mockResolvedValueOnce(signedInSession);
-    client.signIn.mockResolvedValue();
+    client.signIn.mockResolvedValue({ twoFactorRedirect: false });
     client.startOAuth.mockResolvedValue();
     renderAuthRoute("/login?returnTo=%2Finvite%2Fpending-token", client);
 
@@ -193,6 +210,119 @@ describe("auth pages", () => {
       email: "ada@example.com",
       password: "correct-horse",
     });
+  });
+
+  it("signs in without a challenge when two-factor is disabled", async () => {
+    const user = userEvent.setup();
+    const client = new FakeAuthClient();
+    client.getSession
+      .mockResolvedValueOnce(anonymousSession)
+      .mockResolvedValueOnce(signedInSession);
+    client.signIn.mockResolvedValue({ twoFactorRedirect: false });
+    renderAuthRoute("/login?returnTo=%2Finvite%2Fpending-token", client);
+
+    await user.type(await screen.findByLabelText("Email"), "ada@example.com");
+    await user.type(screen.getByLabelText("Password"), "correct-horse");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+
+    await waitFor(() =>
+      expect(screen.getByText("Invitation destination")).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole("heading", { name: "Two-factor authentication" }),
+    ).not.toBeInTheDocument();
+    expect(client.verifyTotp).not.toHaveBeenCalled();
+  });
+
+  it("challenges for a TOTP code and finishes sign-in on success", async () => {
+    const user = userEvent.setup();
+    const client = new FakeAuthClient();
+    client.getSession
+      .mockResolvedValueOnce(anonymousSession)
+      .mockResolvedValue(signedInSession);
+    client.signIn.mockResolvedValue({ twoFactorRedirect: true });
+    client.verifyTotp.mockResolvedValue();
+    renderAuthRoute("/login?returnTo=%2Finvite%2Fpending-token", client);
+
+    await user.type(await screen.findByLabelText("Email"), "ada@example.com");
+    await user.type(screen.getByLabelText("Password"), "correct-horse");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Two-factor authentication",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Invitation destination"),
+    ).not.toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Authentication code"), "123456");
+    await user.click(
+      screen.getByRole("checkbox", { name: /trust this device/i }),
+    );
+    await user.click(screen.getByRole("button", { name: "Verify" }));
+
+    await waitFor(() =>
+      expect(screen.getByText("Invitation destination")).toBeInTheDocument(),
+    );
+    expect(client.verifyTotp).toHaveBeenCalledWith("123456", true);
+  });
+
+  it("verifies a backup code when the authenticator is unavailable", async () => {
+    const user = userEvent.setup();
+    const client = new FakeAuthClient();
+    client.getSession
+      .mockResolvedValueOnce(anonymousSession)
+      .mockResolvedValue(signedInSession);
+    client.signIn.mockResolvedValue({ twoFactorRedirect: true });
+    client.verifyBackupCode.mockResolvedValue();
+    renderAuthRoute("/login?returnTo=%2Finvite%2Fpending-token", client);
+
+    await user.type(await screen.findByLabelText("Email"), "ada@example.com");
+    await user.type(screen.getByLabelText("Password"), "correct-horse");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Use a backup code instead",
+      }),
+    );
+    await user.type(screen.getByLabelText("Backup code"), "abcde-fghij");
+    await user.click(screen.getByRole("button", { name: "Verify" }));
+
+    await waitFor(() =>
+      expect(screen.getByText("Invitation destination")).toBeInTheDocument(),
+    );
+    expect(client.verifyBackupCode).toHaveBeenCalledWith("abcde-fghij", false);
+    expect(client.verifyTotp).not.toHaveBeenCalled();
+  });
+
+  it("shows an inline error and stays on the challenge when a code is rejected", async () => {
+    const user = userEvent.setup();
+    const client = new FakeAuthClient();
+    client.getSession.mockResolvedValue(anonymousSession);
+    client.signIn.mockResolvedValue({ twoFactorRedirect: true });
+    client.verifyTotp.mockRejectedValue(new Error("Invalid code"));
+    renderAuthRoute("/login", client);
+
+    await user.type(await screen.findByLabelText("Email"), "ada@example.com");
+    await user.type(screen.getByLabelText("Password"), "correct-horse");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+
+    await user.type(
+      await screen.findByLabelText("Authentication code"),
+      "000000",
+    );
+    await user.click(screen.getByRole("button", { name: "Verify" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Invalid code");
+    expect(
+      screen.getByRole("heading", { name: "Two-factor authentication" }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Back to sign in" }));
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
   });
 
   it("starts single sign-on with the provider named by the deployment", async () => {
@@ -468,7 +598,7 @@ describe("cookie auth state", () => {
     client.getSession
       .mockReturnValueOnce(bootstrap)
       .mockResolvedValueOnce(signedInSession);
-    client.signIn.mockResolvedValue();
+    client.signIn.mockResolvedValue({ twoFactorRedirect: false });
     const queryClient = new QueryClient();
 
     const SessionProbe = () => {
@@ -650,6 +780,99 @@ describe("cookie auth state", () => {
       provider: "github",
     });
     expect(navigate).toHaveBeenCalledWith("https://github.example/authorize");
+  });
+
+  it("drives the two-factor endpoints and surfaces a TOTP challenge from a 200 body", async () => {
+    const bodies = new Map<string, unknown>();
+    const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      const body = init?.body;
+      bodies.set(url, JSON.parse(typeof body === "string" ? body : "{}"));
+
+      if (url.endsWith("/auth/sign-in/email")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ twoFactorRedirect: true }), {
+            status: 200,
+          }),
+        );
+      }
+      if (url.endsWith("/auth/two-factor/enable")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              backupCodes: ["aaaaa-bbbbb"],
+              totpURI: "otpauth://totp/Example",
+            }),
+            { status: 200 },
+          ),
+        );
+      }
+      if (url.endsWith("/auth/two-factor/get-totp-uri")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ totpURI: "otpauth://totp/Example" }), {
+            status: 200,
+          }),
+        );
+      }
+      if (url.endsWith("/auth/two-factor/generate-backup-codes")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ backupCodes: ["ccccc-ddddd"] }), {
+            status: 200,
+          }),
+        );
+      }
+      return Promise.resolve(new Response(null, { status: 204 }));
+    });
+    const client = new CookieAuthClient({
+      api: new HttpApiClient({ fetch }),
+      navigate: vi.fn(),
+    });
+
+    expect(
+      await client.signIn({
+        email: "ada@example.com",
+        password: "correct-horse",
+      }),
+    ).toEqual({ twoFactorRedirect: true });
+    expect(await client.enableTwoFactor("correct-horse")).toEqual({
+      backupCodes: ["aaaaa-bbbbb"],
+      totpURI: "otpauth://totp/Example",
+    });
+    expect(await client.getTotpUri("correct-horse")).toEqual({
+      totpURI: "otpauth://totp/Example",
+    });
+    expect(await client.generateBackupCodes("correct-horse")).toEqual({
+      backupCodes: ["ccccc-ddddd"],
+    });
+    await client.verifyTotp("123456", true);
+    await client.verifyBackupCode("abcde-fghij", false);
+
+    expect(bodies.get("/api/auth/sign-in/email")).toEqual({
+      email: "ada@example.com",
+      password: "correct-horse",
+    });
+    expect(bodies.get("/api/auth/two-factor/enable")).toEqual({
+      password: "correct-horse",
+    });
+    expect(bodies.get("/api/auth/two-factor/get-totp-uri")).toEqual({
+      password: "correct-horse",
+    });
+    expect(bodies.get("/api/auth/two-factor/generate-backup-codes")).toEqual({
+      password: "correct-horse",
+    });
+    expect(bodies.get("/api/auth/two-factor/verify-totp")).toEqual({
+      code: "123456",
+      trustDevice: true,
+    });
+    expect(bodies.get("/api/auth/two-factor/verify-backup-code")).toEqual({
+      code: "abcde-fghij",
+      trustDevice: false,
+    });
   });
 
   it("purges protected queries and editor state on logout", async () => {
