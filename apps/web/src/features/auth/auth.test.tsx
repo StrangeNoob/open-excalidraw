@@ -784,6 +784,99 @@ describe("cookie auth state", () => {
     expect(navigate).toHaveBeenCalledWith("https://github.example/authorize");
   });
 
+  it("drives the two-factor endpoints and surfaces a TOTP challenge from a 200 body", async () => {
+    const bodies = new Map<string, unknown>();
+    const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      const body = init?.body;
+      bodies.set(url, JSON.parse(typeof body === "string" ? body : "{}"));
+
+      if (url.endsWith("/auth/sign-in/email")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ twoFactorRedirect: true }), {
+            status: 200,
+          }),
+        );
+      }
+      if (url.endsWith("/auth/two-factor/enable")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              backupCodes: ["aaaaa-bbbbb"],
+              totpURI: "otpauth://totp/Example",
+            }),
+            { status: 200 },
+          ),
+        );
+      }
+      if (url.endsWith("/auth/two-factor/get-totp-uri")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ totpURI: "otpauth://totp/Example" }), {
+            status: 200,
+          }),
+        );
+      }
+      if (url.endsWith("/auth/two-factor/generate-backup-codes")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ backupCodes: ["ccccc-ddddd"] }), {
+            status: 200,
+          }),
+        );
+      }
+      return Promise.resolve(new Response(null, { status: 204 }));
+    });
+    const client = new CookieAuthClient({
+      api: new HttpApiClient({ fetch }),
+      navigate: vi.fn(),
+    });
+
+    expect(
+      await client.signIn({
+        email: "ada@example.com",
+        password: "correct-horse",
+      }),
+    ).toEqual({ twoFactorRedirect: true });
+    expect(await client.enableTwoFactor("correct-horse")).toEqual({
+      backupCodes: ["aaaaa-bbbbb"],
+      totpURI: "otpauth://totp/Example",
+    });
+    expect(await client.getTotpUri("correct-horse")).toEqual({
+      totpURI: "otpauth://totp/Example",
+    });
+    expect(await client.generateBackupCodes("correct-horse")).toEqual({
+      backupCodes: ["ccccc-ddddd"],
+    });
+    await client.verifyTotp("123456", true);
+    await client.verifyBackupCode("abcde-fghij", false);
+
+    expect(bodies.get("/api/auth/sign-in/email")).toEqual({
+      email: "ada@example.com",
+      password: "correct-horse",
+    });
+    expect(bodies.get("/api/auth/two-factor/enable")).toEqual({
+      password: "correct-horse",
+    });
+    expect(bodies.get("/api/auth/two-factor/get-totp-uri")).toEqual({
+      password: "correct-horse",
+    });
+    expect(bodies.get("/api/auth/two-factor/generate-backup-codes")).toEqual({
+      password: "correct-horse",
+    });
+    expect(bodies.get("/api/auth/two-factor/verify-totp")).toEqual({
+      code: "123456",
+      trustDevice: true,
+    });
+    expect(bodies.get("/api/auth/two-factor/verify-backup-code")).toEqual({
+      code: "abcde-fghij",
+      trustDevice: false,
+    });
+  });
+
   it("purges protected queries and editor state on logout", async () => {
     const client = new FakeAuthClient();
     client.getSession.mockResolvedValue(signedInSession);
