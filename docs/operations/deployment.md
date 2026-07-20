@@ -202,7 +202,9 @@ The image ships `migrate-assets.mjs`, which copies every live asset between
 the local volume and the S3 bucket in either direction. It enumerates from
 the database (only referenced assets move), verifies each copy against the
 recorded checksum, and skips assets already at the destination — so it is
-safe to re-run after an interruption.
+safe to re-run after an interruption. The image also ships
+`export-drawings.mjs` next to it for portable per-drawing `.excalidraw`
+exports; see the [backup and restore runbook](backup-restore.md).
 
 Run it inside the container with **both** storage configurations present
 (`STORAGE_LOCAL_PATH` and the `S3_*` variables), before switching

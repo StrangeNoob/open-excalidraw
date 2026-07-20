@@ -40,6 +40,7 @@ RUN pnpm --filter @open-excalidraw/web build
 # produced through that package rather than with a workspace-root pnpm exec.
 RUN pnpm --filter @open-excalidraw/server run bundle
 RUN pnpm --filter @open-excalidraw/server run bundle:migrate-assets
+RUN pnpm --filter @open-excalidraw/server run bundle:export-drawings
 RUN pnpm --filter @open-excalidraw/server exec esbuild \
     ../../packages/database/src/migrate-cli.ts \
     --bundle \
@@ -68,6 +69,7 @@ COPY --from=production-dependencies --chown=10001:10001 /workspace/apps/server/n
 COPY --from=production-dependencies --chown=10001:10001 /workspace/packages/database/node_modules /app/packages/database/node_modules
 COPY --from=build --chown=10001:10001 /workspace/apps/server/dist/server.mjs ./server.mjs
 COPY --from=build --chown=10001:10001 /workspace/apps/server/dist/migrate-assets.mjs ./migrate-assets.mjs
+COPY --from=build --chown=10001:10001 /workspace/apps/server/dist/export-drawings.mjs ./export-drawings.mjs
 COPY --from=build --chown=10001:10001 /workspace/apps/web/dist ./public
 COPY --from=build --chown=10001:10001 /output/packages/database/src/migrate.mjs /app/packages/database/src/migrate.mjs
 COPY --from=build --chown=10001:10001 /workspace/packages/database/migrations /app/packages/database/migrations

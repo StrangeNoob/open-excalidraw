@@ -12,7 +12,8 @@
     "test:coverage": "vitest run --coverage",
     "test:integration": "vitest run --passWithNoTests --config vitest.integration.config.ts",
     "typecheck": "tsc -p tsconfig.json --pretty false",
-    "bundle:migrate-assets": "esbuild src/tools/migrate-assets.ts --bundle --platform=node --format=esm --target=node22 --packages=external --alias:@open-excalidraw/storage=../../packages/storage/src/index.ts --outfile=dist/migrate-assets.mjs"
+    "bundle:migrate-assets": "esbuild src/tools/migrate-assets.ts --bundle --platform=node --format=esm --target=node22 --packages=external --alias:@open-excalidraw/storage=../../packages/storage/src/index.ts --outfile=dist/migrate-assets.mjs",
+    "bundle:export-drawings": "esbuild src/tools/export-drawings.ts --bundle --platform=node --format=esm --target=node22 --packages=external --alias:@open-excalidraw/storage=../../packages/storage/src/index.ts --outfile=dist/export-drawings.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1084.0",
