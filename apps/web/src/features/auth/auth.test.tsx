@@ -322,9 +322,7 @@ describe("auth pages", () => {
     ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Back to sign in" }));
-    expect(
-      screen.getByRole("button", { name: "Sign in" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
   });
 
   it("starts single sign-on with the provider named by the deployment", async () => {

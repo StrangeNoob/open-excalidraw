@@ -247,7 +247,10 @@ describe("SettingsPage", () => {
   });
 
   it("turns off two-factor authentication", async () => {
-    const client = renderSettings([{ providerId: "credential" }], enabledSession);
+    const client = renderSettings(
+      [{ providerId: "credential" }],
+      enabledSession,
+    );
     client.disableTwoFactor.mockResolvedValue();
 
     expect(
@@ -258,7 +261,9 @@ describe("SettingsPage", () => {
 
     const user = userEvent.setup();
     await user.click(
-      screen.getByRole("button", { name: "Turn off two-factor authentication" }),
+      screen.getByRole("button", {
+        name: "Turn off two-factor authentication",
+      }),
     );
     await user.type(
       screen.getByLabelText("Confirm your password"),
@@ -275,7 +280,10 @@ describe("SettingsPage", () => {
   });
 
   it("regenerates backup codes", async () => {
-    const client = renderSettings([{ providerId: "credential" }], enabledSession);
+    const client = renderSettings(
+      [{ providerId: "credential" }],
+      enabledSession,
+    );
     const codes = ["new1-1111", "new2-2222"];
     client.generateBackupCodes.mockResolvedValue({ backupCodes: codes });
 
