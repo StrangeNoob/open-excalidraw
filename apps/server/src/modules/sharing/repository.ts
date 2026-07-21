@@ -76,6 +76,7 @@ export class PostgresSharingRepository implements SharingRepository {
     role: "editor" | "viewer";
     tokenHash: Buffer;
     expiresAt: Date;
+    requireVerifiedEmail: boolean;
     auditRequestId?: string;
   }): Promise<CreateShareResult> {
     return transaction(this.pool, async (client) => {
@@ -97,12 +98,25 @@ export class PostgresSharingRepository implements SharingRepository {
         name: string;
         image: string | null;
         created_at: Date;
+        email_verified: boolean;
       }>(
-        `SELECT id, email, name, image, created_at FROM "user" WHERE email = $1 LIMIT 1`,
+        `SELECT id, email, name, image, created_at, email_verified
+         FROM "user" WHERE email = $1 LIMIT 1`,
         [input.email],
       );
       const existingUser = found.rows[0];
-      if (existingUser) {
+      // An unverified account proves nothing about mailbox ownership: anyone
+      // may register an unclaimed address, so short-circuiting the token flow
+      // here would hand them membership the moment an owner invites it. Fall
+      // through to the emailed invitation instead, which only the real address
+      // holder can accept. Self-invites are exempt because the actor is already
+      // authenticated as that account.
+      if (
+        existingUser &&
+        (existingUser.id === input.actorUserId ||
+          existingUser.email_verified ||
+          !input.requireVerifiedEmail)
+      ) {
         await client.query(
           `UPDATE drawing_invitations SET revoked_at = now()
            WHERE drawing_id = $1 AND invitee_email = $2

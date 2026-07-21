@@ -160,6 +160,54 @@ describeDatabase("sharing and invitation lifecycle", () => {
     expect(JSON.stringify(listed)).not.toContain("manualUrl");
   });
 
+  it("issues a token instead of membership when the invited account is unverified", async () => {
+    // An attacker who pre-registers an unclaimed address must not be handed
+    // membership when an owner later invites that address; only the real
+    // mailbox owner, proven by accepting the emailed token, may join.
+    const verifyingService = new SharingService({
+      repository,
+      mailer: new DisabledMailer(),
+      publicBaseUrl: "https://draw.example.test",
+      requireVerifiedEmailForAcceptance: true,
+    });
+    const email = `squatted-${randomUUID()}@example.test`;
+    const squatterId = randomUUID();
+    additionalUserIds.push(squatterId);
+    await database.pool.query(
+      `INSERT INTO "user" (id, name, email, email_verified)
+       VALUES ($1, 'Squatter', $2, false)`,
+      [squatterId, email],
+    );
+
+    const result = await verifyingService.invite(ownerId, drawingId, {
+      email,
+      role: "editor",
+    });
+
+    expect(result.invitation).toMatchObject({ email, status: "pending" });
+    expect(result.membership).toBeUndefined();
+    const granted = await database.pool.query(
+      `SELECT 1 FROM drawing_members WHERE drawing_id = $1 AND user_id = $2`,
+      [drawingId, squatterId],
+    );
+    expect(granted.rowCount).toBe(0);
+
+    // Once the address is verified, the direct-membership path is safe again.
+    await database.pool.query(
+      `UPDATE "user" SET email_verified = true WHERE id = $1`,
+      [squatterId],
+    );
+    const afterVerification = await verifyingService.invite(
+      ownerId,
+      drawingId,
+      { email, role: "editor" },
+    );
+    expect(afterVerification.membership).toMatchObject({
+      userId: squatterId,
+      role: "editor",
+    });
+  });
+
   it("returns a manual URL when SMTP delivery fails", async () => {
     const failingMailer: Mailer = {
       send: () => Promise.reject(new Error("SMTP adapter crashed")),

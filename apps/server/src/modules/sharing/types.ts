@@ -63,6 +63,13 @@ export interface SharingRepository {
     role: MemberRole;
     tokenHash: Buffer;
     expiresAt: Date;
+    /**
+     * When true, an existing account may only be granted membership directly
+     * if it has verified the invited address; otherwise the emailed-token flow
+     * is used so the real mailbox owner must accept. Required rather than
+     * optional so a caller cannot silently opt out of the check.
+     */
+    requireVerifiedEmail: boolean;
     auditRequestId?: string;
   }): Promise<CreateShareResult>;
   updateInvitationDelivery(
