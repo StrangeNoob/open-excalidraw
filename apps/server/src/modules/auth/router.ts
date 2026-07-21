@@ -4,7 +4,7 @@ import type {
 } from "@open-excalidraw/contracts";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { Router, type RequestHandler } from "express";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { APIError } from "better-auth/api";
 import { fromNodeHeaders, toNodeHandler } from "better-auth/node";
 import { z } from "zod";
@@ -51,17 +51,25 @@ export function createAuthRouter(input: CreateAuthRouterInput): Router {
 
   if (input.adminResetToken && input.manualResetLinks) {
     // Better Auth's limiter only covers its own basePath, so this route would
-    // otherwise be unthrottled. One shared bucket rather than per-IP: the
-    // client IP is derived from forwarded headers this app does not control,
-    // so a per-IP key could be sidestepped by rotating them. Break-glass admin
-    // traffic is rare, so a global ceiling is sufficient and cannot be evaded.
-    // Placed before the token check so failed attempts count toward the limit.
+    // otherwise be unthrottled. It runs before the token check so that failed
+    // guesses count, which is the point: the token's length is enforced but its
+    // entropy is not, so a weak-but-long value must not be guessable freely.
+    //
+    // Keyed per client address rather than globally. `x-real-ip` is trustworthy
+    // in both modes -- taken from the socket unless a proxy is trusted, see
+    // createApp -- so an attacker consumes only their own bucket and cannot
+    // lock an administrator out by exhausting a shared one.
     const consumeLimiter = rateLimit({
       windowMs: 15 * 60 * 1_000,
       limit: 10,
       standardHeaders: "draft-7",
       legacyHeaders: false,
-      keyGenerator: () => "manual-reset-links",
+      keyGenerator: (request) => {
+        const realIp = request.headers["x-real-ip"];
+        return ipKeyGenerator(
+          typeof realIp === "string" ? realIp : (request.ip ?? ""),
+        );
+      },
     });
     router.post(
       "/api/admin/manual-reset-links/consume",

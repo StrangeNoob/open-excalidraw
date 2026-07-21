@@ -53,43 +53,45 @@ describe("manual reset link endpoint throttling", () => {
     return instance;
   };
 
-  it("throttles repeated attempts and keeps rejecting a wrong token", async () => {
-    const instance = app();
+  const guess = (instance: express.Express, ip: string, token = "wrong") =>
+    request(instance)
+      .post("/api/admin/manual-reset-links/consume")
+      .set("x-real-ip", ip)
+      .set("authorization", `Bearer ${token}`)
+      .send({ email: "victim@example.test" });
 
+  const exhaust = async (instance: express.Express, ip: string) => {
     for (let attempt = 0; attempt < 10; attempt += 1) {
-      await request(instance)
-        .post("/api/admin/manual-reset-links/consume")
-        .set("authorization", "Bearer wrong-token")
-        .send({ email: "victim@example.test" })
-        .expect(401);
+      await guess(instance, ip).expect(401);
     }
+  };
+
+  it("throttles repeated guesses from the same address", async () => {
+    const instance = app();
+    await exhaust(instance, "198.51.100.7");
 
     // The 11th attempt is refused by the limiter rather than reaching the
     // token comparison at all.
-    await request(instance)
-      .post("/api/admin/manual-reset-links/consume")
-      .set("authorization", "Bearer wrong-token")
-      .send({ email: "victim@example.test" })
-      .expect(429);
+    await guess(instance, "198.51.100.7").expect(429);
   });
 
   it("counts failed attempts against the correct token too", async () => {
     const instance = app();
+    await exhaust(instance, "198.51.100.8");
 
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      await request(instance)
-        .post("/api/admin/manual-reset-links/consume")
-        .set("authorization", "Bearer wrong-token")
-        .send({ email: "victim@example.test" })
-        .expect(401);
-    }
+    // A valid token cannot clear an exhausted bucket, so guessing cannot be
+    // interleaved with legitimate use to reset the counter.
+    await guess(instance, "198.51.100.8", "b".repeat(48)).expect(429);
+  });
 
-    // A valid token cannot be used to bypass an exhausted bucket, so guessing
-    // cannot be interleaved with legitimate use to reset the counter.
-    await request(instance)
-      .post("/api/admin/manual-reset-links/consume")
-      .set("authorization", `Bearer ${"b".repeat(48)}`)
-      .send({ email: "victim@example.test" })
-      .expect(429);
+  it("confines the limit to the offending address", async () => {
+    const instance = app();
+    await exhaust(instance, "198.51.100.9");
+
+    // A shared bucket would let an unauthenticated flood lock administrators
+    // out of a break-glass endpoint. Another address must be unaffected, and
+    // an administrator holding the real token must still get through.
+    await guess(instance, "203.0.113.4").expect(401);
+    await guess(instance, "203.0.113.4", "b".repeat(48)).expect(404);
   });
 });
