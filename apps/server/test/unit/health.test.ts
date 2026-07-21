@@ -21,9 +21,26 @@ describe("health endpoint", () => {
     // Guards the public-library import flow: the web bundle fetches
     // .excalidrawlib JSON from libraries.excalidraw.com under this CSP.
     expect(response.headers["content-security-policy"]).toContain(
-      "connect-src 'self' ws: wss: https://libraries.excalidraw.com",
+      "connect-src 'self' https://libraries.excalidraw.com",
     );
     expect(response.headers["x-request-id"]).toMatch(/^[A-Za-z0-9-]+$/);
+  });
+
+  it("scopes WebSocket CSP sources to the trusted origins", async () => {
+    const app = createApp({
+      allowedOrigins: ["https://draw.example.test", "http://localhost:5173"],
+    });
+
+    const response = await request(app).get("/health/live").expect(200);
+    const csp = response.headers["content-security-policy"] ?? "";
+
+    expect(csp).toContain(
+      "connect-src 'self' wss://draw.example.test ws://localhost:5173 https://libraries.excalidraw.com",
+    );
+    // Bare schemes match any host and must not reappear: they would let
+    // injected script open a socket to an attacker-controlled server.
+    expect(csp).not.toMatch(/connect-src[^;]*\sws:\s/);
+    expect(csp).not.toMatch(/connect-src[^;]*\swss:\s/);
   });
 
   it("preserves a safe caller request ID on success and errors", async () => {

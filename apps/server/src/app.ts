@@ -22,6 +22,26 @@ export interface CreateAppOptions {
   staticDirectory?: string;
 }
 
+/**
+ * WebSocket CSP sources for the trusted browser origins. Socket.IO connects to
+ * the same origin as the page, so each HTTP(S) origin maps to its ws(s)
+ * equivalent. Invalid entries are skipped; `requireSameOrigin` validates the
+ * same list and is the authority on rejecting them.
+ */
+function websocketSources(origins: readonly string[]): string[] {
+  const sources = new Set<string>();
+  for (const origin of origins) {
+    try {
+      const url = new URL(origin);
+      const scheme = url.protocol === "https:" ? "wss:" : "ws:";
+      sources.add(`${scheme}//${url.host}`);
+    } catch {
+      continue;
+    }
+  }
+  return [...sources];
+}
+
 export const createApp = ({
   allowedOrigins = [],
   readiness,
@@ -39,8 +59,10 @@ export const createApp = ({
           childSrc: ["'self'", "blob:"],
           connectSrc: [
             "'self'",
-            "ws:",
-            "wss:",
+            // Scoped to the configured origins rather than bare ws:/wss:,
+            // which match any host and would leave CSP unable to contain
+            // WebSocket exfiltration if script injection ever occurred.
+            ...websocketSources(allowedOrigins),
             "https://libraries.excalidraw.com",
           ],
           defaultSrc: ["'self'"],
