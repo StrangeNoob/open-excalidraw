@@ -92,10 +92,11 @@ const secret = requiredEnvironment("BETTER_AUTH_SECRET");
 const smtpEnabled = Boolean(process.env.SMTP_HOST?.trim());
 const disableSignups = process.env.DISABLE_SIGNUPS === "true";
 const adminResetToken = process.env.ADMIN_RESET_TOKEN?.trim();
-if (!smtpEnabled && (!adminResetToken || adminResetToken.length < 32)) {
-  throw new Error(
-    "ADMIN_RESET_TOKEN with at least 32 characters is required when SMTP is disabled",
-  );
+// Length is enforced by createAuthRouter for every deployment, not just this
+// one; here we only require that the token exists at all when there is no SMTP
+// fallback for delivering reset links.
+if (!smtpEnabled && !adminResetToken) {
+  throw new Error("ADMIN_RESET_TOKEN is required when SMTP is disabled");
 }
 const google = oauthCredentials("GOOGLE");
 const github = oauthCredentials("GITHUB");

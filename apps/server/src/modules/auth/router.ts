@@ -4,6 +4,7 @@ import type {
 } from "@open-excalidraw/contracts";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { Router, type RequestHandler } from "express";
+import rateLimit from "express-rate-limit";
 import { APIError } from "better-auth/api";
 import { fromNodeHeaders, toNodeHandler } from "better-auth/node";
 import { z } from "zod";
@@ -29,13 +30,42 @@ export interface CreateAuthRouterInput {
 
 const NO_ADMINS: ReadonlySet<string> = new Set();
 
+const MINIMUM_ADMIN_RESET_TOKEN_LENGTH = 32;
+
 export function createAuthRouter(input: CreateAuthRouterInput): Router {
+  // The reset token is the only guard on an endpoint that hands out live
+  // password-reset links, and that route sits outside Better Auth's rate
+  // limiter, so a short value is brute-forceable regardless of SMTP state.
+  // Enforced here, next to the consumer, so every caller inherits the rule.
+  if (
+    input.adminResetToken &&
+    input.adminResetToken.length < MINIMUM_ADMIN_RESET_TOKEN_LENGTH
+  ) {
+    throw new TypeError(
+      `Admin reset token must contain at least ${MINIMUM_ADMIN_RESET_TOKEN_LENGTH} characters`,
+    );
+  }
+
   const router = Router();
   const authHandler = toNodeHandler(input.auth) as RequestHandler;
 
   if (input.adminResetToken && input.manualResetLinks) {
+    // Better Auth's limiter only covers its own basePath, so this route would
+    // otherwise be unthrottled. One shared bucket rather than per-IP: the
+    // client IP is derived from forwarded headers this app does not control,
+    // so a per-IP key could be sidestepped by rotating them. Break-glass admin
+    // traffic is rare, so a global ceiling is sufficient and cannot be evaded.
+    // Placed before the token check so failed attempts count toward the limit.
+    const consumeLimiter = rateLimit({
+      windowMs: 15 * 60 * 1_000,
+      limit: 10,
+      standardHeaders: "draft-7",
+      legacyHeaders: false,
+      keyGenerator: () => "manual-reset-links",
+    });
     router.post(
       "/api/admin/manual-reset-links/consume",
+      consumeLimiter,
       (request, response) => {
         if (
           !hasAdminToken(
