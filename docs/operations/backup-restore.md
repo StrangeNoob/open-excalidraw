@@ -133,3 +133,44 @@ reading no asset bytes and writing nothing.
 
 This is a portability and user-level export, not a substitute for the backup
 pair above: it carries no users, permissions, revision history, or share links.
+
+## If a database dump is exposed
+
+Treat a leaked backup, a reachable replica, or any unexplained read access to
+the database as a disclosure of every drawing it holds, and work through the
+following. Restoring from a clean snapshot does not undo any of it.
+
+**Revoke every public share link.** Share-link tokens are stored as issued, so
+anyone holding a copy of the database holds working links. They grant anonymous
+read-only access to the drawing and its images, and they keep working against
+the live deployment after the leak is contained, which is what makes them worth
+revoking first:
+
+```sh
+psql "$DATABASE_URL" -c \
+  "UPDATE drawing_share_links SET revoked_at = now() WHERE revoked_at IS NULL;"
+```
+
+Owners can issue fresh links from the sharing dialog afterwards. Revocation is
+pushed to live collaboration sockets, so anonymous viewers are disconnected
+rather than lingering until they reload.
+
+**Invalidate outstanding invitations.** These are stored hashed, so they cannot
+be read straight out of a dump, but revoking unaccepted ones removes the
+question:
+
+```sh
+psql "$DATABASE_URL" -c \
+  "UPDATE drawing_invitations SET revoked_at = now()
+   WHERE accepted_at IS NULL AND revoked_at IS NULL;"
+```
+
+**Rotate `BETTER_AUTH_SECRET`.** This signs session cookies, so rotating it
+signs every user out and forces a fresh login. Session and verification tokens
+are stored hashed and password hashes are not reversible, but rotation closes
+off anything derived from the old secret. Rotate `ADMIN_RESET_TOKEN` and
+`METRICS_TOKEN` at the same time if they are set.
+
+**Re-key object storage.** Asset bytes live outside the database, but the dump
+contains their storage keys. Rotate the S3 credentials so a leaked key list
+cannot be walked with old credentials.

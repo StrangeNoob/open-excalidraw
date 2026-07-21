@@ -21,9 +21,26 @@ describe("health endpoint", () => {
     // Guards the public-library import flow: the web bundle fetches
     // .excalidrawlib JSON from libraries.excalidraw.com under this CSP.
     expect(response.headers["content-security-policy"]).toContain(
-      "connect-src 'self' ws: wss: https://libraries.excalidraw.com",
+      "connect-src 'self' https://libraries.excalidraw.com",
     );
     expect(response.headers["x-request-id"]).toMatch(/^[A-Za-z0-9-]+$/);
+  });
+
+  it("scopes WebSocket CSP sources to the trusted origins", async () => {
+    const app = createApp({
+      allowedOrigins: ["https://draw.example.test", "http://localhost:5173"],
+    });
+
+    const response = await request(app).get("/health/live").expect(200);
+    const csp = response.headers["content-security-policy"] ?? "";
+
+    expect(csp).toContain(
+      "connect-src 'self' wss://draw.example.test ws://localhost:5173 https://libraries.excalidraw.com",
+    );
+    // Bare schemes match any host and must not reappear: they would let
+    // injected script open a socket to an attacker-controlled server.
+    expect(csp).not.toMatch(/connect-src[^;]*\sws:\s/);
+    expect(csp).not.toMatch(/connect-src[^;]*\swss:\s/);
   });
 
   it("preserves a safe caller request ID on success and errors", async () => {
@@ -82,6 +99,40 @@ describe("health endpoint", () => {
       .get("/api/auth/callback/provider")
       .set("origin", "https://accounts.example.test")
       .expect(204);
+  });
+
+  it("discards spoofable forwarded headers unless a proxy is trusted", async () => {
+    const seen: Array<Record<string, string | undefined>> = [];
+    const probe = Router().get("/api/v1/probe", (request, response) => {
+      seen.push({
+        forwardedFor: request.headers["x-forwarded-for"] as string | undefined,
+        realIp: request.headers["x-real-ip"] as string | undefined,
+      });
+      response.status(204).end();
+    });
+
+    // Default: no proxy in front, so a caller cannot dictate its own IP.
+    // Better Auth reads these headers to key per-IP auth throttling, so a
+    // preserved value would let a client rotate it to evade the limit.
+    await request(createApp({ routers: [probe] }))
+      .get("/api/v1/probe")
+      .set("x-forwarded-for", "203.0.113.9")
+      .set("x-real-ip", "203.0.113.9")
+      .expect(204);
+    expect(seen[0]?.forwardedFor).toBeUndefined();
+    expect(seen[0]?.realIp).not.toBe("203.0.113.9");
+    expect(seen[0]?.realIp).toBeDefined();
+
+    // Behind a proxy that overwrites them, the forwarded values are authoritative.
+    await request(createApp({ routers: [probe], trustProxy: true }))
+      .get("/api/v1/probe")
+      .set("x-forwarded-for", "203.0.113.9")
+      .set("x-real-ip", "203.0.113.9")
+      .expect(204);
+    expect(seen[1]).toEqual({
+      forwardedFor: "203.0.113.9",
+      realIp: "203.0.113.9",
+    });
   });
 
   it("reports readiness failures without changing liveness", async () => {

@@ -11,6 +11,10 @@ export default tseslint.config(
       "**/node_modules/**",
       "**/playwright-report/**",
       "**/test-results/**",
+      // Flat config walks dot-directories, so a local tool directory in the
+      // repo root (.claude, .idea, .venv) gets linted and can exhaust the heap
+      // before reporting anything useful. No tracked source lives under one.
+      ".*/**",
     ],
   },
   eslint.configs.recommended,

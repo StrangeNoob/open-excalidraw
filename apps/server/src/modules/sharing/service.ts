@@ -90,6 +90,7 @@ export class SharingService {
       role: input.role,
       tokenHash: tokenHash(token),
       expiresAt: new Date(Date.now() + this.#invitationLifetimeMs),
+      requireVerifiedEmail: this.#requireVerifiedEmail,
       ...(auditRequestId ? { auditRequestId } : {}),
     });
     if (result.status === "not-found") throw notFound();
