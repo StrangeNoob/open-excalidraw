@@ -332,8 +332,13 @@ const staticDirectory =
   (process.env.NODE_ENV === "production"
     ? productionStaticDirectory()
     : undefined);
+// Opt-in: only a proxy that overwrites the forwarded headers makes them
+// trustworthy. Defaulting off means a directly exposed port cannot have its
+// per-IP auth throttling bypassed by a spoofed header.
+const trustProxy = process.env.TRUST_PROXY === "true";
 const app = createApp({
   allowedOrigins: allowedBrowserOrigins,
+  trustProxy,
   readiness: async () => {
     await database.pool.query("SELECT 1");
   },

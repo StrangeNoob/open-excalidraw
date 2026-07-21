@@ -20,6 +20,13 @@ export interface CreateAppOptions {
   readiness?: () => Promise<void>;
   routers?: readonly RequestHandler[];
   staticDirectory?: string;
+  /**
+   * Set only when a reverse proxy that overwrites `x-forwarded-for` and
+   * `x-real-ip` sits in front. Defaults to false: without such a proxy those
+   * headers are attacker-controlled, and trusting them would let a client
+   * rotate them to evade per-IP throttling on authentication routes.
+   */
+  trustProxy?: boolean;
 }
 
 /**
@@ -47,6 +54,7 @@ export const createApp = ({
   readiness,
   routers = [],
   staticDirectory,
+  trustProxy = false,
 }: CreateAppOptions = {}): Express => {
   const app = express();
 
@@ -93,6 +101,14 @@ export const createApp = ({
     next();
   });
   app.use((request, _response, next) => {
+    if (!trustProxy) {
+      // Nothing trustworthy sits in front, so these are just client input.
+      // Discarding them before anything downstream reads them stops a caller
+      // from rotating the header to look like a new IP each request and so
+      // slipping past the per-IP limits on the authentication routes.
+      delete request.headers["x-forwarded-for"];
+      delete request.headers["x-real-ip"];
+    }
     if (!request.headers["x-real-ip"] && request.socket.remoteAddress) {
       request.headers["x-real-ip"] = request.socket.remoteAddress;
     }

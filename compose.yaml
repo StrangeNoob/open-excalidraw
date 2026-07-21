@@ -43,6 +43,10 @@ services:
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
       APP_PORT: 3000
       SOCKET_ALLOWED_ORIGINS: ${SOCKET_ALLOWED_ORIGINS:-}
+      # Enable when a reverse proxy that overwrites the forwarded headers is in
+      # front, such as the bundled `https` Caddy profile. Off by default so a
+      # directly published port cannot be handed a spoofed client IP.
+      TRUST_PROXY: ${TRUST_PROXY:-false}
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?Set BETTER_AUTH_SECRET in .env}
       ADMIN_RESET_TOKEN: ${ADMIN_RESET_TOKEN:-}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}

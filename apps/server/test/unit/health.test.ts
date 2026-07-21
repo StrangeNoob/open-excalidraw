@@ -101,6 +101,40 @@ describe("health endpoint", () => {
       .expect(204);
   });
 
+  it("discards spoofable forwarded headers unless a proxy is trusted", async () => {
+    const seen: Array<Record<string, string | undefined>> = [];
+    const probe = Router().get("/api/v1/probe", (request, response) => {
+      seen.push({
+        forwardedFor: request.headers["x-forwarded-for"] as string | undefined,
+        realIp: request.headers["x-real-ip"] as string | undefined,
+      });
+      response.status(204).end();
+    });
+
+    // Default: no proxy in front, so a caller cannot dictate its own IP.
+    // Better Auth reads these headers to key per-IP auth throttling, so a
+    // preserved value would let a client rotate it to evade the limit.
+    await request(createApp({ routers: [probe] }))
+      .get("/api/v1/probe")
+      .set("x-forwarded-for", "203.0.113.9")
+      .set("x-real-ip", "203.0.113.9")
+      .expect(204);
+    expect(seen[0]?.forwardedFor).toBeUndefined();
+    expect(seen[0]?.realIp).not.toBe("203.0.113.9");
+    expect(seen[0]?.realIp).toBeDefined();
+
+    // Behind a proxy that overwrites them, the forwarded values are authoritative.
+    await request(createApp({ routers: [probe], trustProxy: true }))
+      .get("/api/v1/probe")
+      .set("x-forwarded-for", "203.0.113.9")
+      .set("x-real-ip", "203.0.113.9")
+      .expect(204);
+    expect(seen[1]).toEqual({
+      forwardedFor: "203.0.113.9",
+      realIp: "203.0.113.9",
+    });
+  });
+
   it("reports readiness failures without changing liveness", async () => {
     const app = createApp({
       readiness: () => Promise.reject(new Error("database unavailable")),
