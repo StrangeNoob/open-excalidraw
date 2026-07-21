@@ -8,6 +8,10 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-open_excalidraw}
       POSTGRES_USER: ${POSTGRES_USER:-open_excalidraw}
+      # Required via the DATABASE_URL fallback below rather than here: Compose
+      # interpolates every service before profile filtering, so a `:?` on this
+      # line would also fire for managed-database deployments where this
+      # service never starts and no password is needed.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
     volumes:
       - postgres-data:/var/lib/postgresql/data
@@ -42,7 +46,11 @@ services:
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?Set BETTER_AUTH_SECRET in .env}
       ADMIN_RESET_TOKEN: ${ADMIN_RESET_TOKEN:-}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
-      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-open_excalidraw}:${POSTGRES_PASSWORD:-}@postgres:5432/${POSTGRES_DB:-open_excalidraw}}
+      # This fallback is evaluated only when DATABASE_URL is unset, i.e. exactly
+      # the bundled-PostgreSQL path, so requiring the password here fails fast
+      # with a clear message instead of building a passwordless DSN and leaving
+      # the operator with an opaque container init error.
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-open_excalidraw}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD for the bundled database, or DATABASE_URL for a managed one}@postgres:5432/${POSTGRES_DB:-open_excalidraw}}
       STORAGE_DRIVER: local
       STORAGE_LOCAL_PATH: /data/assets
       MAINTENANCE_INTERVAL_MS: ${MAINTENANCE_INTERVAL_MS:-21600000}
