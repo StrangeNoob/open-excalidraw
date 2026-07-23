@@ -5,7 +5,7 @@ import {
   type Database,
   type DrawingAsset,
 } from "@open-excalidraw/database";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 
 import { AssetTombstoneConflictError } from "./errors.js";
 import type {
@@ -14,6 +14,7 @@ import type {
   AssetRepository,
   InsertAssetResult,
   NewAssetRecord,
+  QuotaContext,
 } from "./types.js";
 
 function mapAsset(asset: DrawingAsset): AssetRecord {
@@ -73,6 +74,48 @@ export class DrizzleAssetRepository implements AssetRepository {
       .where(and(eq(drawings.id, drawingId), isNull(drawings.deletedAt)))
       .returning({ id: drawings.id });
     return updated.length === 1;
+  }
+
+  public async getQuotaContext(
+    drawingId: string,
+  ): Promise<QuotaContext | null> {
+    // One query: owner + override + global setting + the owner's total active
+    // asset bytes across all their drawings (trashed included). LEFT JOIN
+    // app_settings tolerates a missing settings row (treated as no global).
+    // pg returns bigint as string, so every numeric column is converted below.
+    const result = await this.database.execute<{
+      owner_user_id: string;
+      used_bytes: string;
+      owner_quota_override_bytes: string | null;
+      global_quota_bytes: string | null;
+    }>(sql`
+      SELECT
+        d.owner_user_id AS owner_user_id,
+        u.storage_quota_bytes AS owner_quota_override_bytes,
+        s.storage_quota_per_user_bytes AS global_quota_bytes,
+        (SELECT coalesce(sum(a.byte_size), 0)
+           FROM drawing_assets a
+           JOIN drawings d2 ON d2.id = a.drawing_id
+           WHERE d2.owner_user_id = d.owner_user_id
+             AND a.deleted_at IS NULL) AS used_bytes
+      FROM drawings d
+      JOIN "user" u ON u.id = d.owner_user_id
+      LEFT JOIN app_settings s ON s.id = true
+      WHERE d.id = ${drawingId}
+    `);
+
+    const row = result.rows[0];
+    if (!row) return null;
+    return {
+      ownerUserId: row.owner_user_id,
+      usedBytes: Number(row.used_bytes),
+      ownerQuotaOverrideBytes:
+        row.owner_quota_override_bytes === null
+          ? null
+          : Number(row.owner_quota_override_bytes),
+      globalQuotaBytes:
+        row.global_quota_bytes === null ? null : Number(row.global_quota_bytes),
+    };
   }
 
   public async findAsset(

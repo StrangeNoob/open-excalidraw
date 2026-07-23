@@ -9,7 +9,10 @@
  */
 import {
   adminOverviewSchema,
+  adminSettingsSchema,
+  adminSettingsUpdateSchema,
   adminUserListSchema,
+  adminUserQuotaUpdateSchema,
   adminUserSchema,
   assetMetadataSchema,
   authCapabilitiesSchema,
@@ -45,8 +48,11 @@ import { z } from "zod";
 /** OpenAPI component name → the zod contract it mirrors. */
 const contractSchemas = {
   AdminOverview: adminOverviewSchema,
+  AdminSettings: adminSettingsSchema,
+  AdminSettingsUpdate: adminSettingsUpdateSchema,
   AdminUser: adminUserSchema,
   AdminUserList: adminUserListSchema,
+  AdminUserQuotaUpdate: adminUserQuotaUpdateSchema,
   AssetMetadata: assetMetadataSchema,
   AuthCapabilities: authCapabilitiesSchema,
   ChatHistoryResponse: chatHistoryResponseSchema,
@@ -342,6 +348,56 @@ export const openApiDocument = {
           "200": json("The matching users.", ref("AdminUserList")),
           "401": unauthorized,
           "403": problem("Administrator access is required."),
+        },
+      },
+    },
+    "/api/v1/admin/settings": {
+      get: {
+        tags: ["Admin"],
+        summary: "Read instance settings",
+        description:
+          "The instance-wide per-user storage quota and the read-only " +
+          "`STORAGE_QUOTA_PER_USER_BYTES` environment fallback. `null` means " +
+          "unlimited.",
+        responses: {
+          "200": json("Instance settings.", ref("AdminSettings")),
+          "401": unauthorized,
+          "403": problem("Administrator access is required."),
+        },
+      },
+      patch: {
+        tags: ["Admin"],
+        summary: "Update instance settings",
+        description:
+          "Sets the instance-wide per-user storage quota (bytes), overriding " +
+          "the environment fallback. `null` clears the override and falls " +
+          "back to the environment value (unlimited only when that is also " +
+          "unset). Writes an audit event.",
+        requestBody: jsonBody(ref("AdminSettingsUpdate")),
+        responses: {
+          "200": json("Updated settings.", ref("AdminSettings")),
+          "400": problem("Request validation failed."),
+          "401": unauthorized,
+          "403": problem("Administrator access is required."),
+        },
+      },
+    },
+    "/api/v1/admin/users/{userId}/quota": {
+      parameters: [adminUserIdParameter],
+      patch: {
+        tags: ["Admin"],
+        summary: "Set a user's storage quota override",
+        description:
+          "Sets or clears (`null`) the user's per-user storage quota override " +
+          "in bytes, which takes precedence over the instance-wide setting. " +
+          "Writes an audit event.",
+        requestBody: jsonBody(ref("AdminUserQuotaUpdate")),
+        responses: {
+          "200": json("The updated user.", ref("AdminUser")),
+          "400": problem("Request validation failed."),
+          "401": unauthorized,
+          "403": problem("Administrator access is required."),
+          "404": problem("User not found."),
         },
       },
     },
@@ -1056,7 +1112,10 @@ export const openApiDocument = {
           "401": unauthorized,
           "403": forbidden,
           "404": notFound,
-          "413": problem("`ASSET_TOO_LARGE`: exceeds the size limit."),
+          "413": problem(
+            "`ASSET_TOO_LARGE`: exceeds the size limit, or " +
+              "`STORAGE_QUOTA_EXCEEDED`: the owner's storage quota is full.",
+          ),
         },
       },
       get: {

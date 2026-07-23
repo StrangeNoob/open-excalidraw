@@ -36,6 +36,13 @@ export const adminUserSchema = z
       .int()
       .nonnegative()
       .meta({ description: "Active drawings the user owns." }),
+    storageBytes: z.number().int().nonnegative().meta({
+      description: "Bytes of active assets across drawings the user owns.",
+    }),
+    storageQuotaBytes: z.number().int().positive().nullable().meta({
+      description:
+        "Per-user storage quota override in bytes; null falls back to the instance default.",
+    }),
   })
   .strict();
 
@@ -48,6 +55,34 @@ export const adminUserListSchema = z
   })
   .strict();
 
+export const adminSettingsSchema = z
+  .object({
+    storageQuotaPerUserBytes: z.number().int().positive().nullable().meta({
+      description:
+        "Instance-wide per-user storage quota in bytes; null falls back to the STORAGE_QUOTA_PER_USER_BYTES environment default.",
+    }),
+    envFallbackBytes: z.number().int().positive().nullable().meta({
+      description:
+        "Read-only STORAGE_QUOTA_PER_USER_BYTES environment default; null means unlimited.",
+    }),
+  })
+  .strict();
+
+export const adminSettingsUpdateSchema = z
+  .object({
+    storageQuotaPerUserBytes: z.number().int().positive().nullable(),
+  })
+  .strict();
+
+export const adminUserQuotaUpdateSchema = z
+  .object({
+    storageQuotaBytes: z.number().int().positive().nullable(),
+  })
+  .strict();
+
 export type AdminOverview = z.infer<typeof adminOverviewSchema>;
 export type AdminUser = z.infer<typeof adminUserSchema>;
 export type AdminUserList = z.infer<typeof adminUserListSchema>;
+export type AdminSettings = z.infer<typeof adminSettingsSchema>;
+export type AdminSettingsUpdate = z.infer<typeof adminSettingsUpdateSchema>;
+export type AdminUserQuotaUpdate = z.infer<typeof adminUserQuotaUpdateSchema>;

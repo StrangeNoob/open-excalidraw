@@ -65,17 +65,24 @@ export interface AssetServiceOptions {
   repository: AssetRepository;
   storage: ObjectStorage;
   maxAssetBytes?: number;
+  /**
+   * Env-configured per-user quota fallback (bytes), used only when neither the
+   * owner override nor the global app_settings value is set. null = unlimited.
+   */
+  defaultStorageQuotaBytes?: number | null;
 }
 
 export class AssetService {
   readonly #repository: AssetRepository;
   readonly #storage: ObjectStorage;
   readonly #maxAssetBytes: number;
+  readonly #defaultStorageQuotaBytes: number | null;
 
   public constructor(options: AssetServiceOptions) {
     this.#repository = options.repository;
     this.#storage = options.storage;
     this.#maxAssetBytes = options.maxAssetBytes ?? DEFAULT_MAX_ASSET_BYTES;
+    this.#defaultStorageQuotaBytes = options.defaultStorageQuotaBytes ?? null;
 
     if (
       !Number.isSafeInteger(this.#maxAssetBytes) ||
@@ -83,10 +90,23 @@ export class AssetService {
     ) {
       throw new RangeError("maxAssetBytes must be a positive safe integer");
     }
+    if (
+      this.#defaultStorageQuotaBytes !== null &&
+      (!Number.isSafeInteger(this.#defaultStorageQuotaBytes) ||
+        this.#defaultStorageQuotaBytes <= 0)
+    ) {
+      throw new RangeError(
+        "defaultStorageQuotaBytes must be a positive safe integer",
+      );
+    }
   }
 
   public get maxAssetBytes() {
     return this.#maxAssetBytes;
+  }
+
+  public get defaultStorageQuotaBytes() {
+    return this.#defaultStorageQuotaBytes;
   }
 
   public async upload(input: UploadAssetInput): Promise<UploadAssetResult> {
@@ -153,6 +173,11 @@ export class AssetService {
       }
       return { asset: existing, created: false };
     }
+
+    // Quota is charged only on the new-insert path, after the dedupe shortcut
+    // above returns: re-uploading already-stored bytes (offline outbox replays)
+    // must never 413 even when the owner is over quota.
+    await this.#assertWithinQuota(input.drawingId, input.bytes.byteLength);
 
     const storageKey = assetStorageKey(input.drawingId, input.fileId);
     let blobCreated = false;
@@ -408,6 +433,41 @@ export class AssetService {
       !(await this.#repository.setThumbnailUpdatedAt(input.drawingId, null))
     ) {
       throw drawingNotFound();
+    }
+  }
+
+  async #assertWithinQuota(
+    drawingId: string,
+    incomingBytes: number,
+  ): Promise<void> {
+    let quota;
+    try {
+      quota = await this.#repository.getQuotaContext(drawingId);
+    } catch (error) {
+      throw mapStorageError(error, this.#maxAssetBytes);
+    }
+    // Null means the drawing vanished after the access check; the insert path
+    // re-checks existence and returns 404, so there is nothing to charge here.
+    if (!quota) return;
+
+    const effective =
+      quota.ownerQuotaOverrideBytes ??
+      quota.globalQuotaBytes ??
+      this.#defaultStorageQuotaBytes;
+    if (effective === null) return;
+
+    // ponytail: usedBytes is read before the put, so N concurrent uploads can
+    // overshoot by up to N*maxAssetBytes total before the next upload is
+    // rejected. Bounded and self-correcting; add per-owner advisory locks only
+    // if strict enforcement ever matters.
+    if (quota.usedBytes + incomingBytes > effective) {
+      throw assetError(
+        413,
+        "STORAGE_QUOTA_EXCEEDED",
+        "Storage quota exceeded",
+        "The drawing owner's storage quota is full. Emptying the trash and " +
+          "letting deleted drawings purge frees space.",
+      );
     }
   }
 

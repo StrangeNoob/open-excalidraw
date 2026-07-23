@@ -78,6 +78,21 @@ class MemoryAssetRepository implements AssetRepository {
     return Promise.resolve(this.assets.get(`${drawingId}:${fileId}`) ?? null);
   }
 
+  // Unlimited: the HTTP-boundary suite exercises quotas end-to-end against a
+  // real database below; here every drawing's owner has no configured limit.
+  public getQuotaContext(drawingId: string) {
+    const ownerEntry = [...this.access.entries()].find(
+      ([key, role]) => key.startsWith(`${drawingId}:`) && role === "owner",
+    );
+    if (!ownerEntry) return Promise.resolve(null);
+    return Promise.resolve({
+      ownerUserId: ownerEntry[0].slice(`${drawingId}:`.length),
+      usedBytes: 0,
+      ownerQuotaOverrideBytes: null,
+      globalQuotaBytes: null,
+    });
+  }
+
   public insertAsset(asset: NewAssetRecord): Promise<InsertAssetResult> {
     if (this.failInsert) {
       throw new Error("database unavailable");
@@ -640,6 +655,212 @@ describeDatabase("asset commit authorization fence", () => {
     await expect(
       localStorage.stat(`drawings/${drawingId}/assets/${fileId}`),
     ).resolves.toMatchObject({ sha256: checksum(PNG) });
+  });
+});
+
+describeDatabase("storage quota enforcement", () => {
+  const database = createDatabase(databaseUrl ?? "postgresql://unused");
+  const unit = PNG.byteLength;
+  const createdUsers: string[] = [];
+  const createdDrawings: string[] = [];
+  let directory: string;
+
+  beforeAll(async () => {
+    await runMigrations({ pool: database.pool });
+    directory = await mkdtemp(join(tmpdir(), "open-excalidraw-asset-quota-"));
+  });
+
+  afterEach(async () => {
+    // app_settings is a shared single row; reset to unlimited between cases.
+    await database.pool.query(
+      `UPDATE app_settings SET storage_quota_per_user_bytes = NULL WHERE id = true`,
+    );
+  });
+
+  afterAll(async () => {
+    if (createdDrawings.length > 0) {
+      await database.pool.query(
+        `DELETE FROM drawings WHERE id = ANY($1::uuid[])`,
+        [createdDrawings],
+      );
+    }
+    if (createdUsers.length > 0) {
+      await database.pool.query(
+        `DELETE FROM "user" WHERE id = ANY($1::uuid[])`,
+        [createdUsers],
+      );
+    }
+    await database.pool.query(
+      `UPDATE app_settings SET storage_quota_per_user_bytes = NULL WHERE id = true`,
+    );
+    await database.close();
+    await rm(directory, { force: true, recursive: true });
+  });
+
+  async function makeUser(): Promise<string> {
+    const id = randomUUID();
+    createdUsers.push(id);
+    await database.pool.query(
+      `INSERT INTO "user" (id, name, email, email_verified)
+       VALUES ($1, 'Quota User', $2, true)`,
+      [id, `${id}@example.test`],
+    );
+    return id;
+  }
+
+  async function makeDrawing(ownerId: string): Promise<string> {
+    const id = randomUUID();
+    createdDrawings.push(id);
+    const scene = JSON.stringify({
+      type: "excalidraw",
+      version: 2,
+      source: "test",
+      elements: [],
+      appState: {},
+    });
+    await database.pool.query(
+      `INSERT INTO drawings
+         (id, owner_user_id, title, scene, scene_format_version, scene_bytes)
+       VALUES ($1, $2, 'Quota', $3::jsonb, 1, $4)`,
+      [id, ownerId, scene, Buffer.byteLength(scene)],
+    );
+    return id;
+  }
+
+  function serviceFor(defaultStorageQuotaBytes?: number) {
+    return new AssetService({
+      repository: new DrizzleAssetRepository(database.db),
+      storage: new LocalObjectStorage({ rootDirectory: directory }),
+      ...(defaultStorageQuotaBytes === undefined
+        ? {}
+        : { defaultStorageQuotaBytes }),
+    });
+  }
+
+  const uploadTo = (
+    service: AssetService,
+    userId: string,
+    drawingId: string,
+    fileId: string,
+    bytes: Buffer = PNG,
+  ) =>
+    service.upload({
+      identity: { userId },
+      drawingId,
+      fileId,
+      declaredMimeType: "image/png",
+      expectedSha256: checksum(bytes),
+      fileVersion: null,
+      bytes,
+    });
+
+  const setGlobalQuota = (bytes: number | null) =>
+    database.pool.query(
+      `UPDATE app_settings SET storage_quota_per_user_bytes = $1 WHERE id = true`,
+      [bytes],
+    );
+
+  const setUserQuota = (userId: string, bytes: number | null) =>
+    database.pool.query(
+      `UPDATE "user" SET storage_quota_bytes = $2 WHERE id = $1`,
+      [userId, bytes],
+    );
+
+  it("enforces the global setting once usage would exceed it", async () => {
+    const owner = await makeUser();
+    const drawing = await makeDrawing(owner);
+    const service = serviceFor();
+    await setGlobalQuota(unit);
+
+    await expect(uploadTo(service, owner, drawing, "a")).resolves.toMatchObject(
+      { created: true },
+    );
+    await expect(uploadTo(service, owner, drawing, "b")).rejects.toMatchObject({
+      status: 413,
+      code: "STORAGE_QUOTA_EXCEEDED",
+    });
+  });
+
+  it("lets a per-user override lower the limit below the global setting", async () => {
+    const owner = await makeUser();
+    const drawing = await makeDrawing(owner);
+    const service = serviceFor();
+    await setGlobalQuota(unit * 1000);
+    await setUserQuota(owner, unit);
+
+    await expect(uploadTo(service, owner, drawing, "a")).resolves.toMatchObject(
+      { created: true },
+    );
+    await expect(uploadTo(service, owner, drawing, "b")).rejects.toMatchObject({
+      status: 413,
+      code: "STORAGE_QUOTA_EXCEEDED",
+    });
+  });
+
+  it("falls back to the env option when both DB values are null", async () => {
+    const owner = await makeUser();
+    const drawing = await makeDrawing(owner);
+    const service = serviceFor(unit);
+
+    await expect(uploadTo(service, owner, drawing, "a")).resolves.toMatchObject(
+      { created: true },
+    );
+    await expect(uploadTo(service, owner, drawing, "b")).rejects.toMatchObject({
+      status: 413,
+      code: "STORAGE_QUOTA_EXCEEDED",
+    });
+  });
+
+  it("never rejects an idempotent re-upload even when the owner is over quota", async () => {
+    const owner = await makeUser();
+    const drawing = await makeDrawing(owner);
+    const service = serviceFor();
+
+    await expect(uploadTo(service, owner, drawing, "a")).resolves.toMatchObject(
+      { created: true },
+    );
+    // Now clamp the quota below current usage: a new asset would 413, but the
+    // dedupe path for identical bytes must still succeed.
+    await setUserQuota(owner, 1);
+    await expect(uploadTo(service, owner, drawing, "b")).rejects.toMatchObject({
+      status: 413,
+      code: "STORAGE_QUOTA_EXCEEDED",
+    });
+    await expect(uploadTo(service, owner, drawing, "a")).resolves.toMatchObject(
+      { created: false },
+    );
+  });
+
+  it("charges the drawing owner, not the uploading editor", async () => {
+    const owner = await makeUser();
+    const editor = await makeUser();
+    const drawing = await makeDrawing(owner);
+    await database.pool.query(
+      `INSERT INTO drawing_members (drawing_id, user_id, role, created_by_user_id)
+       VALUES ($1, $2, 'editor', $3)`,
+      [drawing, editor, owner],
+    );
+    // The editor's own quota is generous; the owner's is exhausted. The editor's
+    // upload must be rejected against the owner's limit.
+    await setUserQuota(editor, unit * 1000);
+    await setUserQuota(owner, 1);
+
+    await expect(
+      uploadTo(serviceFor(), editor, drawing, "a"),
+    ).rejects.toMatchObject({ status: 413, code: "STORAGE_QUOTA_EXCEEDED" });
+  });
+
+  it("stores without limit when nothing is configured", async () => {
+    const owner = await makeUser();
+    const drawing = await makeDrawing(owner);
+    const service = serviceFor();
+
+    await expect(uploadTo(service, owner, drawing, "a")).resolves.toMatchObject(
+      { created: true },
+    );
+    await expect(uploadTo(service, owner, drawing, "b")).resolves.toMatchObject(
+      { created: true },
+    );
   });
 });
 

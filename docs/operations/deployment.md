@@ -150,6 +150,16 @@ denied. Verify via the SMTP verification email, or by signing in through
 Google/GitHub/OIDC (those providers supply a verified email). With SMTP disabled
 and password-only auth, admin access therefore requires an OAuth/OIDC account.
 
+Set `STORAGE_QUOTA_PER_USER_BYTES` to cap the storage each user may consume,
+measured as the active asset bytes across every drawing they own. The env value
+is the instance default; an admin can override it at runtime from the admin page
+(clearing the admin setting falls back to the env value, so storage is only
+unlimited when both are unset), and can set a per-user override that takes
+precedence over both. Uploads that would exceed the effective quota are rejected
+with `413 STORAGE_QUOTA_EXCEEDED`. Trashed drawings still count against the quota
+until they are purged, so emptying the trash frees space. Leave the variable
+unset for unlimited storage.
+
 Set `METRICS_TOKEN` to a long random string to enable `GET /metrics`, a
 Prometheus text-format endpoint authenticated with that value as a bearer
 token (`authorization: Bearer <token>` — Prometheus scrape configs support

@@ -1,4 +1,5 @@
 import {
+  bigint,
   boolean,
   customType,
   index,
@@ -42,6 +43,9 @@ export const user = pgTable(
     // NULL means active; a timestamp both flags and dates the disable.
     disabledAt: timestamp("disabled_at", { withTimezone: true }),
     twoFactorEnabled: boolean("two_factor_enabled").default(false).notNull(),
+    // Per-user storage quota override in bytes; NULL falls back to the instance
+    // default (app_settings, then the env fallback). mode "number": far below 2^53.
+    storageQuotaBytes: bigint("storage_quota_bytes", { mode: "number" }),
     ...timestamps,
   },
   (table) => [uniqueIndex("user_email_unique").on(table.email)],

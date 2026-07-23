@@ -178,10 +178,16 @@ const drawingRepository = new PostgresDrawingRepository(
 const drawingService = new DrawingService(drawingRepository);
 const adminEmails = parseAdminEmails(process.env.ADMIN_EMAILS);
 const metricsToken = process.env.METRICS_TOKEN?.trim();
+// Instance-wide per-user storage quota fallback (bytes). Unset/empty = null =
+// unlimited; the DB admin setting and per-user override take precedence.
+const storageQuotaPerUserBytes = positiveByteEnvironment(
+  "STORAGE_QUOTA_PER_USER_BYTES",
+);
 const adminService = new AdminService(
   new PostgresAdminRepository(database.pool, (input) =>
     drawingRepository.purge(input),
   ),
+  storageQuotaPerUserBytes,
 );
 const maintenanceJobs = new MaintenanceJobs(database.pool, storage);
 const maintenanceIntervalMs = positiveEnvironmentInteger(
@@ -250,6 +256,7 @@ maintenanceTimer.unref();
 const assetService = new AssetService({
   repository: new DrizzleAssetRepository(database.db),
   storage,
+  defaultStorageQuotaBytes: storageQuotaPerUserBytes,
 });
 const collaborationRepository = new PostgresMutationRepository(database.pool);
 const membershipResolver = {
@@ -456,6 +463,22 @@ function positiveEnvironmentInteger(name: string, fallback: number): number {
   // otherwise clamped to 1 ms, which would turn a typo into a tight loop.
   if (!Number.isSafeInteger(value) || value > 2_147_483_647) {
     throw new Error(`${name} must not exceed 2147483647`);
+  }
+  return value;
+}
+
+// Like positiveEnvironmentInteger but unset/empty yields null (unlimited) and
+// the ceiling is 2^53 rather than 2^31 — storage quotas are byte counts, not
+// timer delays, so gigabyte-scale values must not overflow a 32-bit clamp.
+function positiveByteEnvironment(name: string): number | null {
+  const raw = process.env[name]?.trim();
+  if (!raw) return null;
+  if (!/^[1-9]\d*$/.test(raw)) {
+    throw new Error(`${name} must be a positive base-10 integer`);
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value)) {
+    throw new Error(`${name} must be below 2^53`);
   }
   return value;
 }

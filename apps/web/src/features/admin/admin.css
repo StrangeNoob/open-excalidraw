@@ -28,6 +28,50 @@
   margin: 0.25rem 0 0;
 }
 
+.admin-settings {
+  background: var(--card);
+  border: 1.5px solid var(--ink);
+  border-radius: var(--wobble);
+  box-shadow: 3px 3px 0 var(--shadow);
+  margin: 0 0 2rem;
+  padding: 1rem 1.25rem;
+}
+
+.admin-settings h2 {
+  margin-top: 0;
+}
+
+.admin-settings-form {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.admin-settings-form label,
+.admin-quota-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.admin-settings-error,
+.admin-quota-error {
+  color: var(--danger-ink);
+}
+
+.admin-quota-form {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.admin-quota-form input {
+  max-width: 8rem;
+}
+
 .admin-search {
   display: flex;
   flex-direction: column;
