@@ -511,7 +511,11 @@ describe("DrawingPage", () => {
     expect(fixture.sources.recovery.get).toHaveBeenCalledWith(USER, DRAWING_A);
     expect(fixture.sources.outbox.list).toHaveBeenCalledWith(USER, DRAWING_A);
     // The reconciled outbox element (version 5) wins over the snapshot's (v1).
-    expect(captured.initialData?.elements).toEqual([element(5)]);
+    // waitFor: the capture is written by a passive effect, which can still be
+    // pending when the heading's commit becomes visible under CPU contention.
+    await waitFor(() =>
+      expect(captured.initialData?.elements).toEqual([element(5)]),
+    );
   });
 
   const captureInitialData = () => {
@@ -559,7 +563,12 @@ describe("DrawingPage", () => {
 
     await screen.findByRole("heading", { name: "Cached drawing" });
     // The locally stored blob is seeded into the editor's file cache…
-    expect(captured.initialData?.files?.image_1).toEqual(imageFile("image_1"));
+    // (waitFor: the capturing effect may lag the visible commit under load.)
+    await waitFor(() =>
+      expect(captured.initialData?.files?.image_1).toEqual(
+        imageFile("image_1"),
+      ),
+    );
     // …and is never fetched from the unreachable server. Settle any
     // asynchronously scheduled hydration before asserting the negative.
     await act(async () => {});
@@ -590,7 +599,12 @@ describe("DrawingPage", () => {
     );
 
     await screen.findByRole("heading", { name: "Cached drawing" });
-    expect(captured.initialData?.files?.image_1).toEqual(imageFile("image_1"));
+    // waitFor: the capturing effect may lag the visible commit under load.
+    await waitFor(() =>
+      expect(captured.initialData?.files?.image_1).toEqual(
+        imageFile("image_1"),
+      ),
+    );
     await act(async () => {});
     expect(fixture.sources.assets.download).not.toHaveBeenCalled();
   });

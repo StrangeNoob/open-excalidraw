@@ -468,10 +468,13 @@ describe("auth pages", () => {
       capabilities: { ...anonymousSession.capabilities, signupsDisabled: true },
     });
     renderAuthRoute("/login", disabled);
-    await screen.findByRole("button", { name: "Sign in" });
-    expect(
-      screen.queryByRole("link", { name: "Create an account" }),
-    ).not.toBeInTheDocument();
+    // waitFor: the form renders before the session capabilities apply, so the
+    // link from the initial commit may still be present on the first check.
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("link", { name: "Create an account" }),
+      ).not.toBeInTheDocument(),
+    );
   });
 
   it("preserves an invitation return path while email verification is pending", async () => {

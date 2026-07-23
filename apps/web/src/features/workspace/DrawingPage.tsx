@@ -317,37 +317,47 @@ export const DrawingPage = ({
     editorApiRef.current = editorApi;
   }, [editorApi]);
 
-  const captureThumbnailNow = useCallback(() => {
-    thumbnailTimerRef.current = null;
-    const api = editorApiRef.current;
-    // One capture chain at a time; the next edit re-arms the window rather
-    // than overlapping a slow capture.
-    if (!api || thumbnailInFlightRef.current) {
-      return;
-    }
-    const generation = thumbnailGenerationRef.current;
-    // Fire-and-forget: thumbnail failures must never surface or touch
-    // autosave/collaboration state.
-    const capture = resolved
-      .captureThumbnail(
-        api,
-        drawingId,
-        resolved.assets,
-        thumbnailShaRef.current,
-      )
-      .then((sha256) => {
-        if (generation === thumbnailGenerationRef.current) {
-          thumbnailShaRef.current = sha256;
-        }
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        if (thumbnailInFlightRef.current === capture) {
-          thumbnailInFlightRef.current = null;
-        }
-      });
-    thumbnailInFlightRef.current = capture;
-  }, [drawingId, resolved]);
+  const captureThumbnailNow = useCallback(
+    function fire() {
+      thumbnailTimerRef.current = null;
+      const api = editorApiRef.current;
+      // The arming onChange and setEditorApi land in the same commit, but the
+      // ref is only populated an effect-flush later — a timer that fires in
+      // that gap must retry, not silently drop the only pending capture.
+      if (!api) {
+        thumbnailTimerRef.current = setTimeout(fire, thumbnailDebounceMs);
+        return;
+      }
+      // One capture chain at a time; the next edit re-arms the window rather
+      // than overlapping a slow capture.
+      if (thumbnailInFlightRef.current) {
+        return;
+      }
+      const generation = thumbnailGenerationRef.current;
+      // Fire-and-forget: thumbnail failures must never surface or touch
+      // autosave/collaboration state.
+      const capture = resolved
+        .captureThumbnail(
+          api,
+          drawingId,
+          resolved.assets,
+          thumbnailShaRef.current,
+        )
+        .then((sha256) => {
+          if (generation === thumbnailGenerationRef.current) {
+            thumbnailShaRef.current = sha256;
+          }
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          if (thumbnailInFlightRef.current === capture) {
+            thumbnailInFlightRef.current = null;
+          }
+        });
+      thumbnailInFlightRef.current = capture;
+    },
+    [drawingId, resolved, thumbnailDebounceMs],
+  );
 
   // Trailing throttle: at most one capture per window, of the scene as it
   // is at fire time. Continuous drawing keeps refreshing instead of being
