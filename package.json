@@ -13,7 +13,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint . --max-warnings=0",
-    "test": "pnpm -r --if-present test",
+    "test": "pnpm -r --workspace-concurrency=1 --if-present test",
     "test:coverage": "pnpm -r --if-present test:coverage",
     "test:e2e": "pnpm --filter @open-excalidraw/web test:e2e",
     "test:integration": "pnpm -r --if-present test:integration",
