@@ -1,6 +1,7 @@
 import type {
   CreateDrawingRequest,
   DrawingListResponse,
+  DrawingSearchResponse,
   DrawingSummary,
   TrashListResponse,
 } from "@open-excalidraw/contracts";
@@ -20,6 +21,15 @@ export class DrawingService {
 
   public async list(userId: string): Promise<DrawingListResponse> {
     return toDrawingListResponse(await this.repository.listForUser(userId));
+  }
+
+  public async search(
+    userId: string,
+    query: string,
+  ): Promise<DrawingSearchResponse> {
+    return {
+      drawingIds: await this.repository.searchAccessible(userId, query),
+    };
   }
 
   public async create(

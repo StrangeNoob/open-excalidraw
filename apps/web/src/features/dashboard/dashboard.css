@@ -166,6 +166,14 @@
   rotate: 1.5deg;
 }
 
+.content-match-badge {
+  background: var(--green-wash);
+  border-color: var(--green-ink);
+  color: var(--green-ink);
+  rotate: 1.5deg;
+  text-transform: none;
+}
+
 .pending-badge {
   background: var(--highlight-wash);
   border-color: var(--danger-ink);
@@ -195,6 +203,14 @@
   font-size: 0.78rem;
   font-weight: 700;
   padding: 0.15rem 0.55rem;
+}
+
+.dashboard-search {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 2rem;
+  max-width: 28rem;
 }
 
 .tag-filter-bar {

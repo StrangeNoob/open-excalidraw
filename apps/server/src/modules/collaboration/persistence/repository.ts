@@ -9,6 +9,7 @@ import {
 } from "@open-excalidraw/contracts";
 import type { StoredScene } from "@open-excalidraw/database";
 
+import { updateDrawingSearchText } from "../../drawings/search-text.js";
 import { reconcileElements } from "../core/reconcile.js";
 import { SocketSecurityError } from "../security/errors.js";
 import { MutationPersistenceError } from "./errors.js";
@@ -179,6 +180,7 @@ export class PostgresMutationRepository implements MutationRepository {
           checkpointDue,
         ],
       );
+      await updateDrawingSearchText(client, input.binding.drawingId);
       await recordMutation(client, {
         drawingId: input.binding.drawingId,
         mutationId: input.event.mutationId,

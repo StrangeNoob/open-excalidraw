@@ -66,6 +66,8 @@ export interface DrawingRepository {
     drawingId: string,
     userId: string,
   ): Promise<AccessibleDrawing | null>;
+  /** Ids of the caller's accessible, non-trashed drawings matching `query`. */
+  searchAccessible(userId: string, query: string): Promise<string[]>;
   create(input: {
     ownerUserId: string;
     title: string;
