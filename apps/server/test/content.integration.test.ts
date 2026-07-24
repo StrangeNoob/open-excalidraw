@@ -181,6 +181,7 @@ describeDatabase("content persistence", () => {
           emailVerified: true,
           twoFactorEnabled: false,
           createdAt: new Date(),
+          authKind: "session",
           sessionId: randomUUID(),
           sessionExpiresAt: new Date(Date.now() + 60_000),
         }),

@@ -1,7 +1,11 @@
 import type { Role } from "@open-excalidraw/contracts";
 import type { IncomingHttpHeaders } from "node:http";
 
-import type { IdentityService, RequestIdentity } from "../../auth/identity.js";
+import type {
+  IdentityService,
+  RequestIdentity,
+  SessionIdentity,
+} from "../../auth/identity.js";
 import { SocketSecurityError } from "./errors.js";
 import type { StrictOriginPolicy } from "./origin.js";
 
@@ -76,11 +80,19 @@ export async function authorizeSocketJoin(
 export function assertActiveIdentity(
   identity: RequestIdentity | null,
   now: Date,
-): asserts identity is RequestIdentity {
+): asserts identity is SessionIdentity {
   if (!identity) {
     throw new SocketSecurityError(
       "SOCKET_UNAUTHENTICATED",
       "An authenticated session is required",
+    );
+  }
+  // A personal access token is for REST automation only; it carries no session
+  // and must never open a realtime collaboration socket.
+  if (identity.authKind === "token" || !identity.sessionExpiresAt) {
+    throw new SocketSecurityError(
+      "REALTIME_REQUIRES_SESSION",
+      "A personal access token cannot open a realtime session",
     );
   }
   if (

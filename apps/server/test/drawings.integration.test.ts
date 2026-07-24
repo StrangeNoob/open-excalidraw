@@ -540,6 +540,7 @@ function identityFor(userId: string): RequestIdentity {
     emailVerified: true,
     twoFactorEnabled: false,
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    authKind: "session",
     sessionId: randomUUID(),
     sessionExpiresAt: new Date("2027-01-01T00:00:00.000Z"),
   };

@@ -732,6 +732,7 @@ const committed = (
   }) as const;
 
 const identity = (userId: string): RequestIdentity => ({
+  authKind: "session",
   createdAt: new Date("2026-01-01T00:00:00.000Z"),
   email: `${userId}@example.test`,
   emailVerified: true,
