@@ -35,6 +35,36 @@ export function createAdminRouter(input: CreateAdminRouterInput): Router {
     }));
   });
 
+  router.get("/api/v1/admin/settings", (request, response) => {
+    void handle(request, response, input, async () => ({
+      status: 200,
+      body: await input.service.getSettings(),
+    }));
+  });
+
+  router.patch("/api/v1/admin/settings", (request, response) => {
+    void handle(request, response, input, async (identity, requestId) => ({
+      status: 200,
+      body: await input.service.updateSettings({
+        actorUserId: identity.userId,
+        requestId,
+        body: request.body,
+      }),
+    }));
+  });
+
+  router.patch("/api/v1/admin/users/:userId/quota", (request, response) => {
+    void handle(request, response, input, async (identity, requestId) => ({
+      status: 200,
+      body: await input.service.setUserQuota({
+        actorUserId: identity.userId,
+        targetUserId: request.params.userId,
+        requestId,
+        body: request.body,
+      }),
+    }));
+  });
+
   router.post("/api/v1/admin/users/:userId/disable", (request, response) => {
     void handle(request, response, input, async (identity, requestId) => {
       await input.service.disableUser({

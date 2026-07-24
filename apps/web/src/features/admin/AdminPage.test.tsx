@@ -1,7 +1,10 @@
 import type {
   AdminOverview,
+  AdminSettings,
+  AdminSettingsUpdate,
   AdminUser,
   AdminUserList,
+  AdminUserQuotaUpdate,
   SessionResponse,
 } from "@open-excalidraw/contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -23,6 +26,11 @@ import type { AdminApi } from "./admin-api";
 const CURRENT_USER_ID = "be21c1cd-a5d5-49f9-b9dd-a30e3cb80e09";
 const GRACE_ID = "00000000-0000-4000-8000-000000000002";
 
+const UNLIMITED_SETTINGS: AdminSettings = {
+  envFallbackBytes: null,
+  storageQuotaPerUserBytes: null,
+};
+
 const createAdminUser = (
   name: string,
   offset: number,
@@ -35,6 +43,8 @@ const createAdminUser = (
   emailVerified: true,
   id: `00000000-0000-4000-8000-${String(offset).padStart(12, "0")}`,
   name,
+  storageBytes: 0,
+  storageQuotaBytes: null,
   twoFactorEnabled: false,
   ...overrides,
 });
@@ -43,6 +53,7 @@ class FakeAdminApi implements AdminApi {
   overview: AdminOverview;
   users: AdminUser[];
   total: number;
+  settings: AdminSettings;
 
   readonly getOverview = vi.fn(() => Promise.resolve(this.overview));
   readonly listUsers = vi.fn((search: string): Promise<AdminUserList> => {
@@ -78,15 +89,35 @@ class FakeAdminApi implements AdminApi {
     this.users = this.users.filter((user) => user.id !== userId);
     return Promise.resolve();
   });
+  readonly getSettings = vi.fn(() => Promise.resolve(this.settings));
+  readonly updateSettings = vi.fn((input: AdminSettingsUpdate) => {
+    this.settings = { ...this.settings, ...input };
+    return Promise.resolve(this.settings);
+  });
+  readonly setUserQuota = vi.fn(
+    (userId: string, input: AdminUserQuotaUpdate) => {
+      let updated: AdminUser | undefined;
+      this.users = this.users.map((user) => {
+        if (user.id !== userId) return user;
+        updated = { ...user, storageQuotaBytes: input.storageQuotaBytes };
+        return updated;
+      });
+      return updated
+        ? Promise.resolve(updated)
+        : Promise.reject(new Error("User not found"));
+    },
+  );
 
   constructor(
     overview: AdminOverview,
     users: AdminUser[],
     total = users.length,
+    settings: AdminSettings = UNLIMITED_SETTINGS,
   ) {
     this.overview = overview;
     this.users = users;
     this.total = total;
+    this.settings = settings;
   }
 }
 
@@ -350,5 +381,123 @@ describe("AdminPage", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Network unavailable")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
+  });
+
+  it("loads, edits, and saves the instance-wide storage quota", async () => {
+    const user = userEvent.setup();
+    const api = new FakeAdminApi(
+      { drawings: 0, storageBytes: 0, users: 1 },
+      [createAdminUser("Grace", 2)],
+      1,
+      {
+        envFallbackBytes: 1_073_741_824,
+        storageQuotaPerUserBytes: 2_147_483_648,
+      },
+    );
+    renderAdmin(api);
+
+    const input = await screen.findByLabelText("Instance-wide quota (MB)");
+    await waitFor(() => expect(input).toHaveValue(2048));
+    // The override is effective and the env default is shown alongside it.
+    expect(screen.getByText("2 GB")).toBeInTheDocument();
+    expect(screen.getByText(/Environment default:\s*1 GB/)).toBeInTheDocument();
+
+    await user.clear(input);
+    await user.type(input, "512");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(api.updateSettings).toHaveBeenCalledWith({
+        storageQuotaPerUserBytes: 536_870_912,
+      }),
+    );
+    expect(await screen.findByText("512 MB")).toBeInTheDocument();
+  });
+
+  it("clears the instance-wide quota when the field is emptied", async () => {
+    const user = userEvent.setup();
+    const api = new FakeAdminApi(
+      { drawings: 0, storageBytes: 0, users: 0 },
+      [],
+      0,
+      { envFallbackBytes: null, storageQuotaPerUserBytes: 2_147_483_648 },
+    );
+    renderAdmin(api);
+
+    const input = await screen.findByLabelText("Instance-wide quota (MB)");
+    await waitFor(() => expect(input).toHaveValue(2048));
+
+    await user.clear(input);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(api.updateSettings).toHaveBeenCalledWith({
+        storageQuotaPerUserBytes: null,
+      }),
+    );
+  });
+
+  it("surfaces an error when saving the storage quota fails", async () => {
+    const user = userEvent.setup();
+    const api = new FakeAdminApi(
+      { drawings: 0, storageBytes: 0, users: 0 },
+      [],
+    );
+    api.updateSettings.mockRejectedValueOnce(new Error("Save failed"));
+    renderAdmin(api);
+
+    const input = await screen.findByLabelText("Instance-wide quota (MB)");
+    await user.type(input, "256");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText("Save failed")).toBeInTheDocument();
+  });
+
+  it("renders each user's storage usage and override", async () => {
+    const api = new FakeAdminApi({ drawings: 0, storageBytes: 0, users: 2 }, [
+      createAdminUser("Ada", 1, {
+        storageBytes: 1_288_490_189,
+        storageQuotaBytes: 2_147_483_648,
+      }),
+      createAdminUser("Grace", 2),
+    ]);
+    renderAdmin(api);
+
+    const adaCard = (await screen.findByText("Ada")).closest("article")!;
+    expect(within(adaCard).getByText(/1\.2 GB of 2 GB/)).toBeInTheDocument();
+
+    const graceCard = screen.getByText("Grace").closest("article")!;
+    expect(within(graceCard).getByText("0 B")).toBeInTheDocument();
+  });
+
+  it("sets and clears a user's storage quota override", async () => {
+    const user = userEvent.setup();
+    const api = new FakeAdminApi({ drawings: 0, storageBytes: 0, users: 1 }, [
+      createAdminUser("Grace", 2, { storageBytes: 5_242_880 }),
+    ]);
+    renderAdmin(api);
+
+    const card = (await screen.findByText("Grace")).closest("article")!;
+    await user.type(within(card).getByLabelText("Quota (MB)"), "100");
+    await user.click(within(card).getByRole("button", { name: "Save quota" }));
+
+    await waitFor(() =>
+      expect(api.setUserQuota).toHaveBeenCalledWith(GRACE_ID, {
+        storageQuotaBytes: 104_857_600,
+      }),
+    );
+    expect(await within(card).findByText(/of 100 MB/)).toBeInTheDocument();
+
+    await user.clear(within(card).getByLabelText("Quota (MB)"));
+    await user.click(within(card).getByRole("button", { name: "Save quota" }));
+
+    await waitFor(() =>
+      expect(api.setUserQuota).toHaveBeenLastCalledWith(GRACE_ID, {
+        storageQuotaBytes: null,
+      }),
+    );
+    await waitFor(() =>
+      expect(within(card).queryByText(/of 100 MB/)).not.toBeInTheDocument(),
+    );
   });
 });

@@ -6,7 +6,26 @@ import type {
 import type { Pool, PoolClient, QueryResultRow } from "pg";
 
 import { AdminDomainError } from "./errors.js";
-import type { AdminRepository, PurgeDrawing } from "./types.js";
+import type {
+  AdminRepository,
+  AdminStorageSettings,
+  PurgeDrawing,
+} from "./types.js";
+
+// Shared user projection: identity columns plus the two owner-scoped
+// aggregates (active drawing count and active asset bytes across every drawing
+// the user owns, trashed drawings included) and the per-user quota override.
+const ADMIN_USER_COLUMNS = `
+  u.id, u.name, u.email, u.email_verified, u.created_at, u.disabled_at,
+  u.two_factor_enabled, u.storage_quota_bytes,
+  (SELECT count(*) FROM drawings d
+     WHERE d.owner_user_id = u.id AND d.deleted_at IS NULL)
+    AS drawing_count,
+  (SELECT coalesce(sum(a.byte_size), 0)
+     FROM drawing_assets a
+     JOIN drawings d2 ON d2.id = a.drawing_id
+     WHERE d2.owner_user_id = u.id AND a.deleted_at IS NULL)
+    AS storage_bytes`;
 
 interface OverviewRow extends QueryResultRow {
   users: string;
@@ -22,8 +41,9 @@ interface UserRow extends QueryResultRow {
   created_at: Date;
   disabled_at: Date | null;
   two_factor_enabled: boolean;
+  storage_quota_bytes: string | null;
   drawing_count: string;
-  total: string;
+  storage_bytes: string;
 }
 
 export class PostgresAdminRepository implements AdminRepository {
@@ -57,13 +77,8 @@ export class PostgresAdminRepository implements AdminRepository {
     // (backslash is Postgres's default LIKE escape character).
     const search =
       input.search != null ? input.search.replace(/[\\%_]/g, "\\$&") : null;
-    const result = await this.pool.query<UserRow>(
-      `SELECT
-         u.id, u.name, u.email, u.email_verified, u.created_at, u.disabled_at,
-         u.two_factor_enabled,
-         (SELECT count(*) FROM drawings d
-            WHERE d.owner_user_id = u.id AND d.deleted_at IS NULL)
-           AS drawing_count,
+    const result = await this.pool.query<UserRow & { total: string }>(
+      `SELECT ${ADMIN_USER_COLUMNS},
          count(*) OVER () AS total
        FROM "user" u
        WHERE $1::text IS NULL
@@ -84,6 +99,100 @@ export class PostgresAdminRepository implements AdminRepository {
       userId,
     ]);
     return result.rowCount === 1;
+  }
+
+  public async getSettings(): Promise<AdminStorageSettings> {
+    const result = await this.pool.query<{
+      storage_quota_per_user_bytes: string | null;
+    }>(`SELECT storage_quota_per_user_bytes FROM app_settings WHERE id = true`);
+    return {
+      storageQuotaPerUserBytes: numericOrNull(
+        result.rows[0]?.storage_quota_per_user_bytes ?? null,
+      ),
+    };
+  }
+
+  public async updateSettings(input: {
+    actorUserId: string;
+    requestId: string;
+    storageQuotaPerUserBytes: number | null;
+  }): Promise<AdminStorageSettings> {
+    return this.transaction(async (client) => {
+      const before = await client.query<{
+        storage_quota_per_user_bytes: string | null;
+      }>(
+        `SELECT storage_quota_per_user_bytes FROM app_settings
+         WHERE id = true FOR UPDATE`,
+      );
+      const beforeValue = numericOrNull(
+        before.rows[0]?.storage_quota_per_user_bytes ?? null,
+      );
+      // Upsert so a missing settings row (should not happen; the migration seeds
+      // it) still writes rather than silently updating zero rows.
+      const updated = await client.query<{
+        storage_quota_per_user_bytes: string | null;
+      }>(
+        `INSERT INTO app_settings (id, storage_quota_per_user_bytes, updated_at)
+         VALUES (true, $1, now())
+         ON CONFLICT (id) DO UPDATE
+           SET storage_quota_per_user_bytes = EXCLUDED.storage_quota_per_user_bytes,
+               updated_at = now()
+         RETURNING storage_quota_per_user_bytes`,
+        [input.storageQuotaPerUserBytes],
+      );
+      const afterValue = numericOrNull(
+        updated.rows[0]?.storage_quota_per_user_bytes ?? null,
+      );
+      await insertAdminAudit(client, "admin.settings.updated", {
+        actorUserId: input.actorUserId,
+        requestId: input.requestId,
+        metadata: {
+          storageQuotaPerUserBytes: { before: beforeValue, after: afterValue },
+        },
+      });
+      return { storageQuotaPerUserBytes: afterValue };
+    });
+  }
+
+  public async setUserQuota(input: {
+    actorUserId: string;
+    targetUserId: string;
+    requestId: string;
+    storageQuotaBytes: number | null;
+  }): Promise<AdminUser> {
+    return this.transaction(async (client) => {
+      const before = await client.query<{ storage_quota_bytes: string | null }>(
+        `SELECT storage_quota_bytes FROM "user" WHERE id = $1 FOR UPDATE`,
+        [input.targetUserId],
+      );
+      if (before.rowCount === 0) {
+        throw new AdminDomainError("USER_NOT_FOUND", 404, "User not found");
+      }
+      const beforeValue = numericOrNull(
+        before.rows[0]?.storage_quota_bytes ?? null,
+      );
+      await client.query(
+        `UPDATE "user" SET storage_quota_bytes = $2 WHERE id = $1`,
+        [input.targetUserId, input.storageQuotaBytes],
+      );
+      await insertAdminAudit(client, "admin.user.quota_updated", {
+        actorUserId: input.actorUserId,
+        targetUserId: input.targetUserId,
+        requestId: input.requestId,
+        metadata: {
+          storageQuotaBytes: {
+            before: beforeValue,
+            after: input.storageQuotaBytes,
+          },
+        },
+      });
+      const row = await client.query<UserRow>(
+        `SELECT ${ADMIN_USER_COLUMNS} FROM "user" u WHERE u.id = $1`,
+        [input.targetUserId],
+      );
+      // The FOR UPDATE lock above guarantees the row still exists here.
+      return toAdminUser(row.rows[0]!);
+    });
   }
 
   public async disableUser(input: {
@@ -190,14 +299,15 @@ export class PostgresAdminRepository implements AdminRepository {
     });
   }
 
-  private async transaction(
-    operation: (client: PoolClient) => Promise<void>,
-  ): Promise<void> {
+  private async transaction<T>(
+    operation: (client: PoolClient) => Promise<T>,
+  ): Promise<T> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      await operation(client);
+      const result = await operation(client);
       await client.query("COMMIT");
+      return result;
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
@@ -217,15 +327,29 @@ function toAdminUser(row: UserRow): AdminUser {
     disabledAt: row.disabled_at ? row.disabled_at.toISOString() : null,
     twoFactorEnabled: row.two_factor_enabled,
     drawingCount: Number(row.drawing_count),
+    // ponytail: Number() caps at 2^53 bytes (~9 PB) per user; fine for one instance.
+    storageBytes: Number(row.storage_bytes),
+    storageQuotaBytes: numericOrNull(row.storage_quota_bytes),
   };
 }
 
-// The actor still exists (an admin acting on another user), so it carries the
-// FK column; the target lives in metadata since its row may be deleted.
+// pg returns bigint columns as strings; NULL stays NULL (unlimited).
+function numericOrNull(value: string | null): number | null {
+  return value === null ? null : Number(value);
+}
+
+// The actor still exists (an admin acting on another user or the instance), so
+// it carries the FK column; the target and any before/after values live in
+// metadata since a target row may later be deleted.
 async function insertAdminAudit(
   client: Pick<PoolClient, "query">,
   eventType: string,
-  input: { actorUserId: string; targetUserId: string; requestId: string },
+  input: {
+    actorUserId: string;
+    requestId: string;
+    targetUserId?: string;
+    metadata?: Record<string, unknown>;
+  },
 ): Promise<void> {
   await client.query(
     `INSERT INTO audit_events
@@ -235,7 +359,10 @@ async function insertAdminAudit(
       input.actorUserId,
       eventType,
       input.requestId,
-      JSON.stringify({ targetUserId: input.targetUserId }),
+      JSON.stringify({
+        ...(input.targetUserId ? { targetUserId: input.targetUserId } : {}),
+        ...(input.metadata ?? {}),
+      }),
     ],
   );
 }

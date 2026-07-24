@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   adminOverviewSchema,
+  adminSettingsSchema,
   adminUserListSchema,
+  adminUserQuotaUpdateSchema,
   adminUserSchema,
   chatHistoryResponseSchema,
   chatMessageEventSchema,
@@ -123,6 +125,8 @@ describe("admin contracts", () => {
     disabledAt: null,
     twoFactorEnabled: false,
     drawingCount: 3,
+    storageBytes: 4096,
+    storageQuotaBytes: null,
   };
 
   it("requires isAdmin on the current user", () => {
@@ -169,6 +173,32 @@ describe("admin contracts", () => {
     expect(
       adminUserListSchema.parse({ users: [adminUser], total: 1 }).users,
     ).toHaveLength(1);
+    expect(
+      adminUserSchema.parse({ ...adminUser, storageQuotaBytes: 1024 })
+        .storageQuotaBytes,
+    ).toBe(1024);
+  });
+
+  it("parses instance settings and rejects non-positive quotas", () => {
+    expect(
+      adminSettingsSchema.parse({
+        storageQuotaPerUserBytes: 1_073_741_824,
+        envFallbackBytes: null,
+      }).storageQuotaPerUserBytes,
+    ).toBe(1_073_741_824);
+    expect(
+      adminSettingsSchema.safeParse({
+        storageQuotaPerUserBytes: 0,
+        envFallbackBytes: null,
+      }).success,
+    ).toBe(false);
+    expect(
+      adminUserQuotaUpdateSchema.parse({ storageQuotaBytes: null })
+        .storageQuotaBytes,
+    ).toBeNull();
+    expect(
+      adminUserQuotaUpdateSchema.safeParse({ storageQuotaBytes: -1 }).success,
+    ).toBe(false);
   });
 
   it("rejects negative counts and unknown fields", () => {

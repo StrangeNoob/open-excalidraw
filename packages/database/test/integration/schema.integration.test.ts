@@ -109,6 +109,7 @@ describe("initial PostgreSQL migration", () => {
       "0010_user_libraries.sql",
       "0011_admin_user_management.sql",
       "0012_two_factor.sql",
+      "0013_storage_quotas.sql",
     ]);
     expect(second.alreadyApplied).toEqual(first.applied);
     expect(record.rows).toEqual(first.applied);
@@ -225,6 +226,31 @@ describe("database constraints", () => {
         "two_factor_secret_idx",
       ]),
     );
+  });
+
+  it("pins app_settings to one row and rejects non-positive quotas", async () => {
+    // The migration seeds exactly one row; a second insert trips the boolean PK.
+    await expect(
+      pool.query(`INSERT INTO app_settings (id) VALUES (true)`),
+    ).rejects.toMatchObject({ code: "23505" });
+
+    await expect(
+      pool.query(
+        `UPDATE app_settings SET storage_quota_per_user_bytes = 0 WHERE id = true`,
+      ),
+    ).rejects.toMatchObject({ code: "23514" });
+
+    // NULL is unlimited and always allowed.
+    await pool.query(
+      `UPDATE app_settings SET storage_quota_per_user_bytes = NULL WHERE id = true`,
+    );
+
+    const owner = await createUser();
+    await expect(
+      pool.query(`UPDATE "user" SET storage_quota_bytes = 0 WHERE id = $1`, [
+        owner,
+      ]),
+    ).rejects.toMatchObject({ code: "23514" });
   });
 
   it("rejects invalid member and invitation roles", async () => {

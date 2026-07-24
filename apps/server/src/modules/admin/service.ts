@@ -1,6 +1,10 @@
 import {
+  adminSettingsUpdateSchema,
+  adminUserQuotaUpdateSchema,
   uuidSchema,
   type AdminOverview,
+  type AdminSettings,
+  type AdminUser,
   type AdminUserList,
 } from "@open-excalidraw/contracts";
 
@@ -17,10 +21,59 @@ interface TargetAction {
 }
 
 export class AdminService {
-  public constructor(private readonly repository: AdminRepository) {}
+  public constructor(
+    private readonly repository: AdminRepository,
+    // The STORAGE_QUOTA_PER_USER_BYTES env default, surfaced read-only in
+    // settings responses; null = unlimited.
+    private readonly envFallbackBytes: number | null = null,
+  ) {}
 
   public getOverview(): Promise<AdminOverview> {
     return this.repository.overview();
+  }
+
+  public async getSettings(): Promise<AdminSettings> {
+    const { storageQuotaPerUserBytes } = await this.repository.getSettings();
+    return {
+      storageQuotaPerUserBytes,
+      envFallbackBytes: this.envFallbackBytes,
+    };
+  }
+
+  public async updateSettings(input: {
+    actorUserId: string;
+    requestId: string;
+    body: unknown;
+  }): Promise<AdminSettings> {
+    const { storageQuotaPerUserBytes } = adminSettingsUpdateSchema.parse(
+      input.body,
+    );
+    const updated = await this.repository.updateSettings({
+      actorUserId: input.actorUserId,
+      requestId: input.requestId,
+      storageQuotaPerUserBytes,
+    });
+    return {
+      storageQuotaPerUserBytes: updated.storageQuotaPerUserBytes,
+      envFallbackBytes: this.envFallbackBytes,
+    };
+  }
+
+  public async setUserQuota(input: {
+    actorUserId: string;
+    targetUserId: string;
+    requestId: string;
+    body: unknown;
+  }): Promise<AdminUser> {
+    const { storageQuotaBytes } = adminUserQuotaUpdateSchema.parse(input.body);
+    // Reject a malformed path id before it reaches a uuid-typed WHERE clause.
+    uuidSchema.parse(input.targetUserId);
+    return this.repository.setUserQuota({
+      actorUserId: input.actorUserId,
+      targetUserId: input.targetUserId,
+      requestId: input.requestId,
+      storageQuotaBytes,
+    });
   }
 
   public listUsers(query: {

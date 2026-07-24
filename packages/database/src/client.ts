@@ -17,10 +17,12 @@ import {
   drawings,
 } from "./schema/drawings.js";
 import { userLibraries } from "./schema/libraries.js";
+import { appSettings } from "./schema/settings.js";
 import { drawingInvitations, drawingMembers } from "./schema/sharing.js";
 
 export const schema = {
   account,
+  appSettings,
   auditEvents,
   chatMessages,
   drawingAssets,

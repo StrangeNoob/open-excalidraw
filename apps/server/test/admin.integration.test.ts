@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 
-import type { AdminOverview, AdminUserList } from "@open-excalidraw/contracts";
+import type {
+  AdminOverview,
+  AdminUser,
+  AdminUserList,
+} from "@open-excalidraw/contracts";
 import { createDatabase, runMigrations } from "@open-excalidraw/database";
 import type {
   ObjectStorage,
@@ -11,10 +15,12 @@ import express from "express";
 import request from "supertest";
 
 import {
+  AdminDomainError,
   AdminService,
   createAdminRouter,
   PostgresAdminRepository,
   type AdminRepository,
+  type AdminStorageSettings,
 } from "../src/modules/admin/index.js";
 import type {
   IdentityService,
@@ -242,6 +248,78 @@ describe("admin HTTP domain", () => {
       .set("x-test-user", adminId);
     expect(remove.status).toBe(404);
   });
+
+  it("reads and updates the instance storage quota setting", async () => {
+    const fixture = createFixture(5000);
+
+    const initial = await request(fixture.app)
+      .get("/api/v1/admin/settings")
+      .set("x-test-user", adminId);
+    expect(initial.status).toBe(200);
+    expect(initial.body).toEqual({
+      storageQuotaPerUserBytes: null,
+      envFallbackBytes: 5000,
+    });
+
+    const updated = await request(fixture.app)
+      .patch("/api/v1/admin/settings")
+      .set("x-test-user", adminId)
+      .send({ storageQuotaPerUserBytes: 12345 });
+    expect(updated.status).toBe(200);
+    expect(updated.body).toEqual({
+      storageQuotaPerUserBytes: 12345,
+      envFallbackBytes: 5000,
+    });
+
+    // Zero and negative quotas are rejected by the contract schema.
+    const invalid = await request(fixture.app)
+      .patch("/api/v1/admin/settings")
+      .set("x-test-user", adminId)
+      .send({ storageQuotaPerUserBytes: 0 });
+    expect(invalid.status).toBe(400);
+    expect(invalid.body.code).toBe("INVALID_REQUEST");
+
+    const anonymous = await request(fixture.app)
+      .patch("/api/v1/admin/settings")
+      .send({ storageQuotaPerUserBytes: 1 });
+    expect(anonymous.status).toBe(401);
+  });
+
+  it("sets and clears a user's storage quota override", async () => {
+    const fixture = createFixture();
+    const target = fixture.repository.seedUser({
+      name: "Quota",
+      email: "quota@example.test",
+    });
+
+    const set = await request(fixture.app)
+      .patch(`/api/v1/admin/users/${target}/quota`)
+      .set("x-test-user", adminId)
+      .send({ storageQuotaBytes: 4096 });
+    expect(set.status).toBe(200);
+    expect(set.body.id).toBe(target);
+    expect(set.body.storageQuotaBytes).toBe(4096);
+
+    const cleared = await request(fixture.app)
+      .patch(`/api/v1/admin/users/${target}/quota`)
+      .set("x-test-user", adminId)
+      .send({ storageQuotaBytes: null });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.storageQuotaBytes).toBeNull();
+
+    const invalid = await request(fixture.app)
+      .patch(`/api/v1/admin/users/${target}/quota`)
+      .set("x-test-user", adminId)
+      .send({ storageQuotaBytes: -1 });
+    expect(invalid.status).toBe(400);
+
+    const unknown = await request(fixture.app)
+      .patch(`/api/v1/admin/users/${randomUUID()}/quota`)
+      .set("x-test-user", adminId)
+      .send({ storageQuotaBytes: 4096 });
+    expect(unknown.status).toBe(404);
+    expect(unknown.body.code).toBe("USER_NOT_FOUND");
+  });
 });
 
 const databaseUrl = process.env.DATABASE_TEST_URL;
@@ -353,6 +431,16 @@ describeDatabase("admin persistence", () => {
     expect(overview.users - baseline.users).toBe(5);
     expect(overview.drawings - baseline.drawings).toBe(2);
     expect(overview.storageBytes - baseline.storageBytes).toBe(1234);
+  });
+
+  it("surfaces each user's owned storage usage and quota override in the list", async () => {
+    const listed = await service.listUsers({
+      search: `${targetId}@example.test`,
+    });
+    const user = listed.users.find((row) => row.id === targetId);
+    // targetId owns one drawing carrying a single 1234-byte active asset.
+    expect(user?.storageBytes).toBe(1234);
+    expect(user?.storageQuotaBytes).toBeNull();
   });
 
   it("escapes LIKE wildcards so search matches the term literally", async () => {
@@ -520,11 +608,91 @@ describeDatabase("admin persistence", () => {
     );
     expect(audit.rowCount).toBe(1);
   });
+
+  it("round-trips the instance storage setting and audits the change", async () => {
+    expect(await service.getSettings()).toEqual({
+      storageQuotaPerUserBytes: null,
+      envFallbackBytes: null,
+    });
+
+    const updated = await service.updateSettings({
+      actorUserId: actorId,
+      requestId,
+      body: { storageQuotaPerUserBytes: 500000 },
+    });
+    expect(updated).toEqual({
+      storageQuotaPerUserBytes: 500000,
+      envFallbackBytes: null,
+    });
+    expect((await service.getSettings()).storageQuotaPerUserBytes).toBe(500000);
+
+    // envFallbackBytes is the read-only env default threaded through the service.
+    const withEnv = new AdminService(repository, 999);
+    expect((await withEnv.getSettings()).envFallbackBytes).toBe(999);
+
+    const audit = await database.pool.query<{
+      metadata: {
+        storageQuotaPerUserBytes: { before: number | null; after: number };
+      };
+    }>(
+      `SELECT metadata FROM audit_events
+       WHERE event_type = 'admin.settings.updated' AND request_id = $1`,
+      [requestId],
+    );
+    expect(audit.rowCount).toBe(1);
+    expect(audit.rows[0]?.metadata.storageQuotaPerUserBytes).toEqual({
+      before: null,
+      after: 500000,
+    });
+
+    // Reset the shared single-row table to unlimited without another audit row.
+    await database.pool.query(
+      `UPDATE app_settings SET storage_quota_per_user_bytes = NULL WHERE id = true`,
+    );
+  });
+
+  it("sets and clears a user's quota override, returning usage and auditing both", async () => {
+    // otherId still exists (only targetId was deleted above) and owns no assets.
+    const set = await service.setUserQuota({
+      actorUserId: actorId,
+      targetUserId: otherId,
+      requestId,
+      body: { storageQuotaBytes: 8192 },
+    });
+    expect(set.id).toBe(otherId);
+    expect(set.storageQuotaBytes).toBe(8192);
+    expect(set.storageBytes).toBe(0);
+
+    const cleared = await service.setUserQuota({
+      actorUserId: actorId,
+      targetUserId: otherId,
+      requestId,
+      body: { storageQuotaBytes: null },
+    });
+    expect(cleared.storageQuotaBytes).toBeNull();
+
+    await expect(
+      service.setUserQuota({
+        actorUserId: actorId,
+        targetUserId: randomUUID(),
+        requestId,
+        body: { storageQuotaBytes: 1 },
+      }),
+    ).rejects.toMatchObject({ code: "USER_NOT_FOUND" });
+
+    const audit = await database.pool.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM audit_events
+       WHERE event_type = 'admin.user.quota_updated'
+         AND metadata->>'targetUserId' = $1`,
+      [otherId],
+    );
+    expect(audit.rows[0]?.n).toBe(2);
+  });
 });
 
-function createFixture() {
+function createFixture(envFallbackBytes: number | null = null) {
   const repository = new InMemoryAdminRepository();
-  const service = new AdminService(repository);
+  const service = new AdminService(repository, envFallbackBytes);
   const identity: IdentityService = {
     resolve(headers) {
       const header = (name: string): string | null =>
@@ -576,6 +744,8 @@ interface SeededUser {
   disabledAt: string | null;
   twoFactorEnabled: boolean;
   drawingCount: number;
+  storageBytes: number;
+  storageQuotaBytes: number | null;
 }
 
 class InMemoryAdminRepository implements AdminRepository {
@@ -609,6 +779,8 @@ class InMemoryAdminRepository implements AdminRepository {
       disabledAt: null,
       twoFactorEnabled: input.twoFactorEnabled ?? false,
       drawingCount: 0,
+      storageBytes: 0,
+      storageQuotaBytes: null,
     });
     return id;
   }
@@ -639,6 +811,35 @@ class InMemoryAdminRepository implements AdminRepository {
 
   public userExists(userId: string): Promise<boolean> {
     return Promise.resolve(this.users.has(userId));
+  }
+
+  public settings: AdminStorageSettings = { storageQuotaPerUserBytes: null };
+
+  public getSettings(): Promise<AdminStorageSettings> {
+    return Promise.resolve(this.settings);
+  }
+
+  public updateSettings(input: {
+    storageQuotaPerUserBytes: number | null;
+  }): Promise<AdminStorageSettings> {
+    this.settings = {
+      storageQuotaPerUserBytes: input.storageQuotaPerUserBytes,
+    };
+    return Promise.resolve(this.settings);
+  }
+
+  public setUserQuota(input: {
+    targetUserId: string;
+    storageQuotaBytes: number | null;
+  }): Promise<AdminUser> {
+    const user = this.users.get(input.targetUserId);
+    if (!user) {
+      return Promise.reject(
+        new AdminDomainError("USER_NOT_FOUND", 404, "User not found"),
+      );
+    }
+    user.storageQuotaBytes = input.storageQuotaBytes;
+    return Promise.resolve(user);
   }
 
   public disableUser(input: { targetUserId: string }): Promise<void> {
