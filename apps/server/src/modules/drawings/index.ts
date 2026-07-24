@@ -3,5 +3,6 @@ export * from "./policy.js";
 export * from "./purge.js";
 export * from "./repository.js";
 export * from "./router.js";
+export * from "./search-text.js";
 export * from "./service.js";
 export * from "./types.js";

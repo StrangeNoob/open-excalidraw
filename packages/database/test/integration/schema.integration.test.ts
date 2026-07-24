@@ -111,6 +111,7 @@ describe("initial PostgreSQL migration", () => {
       "0012_two_factor.sql",
       "0013_storage_quotas.sql",
       "0014_personal_access_tokens.sql",
+      "0015_drawing_search_texts.sql",
     ]);
     expect(second.alreadyApplied).toEqual(first.applied);
     expect(record.rows).toEqual(first.applied);
@@ -195,6 +196,7 @@ describe("database constraints", () => {
       "drawing_mutations.drawing_id->drawings.id (CASCADE)",
       "drawing_revisions.author_user_id->user.id (SET NULL)",
       "drawing_revisions.drawing_id->drawings.id (CASCADE)",
+      "drawing_search_texts.drawing_id->drawings.id (CASCADE)",
       "drawing_share_links.created_by_user_id->user.id (SET NULL)",
       "drawing_share_links.drawing_id->drawings.id (CASCADE)",
       "drawing_user_tags.drawing_id->drawings.id (CASCADE)",
@@ -228,6 +230,7 @@ describe("database constraints", () => {
         "two_factor_secret_idx",
         "personal_access_tokens_token_hash_unique",
         "personal_access_tokens_user_id_idx",
+        "drawing_search_texts_search_tsv_idx",
       ]),
     );
   });

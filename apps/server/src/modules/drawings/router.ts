@@ -1,5 +1,6 @@
 import {
   createDrawingRequestSchema,
+  drawingSearchQuerySchema,
   duplicateDrawingRequestSchema,
   setDrawingTagsRequestSchema,
   updateDrawingRequestSchema,
@@ -49,6 +50,14 @@ export function createDrawingRouter(input: CreateDrawingRouterInput): Router {
       status: 200,
       body: await input.service.listTrash(userId),
     }));
+  });
+
+  // Also before /:drawingId, so "search" is not parsed as a drawing id.
+  router.get("/api/v1/drawings/search", async (request, response) => {
+    await handle(request, response, input.identity, async (userId) => {
+      const { q } = drawingSearchQuerySchema.parse(request.query);
+      return { status: 200, body: await input.service.search(userId, q) };
+    });
   });
 
   router.get("/api/v1/drawings/:drawingId", async (request, response) => {

@@ -624,6 +624,12 @@ class InMemoryDrawingRepository implements DrawingRepository {
     return Promise.resolve(role ? { ...drawing, role, tags } : null);
   }
 
+  // ponytail: this fake stores no scene text, so search can't be exercised
+  // here; the real full-text behavior lives in drawings-search.integration.
+  public searchAccessible() {
+    return Promise.resolve([]);
+  }
+
   public replaceTags(input: {
     drawingId: string;
     userId: string;

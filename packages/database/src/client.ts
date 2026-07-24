@@ -17,6 +17,7 @@ import {
   drawings,
 } from "./schema/drawings.js";
 import { userLibraries } from "./schema/libraries.js";
+import { drawingSearchTexts } from "./schema/search.js";
 import { appSettings } from "./schema/settings.js";
 import { drawingInvitations, drawingMembers } from "./schema/sharing.js";
 import { personalAccessTokens } from "./schema/tokens.js";
@@ -31,6 +32,7 @@ export const schema = {
   drawingMembers,
   drawingMutations,
   drawingRevisions,
+  drawingSearchTexts,
   drawings,
   personalAccessTokens,
   session,

@@ -108,6 +108,23 @@ export const setDrawingTagsRequestSchema = z
   })
   .strict();
 
+export const drawingSearchQuerySchema = z
+  .object({
+    q: z.string().trim().min(1).max(200).meta({
+      description: "Free-text query over drawing content (websearch syntax).",
+    }),
+  })
+  .strict();
+
+export const drawingSearchResponseSchema = z
+  .object({
+    drawingIds: z.array(uuidSchema).meta({
+      description:
+        "Accessible, non-trashed drawings whose canvas text matches, ranked by relevance.",
+    }),
+  })
+  .strict();
+
 export type DrawingSummary = z.infer<typeof drawingSummarySchema>;
 export type DrawingListResponse = z.infer<typeof drawingListResponseSchema>;
 export type TrashedDrawing = z.infer<typeof trashedDrawingSchema>;
@@ -117,3 +134,5 @@ export type DuplicateDrawingRequest = z.infer<
   typeof duplicateDrawingRequestSchema
 >;
 export type SetDrawingTagsRequest = z.infer<typeof setDrawingTagsRequestSchema>;
+export type DrawingSearchQuery = z.infer<typeof drawingSearchQuerySchema>;
+export type DrawingSearchResponse = z.infer<typeof drawingSearchResponseSchema>;

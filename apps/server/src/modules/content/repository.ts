@@ -1,6 +1,7 @@
 import type { Pool, PoolClient, QueryResultRow } from "pg";
 
 import { insertAuditEvent } from "../audit.js";
+import { updateDrawingSearchText } from "../drawings/search-text.js";
 import type {
   ContentAccess,
   ContentRepository,
@@ -126,6 +127,7 @@ export class PostgresContentRepository implements ContentRepository {
       const savedAt = updated.rows[0]?.updated_at;
       if (!savedAt)
         throw new Error("Locked drawing disappeared during content save");
+      await updateDrawingSearchText(client, input.drawingId);
 
       await client.query(
         `UPDATE drawing_assets SET last_referenced_at = now()
@@ -266,6 +268,7 @@ export class PostgresContentRepository implements ContentRepository {
           nextRevision.toString(),
         ],
       );
+      await updateDrawingSearchText(client, input.drawingId);
       await insertRevision(client, {
         drawingId: input.drawingId,
         revision: nextRevision,

@@ -11,6 +11,7 @@ import {
 import { assetStorageKey, thumbnailStorageKey } from "../assets/service.js";
 import { insertAuditEvent } from "../audit.js";
 import { finalizeDrawingPurge, prepareDrawingPurge } from "./purge.js";
+import { updateDrawingSearchText } from "./search-text.js";
 import type {
   AccessibleDrawing,
   CreateDrawingResult,
@@ -105,6 +106,36 @@ export class PostgresDrawingRepository implements DrawingRepository {
     userId: string,
   ): Promise<AccessibleDrawing | null> {
     return findAccessibleWith(this.pool, drawingId, userId);
+  }
+
+  public async searchAccessible(
+    userId: string,
+    query: string,
+  ): Promise<string[]> {
+    // websearch_to_tsquery tolerates arbitrary user input (unbalanced quotes,
+    // stray operators) without raising, so no query sanitising is needed.
+    const result = await this.pool.query<{ id: string }>(
+      `
+        SELECT d.id
+        FROM drawing_search_texts st
+        JOIN drawings d ON d.id = st.drawing_id
+        WHERE d.deleted_at IS NULL
+          AND (
+            d.owner_user_id = $1
+            OR EXISTS (
+              SELECT 1 FROM drawing_members m
+              WHERE m.drawing_id = d.id AND m.user_id = $1
+            )
+          )
+          AND st.search_tsv @@ websearch_to_tsquery('simple', $2)
+        ORDER BY
+          ts_rank(st.search_tsv, websearch_to_tsquery('simple', $2)) DESC,
+          d.id
+        LIMIT 50
+      `,
+      [userId, query],
+    );
+    return result.rows.map((row) => row.id);
   }
 
   public async create(input: {
@@ -254,6 +285,9 @@ export class PostgresDrawingRepository implements DrawingRepository {
          WHERE a.drawing_id = $1 AND a.deleted_at IS NULL`,
         [input.sourceDrawingId, newId, input.ownerUserId],
       );
+      // The copied scene carries the source's text; index it. (Create seeds an
+      // empty scene, so its search row waits for the first content save.)
+      await updateDrawingSearchText(client, newId);
 
       const loaded = await findAccessibleWith(client, newId, input.ownerUserId);
       if (!loaded) {

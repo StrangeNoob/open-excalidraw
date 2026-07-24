@@ -5,7 +5,7 @@ import type {
   TrashedDrawing,
 } from "@open-excalidraw/contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 
@@ -129,6 +129,9 @@ class FakeDashboardApi implements DashboardApi {
     );
     return Promise.resolve(renamed);
   });
+  readonly searchDrawings = vi.fn<(query: string) => Promise<string[]>>(() =>
+    Promise.resolve([]),
+  );
   readonly setTags = vi.fn((drawing: DrawingSummary, tags: string[]) => {
     const tagged = { ...drawing, tags };
     this.data.owned = this.data.owned.map((candidate) =>
@@ -866,5 +869,184 @@ describe("DashboardPage", () => {
     expect(
       await screen.findByRole("link", { name: "Admin" }),
     ).toBeInTheDocument();
+  });
+
+  it("filters by title client-side for a short query without calling the server", async () => {
+    const user = userEvent.setup();
+    const api = new FakeDashboardApi({
+      nextCursor: null,
+      owned: [
+        createDrawing("owner", "Xylophone", 1),
+        createDrawing("owner", "Guitar", 2),
+      ],
+      shared: [],
+    });
+    renderDashboard(api);
+
+    await screen.findByText("Xylophone");
+    await user.type(screen.getByLabelText("Search drawings"), "x");
+
+    await waitFor(() =>
+      expect(screen.queryByText("Guitar")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText("Xylophone")).toBeInTheDocument();
+    // A single character stays under the server's 2-char floor.
+    expect(api.searchDrawings).not.toHaveBeenCalled();
+  });
+
+  it("merges server content matches and badges title-mismatched drawings", async () => {
+    const user = userEvent.setup();
+    const alpha = createDrawing("owner", "Alpha", 1);
+    const beta = createDrawing("owner", "Beta", 2);
+    const api = new FakeDashboardApi({
+      nextCursor: null,
+      owned: [alpha, beta],
+      shared: [],
+    });
+    api.searchDrawings.mockResolvedValue([beta.id]);
+    renderDashboard(api);
+
+    await screen.findByText("Alpha");
+    await user.type(screen.getByLabelText("Search drawings"), "diagram");
+
+    await waitFor(() =>
+      expect(api.searchDrawings).toHaveBeenCalledWith("diagram"),
+    );
+    // Beta's title does not match, but the server says its canvas text does —
+    // it stays, carrying the badge.
+    const betaCard = (await screen.findByText("Beta")).closest("article")!;
+    expect(
+      within(betaCard).getByText("Matches canvas text"),
+    ).toBeInTheDocument();
+    // Alpha matches neither title nor content, so it drops out.
+    await waitFor(() =>
+      expect(screen.queryByText("Alpha")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("ignores a stale search response so the newer query wins", async () => {
+    const user = userEvent.setup();
+    const one = createDrawing("owner", "First", 1);
+    const two = createDrawing("owner", "Second", 2);
+    const api = new FakeDashboardApi({
+      nextCursor: null,
+      owned: [one, two],
+      shared: [],
+    });
+    let resolveStale!: (ids: string[]) => void;
+    let resolveFresh!: (ids: string[]) => void;
+    api.searchDrawings
+      .mockReturnValueOnce(
+        new Promise<string[]>((resolve) => {
+          resolveStale = resolve;
+        }),
+      )
+      .mockReturnValueOnce(
+        new Promise<string[]>((resolve) => {
+          resolveFresh = resolve;
+        }),
+      );
+    renderDashboard(api);
+
+    await screen.findByText("First");
+    const box = screen.getByLabelText("Search drawings");
+    await user.type(box, "aa");
+    await waitFor(() => expect(api.searchDrawings).toHaveBeenCalledWith("aa"));
+    await user.type(box, "a");
+    await waitFor(() => expect(api.searchDrawings).toHaveBeenCalledWith("aaa"));
+
+    // The newer "aaa" query resolves first; the stale "aa" response lands after
+    // and must not overwrite it.
+    resolveFresh([two.id]);
+    await waitFor(() => expect(screen.getByText("Second")).toBeInTheDocument());
+    // Flush the stale response's handler so a broken guard would have rendered
+    // "First" by the assertions below.
+    await act(async () => {
+      resolveStale([one.id]);
+      await Promise.resolve();
+    });
+
+    const secondCard = screen.getByText("Second").closest("article")!;
+    expect(
+      within(secondCard).getByText("Matches canvas text"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("First")).not.toBeInTheDocument();
+  });
+
+  it("degrades to title filtering when the search request fails", async () => {
+    const user = userEvent.setup();
+    const findme = createDrawing("owner", "Findme", 1);
+    const other = createDrawing("owner", "Other", 2);
+    const api = new FakeDashboardApi({
+      nextCursor: null,
+      owned: [findme, other],
+      shared: [],
+    });
+    api.searchDrawings.mockRejectedValue(new Error("Failed to fetch"));
+    renderDashboard(api);
+
+    await screen.findByText("Findme");
+    await user.type(screen.getByLabelText("Search drawings"), "find");
+
+    await waitFor(() =>
+      expect(api.searchDrawings).toHaveBeenCalledWith("find"),
+    );
+    // The title match survives the failed request, and no error banner appears.
+    expect(screen.getByText("Findme")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByText("Other")).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("restores the full list when the search box is cleared", async () => {
+    const user = userEvent.setup();
+    const api = new FakeDashboardApi({
+      nextCursor: null,
+      owned: [
+        createDrawing("owner", "Keepers", 1),
+        createDrawing("owner", "Hidden", 2),
+      ],
+      shared: [],
+    });
+    renderDashboard(api);
+
+    await screen.findByText("Keepers");
+    const box = screen.getByLabelText("Search drawings");
+    await user.type(box, "keep");
+    await waitFor(() =>
+      expect(screen.queryByText("Hidden")).not.toBeInTheDocument(),
+    );
+
+    await user.clear(box);
+    expect(await screen.findByText("Hidden")).toBeInTheDocument();
+    expect(screen.getByText("Keepers")).toBeInTheDocument();
+  });
+
+  it("composes the tag filter with search", async () => {
+    const user = userEvent.setup();
+    const api = new FakeDashboardApi({
+      nextCursor: null,
+      owned: [
+        createDrawing("owner", "Sprint plan", 1, ["ideas"]),
+        createDrawing("owner", "Budget", 2, ["ideas"]),
+        createDrawing("owner", "Sprint retro", 3, ["work"]),
+      ],
+      shared: [],
+    });
+    renderDashboard(api);
+
+    await screen.findByText("Sprint plan");
+    const filterBar = screen.getByRole("navigation", { name: "Filter by tag" });
+    await user.click(within(filterBar).getByRole("button", { name: "ideas" }));
+    await user.type(screen.getByLabelText("Search drawings"), "sprint");
+
+    // Only the drawing tagged "ideas" that also matches "sprint" survives both.
+    await waitFor(() =>
+      expect(screen.queryByText("Budget")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText("Sprint plan")).toBeInTheDocument();
+    // "Sprint retro" matches the search but not the active tag.
+    expect(screen.queryByText("Sprint retro")).not.toBeInTheDocument();
   });
 });

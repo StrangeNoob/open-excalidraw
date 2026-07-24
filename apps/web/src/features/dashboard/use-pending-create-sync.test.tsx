@@ -80,6 +80,7 @@ const stubApi = (
   purgeDrawing: vi.fn(),
   renameDrawing: vi.fn(),
   restoreDrawing: vi.fn(),
+  searchDrawings: vi.fn(),
   setTags: vi.fn(),
   setTemplate: vi.fn(),
 });

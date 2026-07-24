@@ -12,6 +12,8 @@ import {
   createDrawingRequestSchema,
   createInvitationRequestSchema,
   currentUserSchema,
+  drawingSearchQuerySchema,
+  drawingSearchResponseSchema,
   fileIdSchema,
   problemDetailsSchema,
   revisionSchema,
@@ -116,6 +118,24 @@ describe("drawing and sharing contracts", () => {
     expect(
       createDrawingRequestSchema.safeParse({ title: "Bad", id: "not-a-uuid" })
         .success,
+    ).toBe(false);
+  });
+
+  it("parses content search queries and results", () => {
+    expect(drawingSearchQuerySchema.parse({ q: "  budget plan " }).q).toBe(
+      "budget plan",
+    );
+    expect(drawingSearchQuerySchema.safeParse({ q: "   " }).success).toBe(
+      false,
+    );
+    expect(
+      drawingSearchQuerySchema.safeParse({ q: "a".repeat(201) }).success,
+    ).toBe(false);
+    expect(
+      drawingSearchResponseSchema.parse({ drawingIds: [drawingId] }).drawingIds,
+    ).toHaveLength(1);
+    expect(
+      drawingSearchResponseSchema.safeParse({ drawingIds: ["nope"] }).success,
     ).toBe(false);
   });
 });

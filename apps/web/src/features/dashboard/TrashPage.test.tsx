@@ -62,6 +62,9 @@ class FakeTrashApi implements DashboardApi {
   readonly renameDrawing = vi.fn<DashboardApi["renameDrawing"]>(() =>
     Promise.reject(new Error("unused")),
   );
+  readonly searchDrawings = vi.fn<DashboardApi["searchDrawings"]>(() =>
+    Promise.reject(new Error("unused")),
+  );
   readonly setTags = vi.fn<DashboardApi["setTags"]>(() =>
     Promise.reject(new Error("unused")),
   );

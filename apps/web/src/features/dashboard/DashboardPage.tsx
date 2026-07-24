@@ -4,7 +4,7 @@ import {
   type DrawingSummary,
 } from "@open-excalidraw/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { ApiError } from "../../shared/api";
@@ -84,6 +84,7 @@ const replaceDrawing = (
 };
 
 const DrawingCard = ({
+  contentMatch,
   drawing,
   notSynced,
   onDelete,
@@ -95,6 +96,7 @@ const DrawingCard = ({
   offline,
   pending,
 }: {
+  contentMatch: boolean;
   drawing: DrawingSummary;
   notSynced: boolean;
   onDelete: (drawing: DrawingSummary) => void;
@@ -203,6 +205,11 @@ const DrawingCard = ({
         ) : null}
         {notSynced ? (
           <span className="role-badge pending-badge">Not synced yet</span>
+        ) : null}
+        {contentMatch ? (
+          <span className="role-badge content-match-badge">
+            Matches canvas text
+          </span>
         ) : null}
       </div>
 
@@ -331,6 +338,7 @@ const DrawingCard = ({
 };
 
 const DrawingSection = ({
+  contentMatchIds,
   drawings,
   emptyMessage,
   onDelete,
@@ -344,6 +352,7 @@ const DrawingSection = ({
   pendingIds,
   title,
 }: {
+  contentMatchIds: ReadonlySet<string>;
   drawings: DrawingSummary[];
   emptyMessage: string;
   onDelete: (drawing: DrawingSummary) => void;
@@ -365,6 +374,7 @@ const DrawingSection = ({
       <div className="drawing-grid">
         {drawings.map((drawing) => (
           <DrawingCard
+            contentMatch={contentMatchIds.has(drawing.id)}
             drawing={drawing}
             key={drawing.id}
             notSynced={pendingIds.has(drawing.id)}
@@ -406,6 +416,16 @@ export const DashboardPage = ({
   const [newTitle, setNewTitle] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  // Content-match ids from the server, in relevance order, tagged with the
+  // query that produced them so a previous query's matches are never applied
+  // to the current one. A ref tracks the query still in flight so an
+  // out-of-order response never clobbers a newer one.
+  const [serverMatches, setServerMatches] = useState<{
+    query: string;
+    ids: readonly string[];
+  }>({ query: "", ids: [] });
+  const latestQueryRef = useRef("");
   const [templateId, setTemplateId] = useState("");
   const [fallback, setFallback] = useState<DashboardListRecord | null>(null);
   const [fallbackChecked, setFallbackChecked] = useState(false);
@@ -487,6 +507,35 @@ export const DashboardPage = ({
       active = false;
     };
   }, [userId, pendingCreates, recovery, dashboard.data, pendingRefresh]);
+
+  // Server content search: debounced, min 2 chars. The latestQueryRef guard
+  // drops a stale response so it can't clobber a newer query, and any failure
+  // (offline / server error) degrades silently to the client-side title/tag
+  // filter below — this app treats offline as normal.
+  useEffect(() => {
+    const query = search.trim();
+    latestQueryRef.current = query;
+    // Below the server's 2-char floor we skip the request; the render path
+    // ignores serverMatchIds for short queries, so no clear is needed here.
+    if (query.length < 2) {
+      return;
+    }
+    const handle = setTimeout(() => {
+      void api
+        .searchDrawings(query)
+        .then((ids) => {
+          if (latestQueryRef.current === query) {
+            setServerMatches({ query, ids });
+          }
+        })
+        .catch(() => {
+          if (latestQueryRef.current === query) {
+            setServerMatches({ query, ids: [] });
+          }
+        });
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [api, search]);
 
   const createDrawing = useMutation({
     mutationFn: (title: string) => api.createDrawing(title),
@@ -720,6 +769,42 @@ export const DashboardPage = ({
   );
   const pendingIds = new Set(unsyncedOwned.map((entry) => entry.id));
   const ownedDrawings = [...unsyncedOwned, ...(list ? list.owned : [])];
+
+  // Search composes on top of the tag filter: title/tag substring matches
+  // (client-side, offline-safe) first, then server content-only matches kept in
+  // the server's relevance order. Content-only matches carry a badge so an
+  // unrelated-looking title is explicable.
+  const query = search.trim().toLowerCase();
+  const searching = query.length > 0;
+  // Server matches apply only above the 2-char floor AND only when they were
+  // produced by the current query — a previous query's matches (or a response
+  // still in flight) must not badge drawings the current query never matched.
+  const contentRank =
+    query.length >= 2 && serverMatches.query === search.trim()
+      ? new Map(serverMatches.ids.map((id, index) => [id, index]))
+      : new Map<string, number>();
+  const matchesText = (drawing: DrawingSummary) =>
+    drawing.title.toLowerCase().includes(query) ||
+    drawing.tags.some((tag) => tag.includes(query));
+  const isContentOnlyMatch = (drawing: DrawingSummary) =>
+    !matchesText(drawing) && contentRank.has(drawing.id);
+  const bySearch = (drawings: DrawingSummary[]) => {
+    if (!searching) {
+      return drawings;
+    }
+    const contentMatches = drawings
+      .filter(isContentOnlyMatch)
+      .sort((a, b) => contentRank.get(a.id)! - contentRank.get(b.id)!);
+    return [...drawings.filter(matchesText), ...contentMatches];
+  };
+  const contentMatchIds: ReadonlySet<string> = new Set(
+    searching
+      ? [...ownedDrawings, ...(list ? list.shared : [])]
+          .filter(isContentOnlyMatch)
+          .map((drawing) => drawing.id)
+      : [],
+  );
+
   // Show sections whenever there is a list, or unsynced entries to surface —
   // but never mask a real HTTP error behind them.
   const showSections =
@@ -820,6 +905,15 @@ export const DashboardPage = ({
               Refresh
             </button>
           </div>
+          <label className="dashboard-search">
+            Search drawings
+            <input
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search titles, tags, and canvas text"
+              type="search"
+              value={search}
+            />
+          </label>
           {allTags.length > 0 ? (
             <nav aria-label="Filter by tag" className="tag-filter-bar">
               {/* ponytail: single-select filter; multi-select if anyone asks */}
@@ -848,11 +942,14 @@ export const DashboardPage = ({
           ) : null}
           <div className="dashboard-sections">
             <DrawingSection
-              drawings={byTag(ownedDrawings)}
+              contentMatchIds={contentMatchIds}
+              drawings={bySearch(byTag(ownedDrawings))}
               emptyMessage={
-                activeTag
-                  ? `No owned drawings tagged “${activeTag}”.`
-                  : "Create your first drawing to get started."
+                searching
+                  ? "No drawings match."
+                  : activeTag
+                    ? `No owned drawings tagged “${activeTag}”.`
+                    : "Create your first drawing to get started."
               }
               onDelete={requestDelete}
               onDuplicate={(drawing) => duplicateDrawing.mutate(drawing)}
@@ -874,11 +971,14 @@ export const DashboardPage = ({
               title="Owned"
             />
             <DrawingSection
-              drawings={byTag(list ? list.shared : [])}
+              contentMatchIds={contentMatchIds}
+              drawings={bySearch(byTag(list ? list.shared : []))}
               emptyMessage={
-                activeTag
-                  ? `No shared drawings tagged “${activeTag}”.`
-                  : "Drawings shared with you will appear here."
+                searching
+                  ? "No drawings match."
+                  : activeTag
+                    ? `No shared drawings tagged “${activeTag}”.`
+                    : "Drawings shared with you will appear here."
               }
               onDelete={requestDelete}
               onDuplicate={(drawing) => duplicateDrawing.mutate(drawing)}

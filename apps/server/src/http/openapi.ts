@@ -26,6 +26,7 @@ import {
   currentUserSchema,
   drawingListResponseSchema,
   drawingMemberSchema,
+  drawingSearchResponseSchema,
   drawingSummarySchema,
   duplicateDrawingRequestSchema,
   invitationSchema,
@@ -69,6 +70,7 @@ const contractSchemas = {
   CurrentUser: currentUserSchema,
   DrawingListResponse: drawingListResponseSchema,
   DrawingMember: drawingMemberSchema,
+  DrawingSearchResponse: drawingSearchResponseSchema,
   DrawingSummary: drawingSummarySchema,
   DuplicateDrawingRequest: duplicateDrawingRequestSchema,
   Invitation: invitationSchema,
@@ -595,6 +597,31 @@ export const openApiDocument = {
           "automatically after 7 days.",
         responses: {
           "200": json("The trashed drawings.", ref("TrashListResponse")),
+          "401": unauthorized,
+        },
+      },
+    },
+    "/api/v1/drawings/search": {
+      get: {
+        tags: ["Drawings"],
+        summary: "Full-text search over drawing content",
+        description:
+          "Ranked ids of the caller's accessible, non-trashed drawings whose " +
+          "current-scene text (text elements and frame names) matches the " +
+          "`q` query. Uses PostgreSQL `websearch_to_tsquery` syntax; capped " +
+          "at 50 results.",
+        parameters: [
+          {
+            name: "q",
+            in: "query",
+            required: true,
+            description: "Free-text query (websearch syntax), 1–200 chars.",
+            schema: { type: "string", minLength: 1, maxLength: 200 },
+          },
+        ],
+        responses: {
+          "200": json("Matching drawing ids.", ref("DrawingSearchResponse")),
+          "400": invalidRequest,
           "401": unauthorized,
         },
       },

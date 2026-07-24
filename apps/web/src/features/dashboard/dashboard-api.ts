@@ -1,5 +1,6 @@
 import {
   drawingListResponseSchema,
+  drawingSearchResponseSchema,
   drawingSummarySchema,
   trashListResponseSchema,
   type DrawingListResponse,
@@ -39,6 +40,9 @@ export interface DashboardApi {
     drawing: DrawingSummary,
     title: string,
   ): Promise<DrawingSummary>;
+  // Content matches ranked by relevance; ids may reference drawings outside the
+  // current list page, so callers intersect with what they already hold.
+  searchDrawings(query: string): Promise<string[]>;
   setTags(drawing: DrawingSummary, tags: string[]): Promise<DrawingSummary>;
   setTemplate(
     drawing: DrawingSummary,
@@ -108,6 +112,16 @@ export class DashboardApiClient implements DashboardApi {
     );
 
     return unwrapDrawing(response);
+  }
+
+  async searchDrawings(query: string): Promise<string[]> {
+    const response = await this.#api.request(
+      `/v1/drawings/search?q=${encodeURIComponent(query)}`,
+      { method: "GET" },
+      drawingSearchResponseSchema,
+    );
+
+    return response.drawingIds;
   }
 
   async setTags(
