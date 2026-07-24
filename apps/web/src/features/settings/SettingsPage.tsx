@@ -1,4 +1,8 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  PERSONAL_ACCESS_TOKEN_PREFIX,
+  type PersonalAccessToken,
+} from "@open-excalidraw/contracts";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, type ReactElement, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { renderSVG } from "uqr";
@@ -6,6 +10,12 @@ import { renderSVG } from "uqr";
 import { useAuth } from "../auth";
 import type { OAuthProvider } from "../auth";
 import { githubIcon, googleIcon, ssoIcon } from "../auth/provider-icons";
+import { ApiError } from "../../shared/api";
+import {
+  TOKENS_QUERY_KEY,
+  defaultTokensApi,
+  type TokensApi,
+} from "./tokens-api";
 
 const MINIMUM_PASSWORD_LENGTH = 12;
 const MAXIMUM_PASSWORD_LENGTH = 128;
@@ -463,6 +473,256 @@ const TwoFactorSection = () => {
   );
 };
 
+const formatDate = (iso: string): string =>
+  new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(
+    new Date(iso),
+  );
+
+// Value maps to expiresInDays; empty string means "never".
+const EXPIRY_OPTIONS = [
+  { days: "30", label: "30 days" },
+  { days: "90", label: "90 days" },
+  { days: "365", label: "365 days" },
+  { days: "", label: "Never" },
+] as const;
+
+const TOKEN_SECRET_WARNING =
+  "Copy this token now. It is shown only once and cannot be retrieved again.";
+
+const SecretRevealPanel = ({
+  onDone,
+  secret,
+}: {
+  onDone: () => void;
+  secret: string;
+}) => {
+  const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(secret);
+      setCopied(true);
+      setCopyError(null);
+    } catch {
+      setCopyError("Could not copy automatically. Select and copy the token.");
+    }
+  };
+
+  return (
+    <div className="settings-token-secret">
+      <p role="alert">{TOKEN_SECRET_WARNING}</p>
+      <code className="settings-token-secret-value">{secret}</code>
+      <div className="settings-token-secret-actions">
+        <button onClick={() => void copy()} type="button">
+          {copied ? "Copied" : "Copy token"}
+        </button>
+        <button onClick={onDone} type="button">
+          Done
+        </button>
+      </div>
+      {copyError ? <p role="status">{copyError}</p> : null}
+    </div>
+  );
+};
+
+const TokenRow = ({
+  disabled,
+  onRevoke,
+  token,
+}: {
+  disabled: boolean;
+  onRevoke: (token: PersonalAccessToken) => void;
+  token: PersonalAccessToken;
+}) => (
+  <li className="settings-token">
+    <div className="settings-token-heading">
+      <span className="settings-token-name">{token.name}</span>
+      <code className="settings-token-hint">
+        {PERSONAL_ACCESS_TOKEN_PREFIX}…{token.lastFour}
+      </code>
+    </div>
+    <dl className="settings-token-meta">
+      <div>
+        <dt>Created</dt>
+        <dd>
+          <time dateTime={token.createdAt}>{formatDate(token.createdAt)}</time>
+        </dd>
+      </div>
+      <div>
+        <dt>Expires</dt>
+        <dd>
+          {token.expiresAt ? (
+            <time dateTime={token.expiresAt}>
+              {formatDate(token.expiresAt)}
+            </time>
+          ) : (
+            "Never"
+          )}
+        </dd>
+      </div>
+      <div>
+        <dt>Last used</dt>
+        <dd>
+          {token.lastUsedAt ? (
+            <time dateTime={token.lastUsedAt}>
+              {formatDate(token.lastUsedAt)}
+            </time>
+          ) : (
+            "Never"
+          )}
+        </dd>
+      </div>
+    </dl>
+    <button
+      className="danger-button"
+      disabled={disabled}
+      onClick={() => onRevoke(token)}
+      type="button"
+    >
+      Revoke
+    </button>
+  </li>
+);
+
+const TokensSection = ({ api }: { api: TokensApi }) => {
+  const queryClient = useQueryClient();
+  const [name, setName] = useState("");
+  const [expiry, setExpiry] = useState<string>("30");
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [createdSecret, setCreatedSecret] = useState<string | null>(null);
+
+  const tokens = useQuery({
+    queryFn: () => api.listTokens(),
+    queryKey: TOKENS_QUERY_KEY,
+  });
+
+  const invalidate = () =>
+    queryClient.invalidateQueries({ queryKey: TOKENS_QUERY_KEY });
+
+  const create = useMutation({
+    mutationFn: () =>
+      api.createToken({
+        expiresInDays: expiry === "" ? null : Number(expiry),
+        name: name.trim(),
+      }),
+    onError: (error) => setActionError(error.message),
+    onSuccess: (created) => {
+      setActionError(null);
+      setCreatedSecret(created.secret);
+      setName("");
+      setExpiry("30");
+      void invalidate();
+    },
+  });
+
+  const revoke = useMutation({
+    mutationFn: (token: PersonalAccessToken) => api.revokeToken(token.id),
+    onError: (error) => setActionError(error.message),
+    onSuccess: () => {
+      setActionError(null);
+      void invalidate();
+    },
+  });
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (name.trim() === "") {
+      setActionError("Give the token a name.");
+      return;
+    }
+    setActionError(null);
+    create.mutate();
+  };
+
+  const requestRevoke = (token: PersonalAccessToken) => {
+    if (
+      globalThis.confirm(
+        `Revoke “${token.name}”? Any integration using it stops working immediately.`,
+      )
+    ) {
+      revoke.mutate(token);
+    }
+  };
+
+  return (
+    <section aria-labelledby="settings-tokens-title">
+      <h2 id="settings-tokens-title">API tokens</h2>
+      <p className="settings-token-note">
+        Personal access tokens authenticate scripts and integrations with the
+        REST API using an <code>Authorization: Bearer</code> header. They cannot
+        be used to manage tokens themselves.
+      </p>
+
+      <form noValidate onSubmit={submit}>
+        <label>
+          Token name
+          <input
+            maxLength={100}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="e.g. CI export job"
+            value={name}
+          />
+        </label>
+        <label>
+          Expires
+          <select
+            onChange={(event) => setExpiry(event.target.value)}
+            value={expiry}
+          >
+            {EXPIRY_OPTIONS.map((option) => (
+              <option key={option.label} value={option.days}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button disabled={create.isPending} type="submit">
+          {create.isPending ? "Creating…" : "Create token"}
+        </button>
+      </form>
+
+      {createdSecret ? (
+        <SecretRevealPanel
+          onDone={() => setCreatedSecret(null)}
+          secret={createdSecret}
+        />
+      ) : null}
+
+      {actionError ? <p role="alert">{actionError}</p> : null}
+
+      {tokens.isPending ? (
+        <p aria-live="polite">Loading tokens…</p>
+      ) : tokens.isError ? (
+        <div className="dashboard-error" role="alert">
+          <p>
+            {tokens.error instanceof ApiError &&
+            tokens.error.problem?.code === "TOKEN_MANAGEMENT_REQUIRES_SESSION"
+              ? "Tokens can only be managed from a signed-in browser session, not with an API token."
+              : tokens.error.message}
+          </p>
+          <button onClick={() => void tokens.refetch()} type="button">
+            Try again
+          </button>
+        </div>
+      ) : tokens.data.tokens.length === 0 ? (
+        <p className="dashboard-empty">You have no API tokens yet.</p>
+      ) : (
+        <ul className="settings-token-list">
+          {tokens.data.tokens.map((token) => (
+            <TokenRow
+              disabled={revoke.isPending}
+              key={token.id}
+              onRevoke={requestRevoke}
+              token={token}
+            />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+};
+
 const SignOutSection = () => {
   const auth = useAuth();
   const navigate = useNavigate();
@@ -497,7 +757,13 @@ const SignOutSection = () => {
   );
 };
 
-export const SettingsPage = () => {
+export interface SettingsPageProps {
+  tokensApi?: TokensApi;
+}
+
+export const SettingsPage = ({
+  tokensApi = defaultTokensApi,
+}: SettingsPageProps = {}) => {
   const auth = useAuth();
   const accounts = useQuery({
     queryFn: () => auth.listAccounts(),
@@ -539,6 +805,7 @@ export const SettingsPage = () => {
             )}
           />
           <TwoFactorSection />
+          <TokensSection api={tokensApi} />
           <SignOutSection />
         </>
       )}

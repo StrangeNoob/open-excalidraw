@@ -1,4 +1,9 @@
-import type { SessionResponse } from "@open-excalidraw/contracts";
+import type {
+  PersonalAccessToken,
+  PersonalAccessTokenCreate,
+  PersonalAccessTokenCreated,
+  SessionResponse,
+} from "@open-excalidraw/contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -12,7 +17,9 @@ import type {
   OAuthProvider,
 } from "../auth";
 import { AuthProvider } from "../auth";
+import { ApiError } from "../../shared/api";
 import { SettingsPage } from "./SettingsPage";
+import type { TokensApi } from "./tokens-api";
 
 const session: SessionResponse = {
   capabilities: {
@@ -74,6 +81,48 @@ class FakeAuthClient implements AuthClient {
     vi.fn<(code: string, trustDevice: boolean) => Promise<void>>();
 }
 
+const createToken = (
+  overrides: Partial<PersonalAccessToken> = {},
+): PersonalAccessToken => ({
+  createdAt: "2026-07-10T10:00:00.000Z",
+  expiresAt: null,
+  id: "11111111-1111-4111-8111-111111111111",
+  lastFour: "9f3a",
+  lastUsedAt: null,
+  name: "CI export",
+  ...overrides,
+});
+
+class FakeTokensApi implements TokensApi {
+  tokens: PersonalAccessToken[];
+
+  readonly listTokens = vi.fn(() => Promise.resolve({ tokens: this.tokens }));
+  readonly createToken = vi.fn(
+    (input: PersonalAccessTokenCreate): Promise<PersonalAccessTokenCreated> => {
+      const token = createToken({
+        expiresAt:
+          input.expiresInDays === null ? null : "2026-10-08T10:00:00.000Z",
+        id: "22222222-2222-4222-8222-222222222222",
+        lastFour: "beef",
+        name: input.name,
+      });
+      this.tokens = [token, ...this.tokens];
+      return Promise.resolve({
+        secret: "oepat_generated-secret-value-beef",
+        token,
+      });
+    },
+  );
+  readonly revokeToken = vi.fn((tokenId: string) => {
+    this.tokens = this.tokens.filter((token) => token.id !== tokenId);
+    return Promise.resolve();
+  });
+
+  constructor(tokens: PersonalAccessToken[] = []) {
+    this.tokens = tokens;
+  }
+}
+
 const enabledSession: SessionResponse = {
   ...session,
   user: session.user && { ...session.user, twoFactorEnabled: true },
@@ -86,6 +135,7 @@ const BACKUP_CODES = ["aaaa-1111", "bbbb-2222", "cccc-3333"];
 const renderSettings = (
   accounts: LinkedAccount[],
   sessionResponse: SessionResponse = session,
+  tokensApi: TokensApi = new FakeTokensApi(),
 ) => {
   const client = new FakeAuthClient();
   client.getSession.mockResolvedValue(sessionResponse);
@@ -100,7 +150,7 @@ const renderSettings = (
     <QueryClientProvider client={queryClient}>
       <AuthProvider client={client}>
         <MemoryRouter initialEntries={["/app/settings"]}>
-          <SettingsPage />
+          <SettingsPage tokensApi={tokensApi} />
         </MemoryRouter>
       </AuthProvider>
     </QueryClientProvider>,
@@ -353,5 +403,142 @@ describe("SettingsPage", () => {
     );
 
     expect(await screen.findByText("Invalid code.")).toBeVisible();
+  });
+
+  it("lists API tokens with a masked hint and expiry", async () => {
+    const tokensApi = new FakeTokensApi([
+      createToken({
+        expiresAt: null,
+        id: "aaaa1111-1111-4111-8111-111111111111",
+        lastFour: "9f3a",
+        lastUsedAt: null,
+        name: "CI export",
+      }),
+    ]);
+    renderSettings([{ providerId: "credential" }], session, tokensApi);
+
+    expect(await screen.findByText("CI export")).toBeVisible();
+    expect(screen.getByText("oepat_…9f3a")).toBeVisible();
+    // Null expiry and last-used both read as "Never".
+    expect(screen.getAllByText("Never").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("shows an empty state when there are no tokens", async () => {
+    renderSettings([{ providerId: "credential" }]);
+
+    expect(
+      await screen.findByText("You have no API tokens yet."),
+    ).toBeVisible();
+  });
+
+  it("creates a token and reveals the secret exactly once", async () => {
+    const tokensApi = new FakeTokensApi();
+    renderSettings([{ providerId: "credential" }], session, tokensApi);
+
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText("Token name"), "Deploy bot");
+    await user.selectOptions(screen.getByLabelText("Expires"), "90 days");
+    await user.click(screen.getByRole("button", { name: "Create token" }));
+
+    await waitFor(() =>
+      expect(tokensApi.createToken).toHaveBeenCalledWith({
+        expiresInDays: 90,
+        name: "Deploy bot",
+      }),
+    );
+    // The full secret is revealed with a one-time warning.
+    expect(
+      await screen.findByText("oepat_generated-secret-value-beef"),
+    ).toBeVisible();
+    expect(screen.getByText(/shown only once/i)).toBeVisible();
+
+    // Dismissing clears the secret; it is never shown again.
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByText("oepat_generated-secret-value-beef"),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("creates a never-expiring token when Never is chosen", async () => {
+    const tokensApi = new FakeTokensApi();
+    renderSettings([{ providerId: "credential" }], session, tokensApi);
+
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText("Token name"), "Forever");
+    await user.selectOptions(screen.getByLabelText("Expires"), "Never");
+    await user.click(screen.getByRole("button", { name: "Create token" }));
+
+    await waitFor(() =>
+      expect(tokensApi.createToken).toHaveBeenCalledWith({
+        expiresInDays: null,
+        name: "Forever",
+      }),
+    );
+  });
+
+  it("revokes a token only after confirmation", async () => {
+    const tokensApi = new FakeTokensApi([
+      createToken({
+        id: "aaaa1111-1111-4111-8111-111111111111",
+        name: "CI export",
+      }),
+    ]);
+    const confirm = vi
+      .spyOn(globalThis, "confirm")
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+    renderSettings([{ providerId: "credential" }], session, tokensApi);
+
+    const user = userEvent.setup();
+    const revokeButton = await screen.findByRole("button", { name: "Revoke" });
+    await user.click(revokeButton);
+    expect(tokensApi.revokeToken).not.toHaveBeenCalled();
+
+    await user.click(revokeButton);
+    await waitFor(() =>
+      expect(tokensApi.revokeToken).toHaveBeenCalledWith(
+        "aaaa1111-1111-4111-8111-111111111111",
+      ),
+    );
+    expect(confirm).toHaveBeenCalledTimes(2);
+    confirm.mockRestore();
+  });
+
+  it("surfaces an error when creating a token fails", async () => {
+    const tokensApi = new FakeTokensApi();
+    tokensApi.createToken.mockRejectedValueOnce(
+      new Error("You have reached the token limit."),
+    );
+    renderSettings([{ providerId: "credential" }], session, tokensApi);
+
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText("Token name"), "One too many");
+    await user.click(screen.getByRole("button", { name: "Create token" }));
+
+    expect(
+      await screen.findByText("You have reached the token limit."),
+    ).toBeVisible();
+  });
+
+  it("explains the session-only requirement on a 403", async () => {
+    const tokensApi = new FakeTokensApi();
+    tokensApi.listTokens.mockRejectedValue(
+      new ApiError(403, {
+        code: "TOKEN_MANAGEMENT_REQUIRES_SESSION",
+        detail: "Tokens cannot manage tokens.",
+        requestId: "req-1",
+        status: 403,
+        title: "Session required",
+      }),
+    );
+    renderSettings([{ providerId: "credential" }], session, tokensApi);
+
+    expect(
+      await screen.findByText(
+        "Tokens can only be managed from a signed-in browser session, not with an API token.",
+      ),
+    ).toBeVisible();
   });
 });

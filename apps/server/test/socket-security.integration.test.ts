@@ -59,6 +59,20 @@ describe("socket authorization boundary", () => {
     ).rejects.toMatchObject({ code: "SOCKET_SESSION_EXPIRED" });
   });
 
+  it("rejects personal access token identities from realtime", async () => {
+    // A PAT is for REST automation only; it carries no session and must never
+    // open a collaboration socket, even though it authenticates REST calls.
+    await expect(
+      join({
+        identity: makeIdentity({
+          authKind: "token",
+          sessionId: undefined,
+          sessionExpiresAt: undefined,
+        }),
+      }),
+    ).rejects.toMatchObject({ code: "REALTIME_REQUIRES_SESSION" });
+  });
+
   it.each([
     null,
     "null",
@@ -247,6 +261,7 @@ function makeIdentity(
     emailVerified: true,
     twoFactorEnabled: false,
     createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    authKind: "session",
     sessionId: "session-1",
     sessionExpiresAt: new Date("2026-07-11T11:00:00.000Z"),
     ...overrides,

@@ -78,6 +78,11 @@ import {
   PostgresSharingRepository,
   SharingService,
 } from "./modules/sharing/index.js";
+import {
+  createTokenRouter,
+  PostgresTokenRepository,
+  TokenService,
+} from "./modules/tokens/index.js";
 import { MaintenanceJobs } from "./jobs/index.js";
 import { insertAuditEvent } from "./modules/audit.js";
 
@@ -122,7 +127,18 @@ const auth = createOpenExcalidrawAuth({
   ...(github ? { github } : {}),
   ...(oidc ? { oidc } : {}),
 });
-const identity = createIdentityService(auth);
+const tokenService = new TokenService(
+  new PostgresTokenRepository(database.pool),
+  {
+    onTouchError: (error) =>
+      operationalLog("error", "tokens.last_used_update_failed", {
+        errorType: safeErrorType(error),
+      }),
+  },
+);
+const identity = createIdentityService(auth, {
+  resolve: (secret) => tokenService.resolveIdentity(secret),
+});
 const roomRegistry = new RoomRegistry();
 const contentService = new ContentService(
   new PostgresContentRepository(database.pool),
@@ -370,6 +386,7 @@ const app = createApp({
     createLibraryRouter({ service: libraryService, identity }),
     createSharingRouter({ service: sharingService, identity }),
     createChatRouter({ service: chatService, identity }),
+    createTokenRouter({ service: tokenService, identity }),
     assetRouter,
     createDocsRouter(),
     createMetricsRouter({

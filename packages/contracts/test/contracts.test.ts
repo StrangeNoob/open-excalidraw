@@ -18,6 +18,11 @@ import {
   roleSchema,
   sceneEnvelopeSchema,
   serverRealtimeEventSchema,
+  PERSONAL_ACCESS_TOKEN_PREFIX,
+  personalAccessTokenCreatedSchema,
+  personalAccessTokenCreateSchema,
+  personalAccessTokenListSchema,
+  personalAccessTokenSchema,
 } from "../src";
 
 const drawingId = "a0d1c2e3-f456-4789-a012-3456789abcde";
@@ -313,6 +318,63 @@ describe("realtime contracts", () => {
         mutationId,
         baseRevision: 1,
         elements: [element],
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("personal access token contracts", () => {
+  const token = {
+    id: "0d9c1a44-93de-4dd1-8b6f-9a3fd0f1a1aa",
+    name: "backup script",
+    lastFour: "ab12",
+    createdAt: "2026-07-24T10:00:00.000+00:00",
+    expiresAt: null,
+    lastUsedAt: null,
+  };
+
+  it("parses tokens, lists, and the one-time creation payload", () => {
+    expect(personalAccessTokenSchema.parse(token).expiresAt).toBeNull();
+    expect(
+      personalAccessTokenListSchema.parse({ tokens: [token] }).tokens,
+    ).toHaveLength(1);
+    expect(
+      personalAccessTokenCreatedSchema
+        .parse({
+          token,
+          secret: `${PERSONAL_ACCESS_TOKEN_PREFIX}abcdefabcdefabcdefabcdefabcdefabcdefab12`,
+        })
+        .secret.startsWith(PERSONAL_ACCESS_TOKEN_PREFIX),
+    ).toBe(true);
+    expect(
+      personalAccessTokenCreateSchema.parse({
+        name: "ci",
+        expiresInDays: 90,
+      }).expiresInDays,
+    ).toBe(90);
+  });
+
+  it("rejects bad hints, foreign prefixes, and out-of-range expiries", () => {
+    expect(
+      personalAccessTokenSchema.safeParse({ ...token, lastFour: "abc" })
+        .success,
+    ).toBe(false);
+    expect(
+      personalAccessTokenCreatedSchema.safeParse({
+        token,
+        secret: "sk_live_not_ours",
+      }).success,
+    ).toBe(false);
+    expect(
+      personalAccessTokenCreateSchema.safeParse({
+        name: "ci",
+        expiresInDays: 0,
+      }).success,
+    ).toBe(false);
+    expect(
+      personalAccessTokenCreateSchema.safeParse({
+        name: "",
+        expiresInDays: null,
       }).success,
     ).toBe(false);
   });

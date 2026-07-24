@@ -31,6 +31,10 @@ import {
   invitationSchema,
   libraryItemSchema,
   libraryResponseSchema,
+  personalAccessTokenCreateSchema,
+  personalAccessTokenCreatedSchema,
+  personalAccessTokenListSchema,
+  personalAccessTokenSchema,
   problemDetailsSchema,
   saveContentRequestSchema,
   saveContentResponseSchema,
@@ -70,6 +74,10 @@ const contractSchemas = {
   Invitation: invitationSchema,
   LibraryItem: libraryItemSchema,
   LibraryResponse: libraryResponseSchema,
+  PersonalAccessToken: personalAccessTokenSchema,
+  PersonalAccessTokenCreate: personalAccessTokenCreateSchema,
+  PersonalAccessTokenCreated: personalAccessTokenCreatedSchema,
+  PersonalAccessTokenList: personalAccessTokenListSchema,
   ProblemDetails: problemDetailsSchema,
   SaveContentRequest: saveContentRequestSchema,
   SaveContentResponse: saveContentResponseSchema,
@@ -184,6 +192,12 @@ export const openApiDocument = {
       "`POST /api/auth/sign-in/oauth2` and the IdP redirects back to",
       "`/api/auth/oauth2/callback/oidc`.",
       "",
+      "**Personal access tokens** offer non-interactive access for automation.",
+      "Send `Authorization: Bearer oepat_…` and every REST route resolves the",
+      "caller from the token instead of the session cookie. Tokens cannot manage",
+      "tokens (create/list/revoke stay session-only) or open realtime sessions.",
+      "Manage them under `/api/v1/tokens`.",
+      "",
       "**Browser requests** with unsafe methods must be same-origin: the",
       "server rejects mutating requests whose `Origin` (or `Sec-Fetch-Site`)",
       "is not a trusted origin with `403 ORIGIN_NOT_ALLOWED`. Non-browser",
@@ -213,13 +227,19 @@ export const openApiDocument = {
     { name: "Chat", description: "Per-drawing chat history." },
     { name: "Assets", description: "Binary assets referenced by scenes." },
     {
+      name: "Tokens",
+      description:
+        "Personal access tokens for REST automation. Managed from a " +
+        "signed-in session only.",
+    },
+    {
       name: "Admin",
       description:
         "Operator endpoints: loopback-only recovery plus instance and user " +
         "management gated on a verified email listed in `ADMIN_EMAILS`.",
     },
   ],
-  security: [{ sessionCookie: [] }],
+  security: [{ sessionCookie: [] }, { bearerAuth: [] }],
   paths: {
     "/health/live": {
       get: {
@@ -276,6 +296,72 @@ export const openApiDocument = {
           "204": { description: "Password set." },
           "400": invalidRequest,
           "401": unauthorized,
+        },
+      },
+    },
+    "/api/v1/tokens": {
+      get: {
+        tags: ["Tokens"],
+        summary: "List your personal access tokens",
+        description:
+          "The caller's own tokens, newest first. The secret is never " +
+          "returned; only `lastFour` identifies each token.",
+        security: [{ sessionCookie: [] }],
+        responses: {
+          "200": json("Your tokens.", ref("PersonalAccessTokenList")),
+          "401": unauthorized,
+          "403": problem(
+            "`TOKEN_MANAGEMENT_REQUIRES_SESSION`: a personal access token " +
+              "cannot manage tokens.",
+          ),
+        },
+      },
+      post: {
+        tags: ["Tokens"],
+        summary: "Create a personal access token",
+        description:
+          "Returns the full secret exactly once in `secret`; store it now, it " +
+          "cannot be retrieved later. Each account may hold at most 25 tokens.",
+        security: [{ sessionCookie: [] }],
+        requestBody: jsonBody(ref("PersonalAccessTokenCreate")),
+        responses: {
+          "201": json(
+            "The created token and its one-time secret.",
+            ref("PersonalAccessTokenCreated"),
+          ),
+          "400": problem(
+            "Request validation failed, or `TOKEN_LIMIT_REACHED`: the " +
+              "25-token cap is reached.",
+          ),
+          "401": unauthorized,
+          "403": problem(
+            "`TOKEN_MANAGEMENT_REQUIRES_SESSION`: a personal access token " +
+              "cannot manage tokens.",
+          ),
+        },
+      },
+    },
+    "/api/v1/tokens/{tokenId}": {
+      parameters: [
+        { name: "tokenId", in: "path", required: true, schema: uuid },
+      ],
+      delete: {
+        tags: ["Tokens"],
+        summary: "Revoke a personal access token",
+        description:
+          "Immediately and irreversibly revokes one of the caller's own " +
+          "tokens.",
+        security: [{ sessionCookie: [] }],
+        responses: {
+          "204": { description: "Revoked." },
+          "401": unauthorized,
+          "403": problem(
+            "`TOKEN_MANAGEMENT_REQUIRES_SESSION`: a personal access token " +
+              "cannot manage tokens.",
+          ),
+          "404": problem(
+            "`TOKEN_NOT_FOUND`: no such token belongs to the caller.",
+          ),
         },
       },
     },
@@ -1225,6 +1311,14 @@ export const openApiDocument = {
         type: "http",
         scheme: "bearer",
         description: "The deployment's ADMIN_RESET_TOKEN.",
+      },
+      bearerAuth: {
+        type: "http",
+        scheme: "bearer",
+        description:
+          "A personal access token (`oepat_…`) created under /api/v1/tokens. " +
+          "Authenticates any REST route in place of the session cookie, but " +
+          "cannot manage tokens or open realtime collaboration sessions.",
       },
     },
     schemas: {

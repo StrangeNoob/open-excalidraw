@@ -38,6 +38,11 @@ The spec covers authentication, drawings, scene content and revisions, sharing,
 chat history, and binary assets; realtime editing and chat delivery use
 Socket.IO and are documented in the collaboration runbook.
 
+Scripts and integrations can authenticate with a personal access token
+(`Authorization: Bearer oepat_…`) created from account settings, instead of a
+browser session. The [API automation runbook](docs/operations/api-automation.md)
+covers creating, using, and revoking tokens and their limits.
+
 Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Report
 security issues privately using [SECURITY.md](SECURITY.md).
 

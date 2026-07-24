@@ -96,7 +96,9 @@ describe("Wave 2 platform flow", () => {
         secureCookies: false,
         smtpEnabled: false,
       });
-      const identity = createIdentityService(auth);
+      const identity = createIdentityService(auth, {
+        resolve: () => Promise.resolve(null),
+      });
       const storage = new LocalObjectStorage({ rootDirectory: assetDirectory });
       const drawingService = new DrawingService(
         new PostgresDrawingRepository(

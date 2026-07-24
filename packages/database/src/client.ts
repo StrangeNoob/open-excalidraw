@@ -19,6 +19,7 @@ import {
 import { userLibraries } from "./schema/libraries.js";
 import { appSettings } from "./schema/settings.js";
 import { drawingInvitations, drawingMembers } from "./schema/sharing.js";
+import { personalAccessTokens } from "./schema/tokens.js";
 
 export const schema = {
   account,
@@ -31,6 +32,7 @@ export const schema = {
   drawingMutations,
   drawingRevisions,
   drawings,
+  personalAccessTokens,
   session,
   twoFactor,
   user,

@@ -89,3 +89,76 @@
   margin: 0.5rem 0;
   padding: 0;
 }
+
+.settings-token-note {
+  color: #555;
+  font-size: 0.9rem;
+}
+
+.settings-token-secret {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  max-width: 36rem;
+}
+
+.settings-token-secret-value {
+  overflow-wrap: anywhere;
+  padding: 0.5rem 0.75rem;
+  background: #f4f4f5;
+  border-radius: 0.5rem;
+  font-family: monospace;
+}
+
+.settings-token-secret-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.settings-token-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+}
+
+.settings-token {
+  border: 1px solid #e4e4e7;
+  border-radius: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+}
+
+.settings-token-heading {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  justify-content: space-between;
+}
+
+.settings-token-name {
+  font-weight: 700;
+}
+
+.settings-token-hint {
+  color: #555;
+  font-family: monospace;
+}
+
+.settings-token-meta {
+  display: grid;
+  gap: 0.5rem 1rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.settings-token-meta dt {
+  color: #555;
+  font-size: 0.8rem;
+}

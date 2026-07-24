@@ -319,7 +319,9 @@ describe("auth HTTP boundary", () => {
     app.use(
       createAuthRouter({
         auth,
-        identity: createIdentityService(auth),
+        identity: createIdentityService(auth, {
+          resolve: () => Promise.resolve(null),
+        }),
         capabilities: authCapabilities({ smtpEnabled: false }),
         adminResetToken: ADMIN_RESET_TOKEN,
         manualResetLinks: resetLinks,
@@ -382,7 +384,9 @@ describe("auth HTTP boundary", () => {
     app.use(
       createAuthRouter({
         auth,
-        identity: createIdentityService(auth),
+        identity: createIdentityService(auth, {
+          resolve: () => Promise.resolve(null),
+        }),
         capabilities: authCapabilities({ smtpEnabled: true }),
       }),
     );
@@ -425,7 +429,9 @@ describe("auth HTTP boundary", () => {
     app.use(
       createAuthRouter({
         auth,
-        identity: createIdentityService(auth),
+        identity: createIdentityService(auth, {
+          resolve: () => Promise.resolve(null),
+        }),
         capabilities: authCapabilities({
           smtpEnabled: false,
           disableSignups: true,
@@ -458,7 +464,9 @@ describe("auth HTTP boundary", () => {
       smtpEnabled: false,
       secureCookies: false,
     });
-    const identity = createIdentityService(auth);
+    const identity = createIdentityService(auth, {
+      resolve: () => Promise.resolve(null),
+    });
     const email = "admin-me@example.test";
     const adminApp = express();
     adminApp.use(express.json());
@@ -537,7 +545,9 @@ describe("auth HTTP boundary", () => {
     app.use(
       createAuthRouter({
         auth,
-        identity: createIdentityService(auth),
+        identity: createIdentityService(auth, {
+          resolve: () => Promise.resolve(null),
+        }),
         capabilities: authCapabilities({ smtpEnabled: false }),
       }),
     );
@@ -594,7 +604,9 @@ describe("auth HTTP boundary", () => {
     app.use(
       createAuthRouter({
         auth,
-        identity: createIdentityService(auth),
+        identity: createIdentityService(auth, {
+          resolve: () => Promise.resolve(null),
+        }),
         capabilities: authCapabilities({ smtpEnabled: false }),
       }),
     );
@@ -673,7 +685,9 @@ describe("auth HTTP boundary", () => {
     app.use(
       createAuthRouter({
         auth,
-        identity: createIdentityService(auth),
+        identity: createIdentityService(auth, {
+          resolve: () => Promise.resolve(null),
+        }),
         capabilities: authCapabilities({ smtpEnabled: false }),
       }),
     );
@@ -740,7 +754,9 @@ describe("auth HTTP boundary", () => {
     app.use(
       createAuthRouter({
         auth,
-        identity: createIdentityService(auth),
+        identity: createIdentityService(auth, {
+          resolve: () => Promise.resolve(null),
+        }),
         capabilities: authCapabilities({ smtpEnabled: false }),
       }),
     );
@@ -824,7 +840,9 @@ describe("two-factor plugin surface", () => {
     app.use(
       createAuthRouter({
         auth,
-        identity: createIdentityService(auth),
+        identity: createIdentityService(auth, {
+          resolve: () => Promise.resolve(null),
+        }),
         capabilities: authCapabilities({ smtpEnabled: false }),
       }),
     );
@@ -874,7 +892,9 @@ describeDatabase("disabled account lockout", () => {
     app.use(
       createAuthRouter({
         auth,
-        identity: createIdentityService(auth),
+        identity: createIdentityService(auth, {
+          resolve: () => Promise.resolve(null),
+        }),
         capabilities: authCapabilities({ smtpEnabled: false }),
       }),
     );
@@ -955,7 +975,9 @@ describeDatabase("two-factor authentication", () => {
     app.use(
       createAuthRouter({
         auth,
-        identity: createIdentityService(auth),
+        identity: createIdentityService(auth, {
+          resolve: () => Promise.resolve(null),
+        }),
         capabilities: authCapabilities({ smtpEnabled: false }),
       }),
     );
