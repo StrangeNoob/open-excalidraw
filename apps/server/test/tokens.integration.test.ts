@@ -322,6 +322,31 @@ describeDatabase("personal access tokens", () => {
     expect(overflow.body.code).toBe("TOKEN_LIMIT_REACHED");
   });
 
+  it("purges expired tokens on create so they never eat the cap", async () => {
+    const userId = await createUser();
+    for (let i = 0; i < 25; i += 1) {
+      await createToken(userId, { name: `short${i}`, expiresInDays: 1 });
+    }
+    // All 25 slots are held by tokens that can no longer authenticate.
+    await database.pool.query(
+      `UPDATE personal_access_tokens SET expires_at = now() - interval '1 day'
+       WHERE user_id = $1`,
+      [userId],
+    );
+
+    const create = await asSession(userId)(
+      request(app)
+        .post("/api/v1/tokens")
+        .send({ name: "fresh", expiresInDays: null }),
+    );
+    expect(create.status).toBe(201);
+
+    // The expired rows are gone; only the fresh token remains.
+    const list = await asSession(userId)(request(app).get("/api/v1/tokens"));
+    expect(list.body.tokens).toHaveLength(1);
+    expect(list.body.tokens[0].name).toBe("fresh");
+  });
+
   it("audits create and revoke without any secret material", async () => {
     const userId = await createUser();
     const { secret, tokenId } = await createToken(userId, {

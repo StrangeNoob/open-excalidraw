@@ -33,6 +33,14 @@ export class PostgresTokenRepository implements TokenRepository {
       await client.query(`SELECT 1 FROM "user" WHERE id = $1 FOR UPDATE`, [
         input.userId,
       ]);
+      // Expired tokens can no longer authenticate; purge them here so rotating
+      // short-lived tokens never eats the cap. Creation is the only moment the
+      // cap matters, so this needs no background job.
+      await client.query(
+        `DELETE FROM personal_access_tokens
+         WHERE user_id = $1 AND expires_at IS NOT NULL AND expires_at <= now()`,
+        [input.userId],
+      );
       const count = await client.query<{ n: string }>(
         `SELECT count(*) AS n FROM personal_access_tokens WHERE user_id = $1`,
         [input.userId],

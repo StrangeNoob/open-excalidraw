@@ -89,7 +89,11 @@ export function assertActiveIdentity(
   }
   // A personal access token is for REST automation only; it carries no session
   // and must never open a realtime collaboration socket.
-  if (identity.authKind === "token" || !identity.sessionExpiresAt) {
+  if (
+    identity.authKind === "token" ||
+    !identity.sessionId ||
+    !identity.sessionExpiresAt
+  ) {
     throw new SocketSecurityError(
       "REALTIME_REQUIRES_SESSION",
       "A personal access token cannot open a realtime session",
