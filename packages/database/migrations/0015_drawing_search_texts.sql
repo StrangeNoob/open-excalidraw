@@ -18,9 +18,9 @@ CREATE TABLE drawing_search_texts (
 CREATE INDEX drawing_search_texts_search_tsv_idx
   ON drawing_search_texts USING GIN (search_tsv);
 
--- Backfill every existing non-deleted drawing. A scene whose 'elements' is
--- missing or not an array yields '' (the CASE substitutes an empty array) so a
--- malformed scene never fails the migration.
+-- Backfill every existing drawing, trashed included. A scene whose 'elements'
+-- is missing or not an array yields '' (the CASE substitutes an empty array)
+-- so a malformed scene never fails the migration.
 INSERT INTO drawing_search_texts (drawing_id, extracted_text)
 SELECT
   d.id,
