@@ -32,6 +32,19 @@ export function createChatRouter(input: CreateChatRouterInput): Router {
     },
   );
 
+  router.get(
+    "/api/v1/drawings/:drawingId/chat/participants",
+    async (request, response) => {
+      await handle(request, response, input.identity, async (userId) => ({
+        status: 200,
+        body: await input.service.participants(
+          userId,
+          uuidSchema.parse(request.params.drawingId),
+        ),
+      }));
+    },
+  );
+
   return router;
 }
 

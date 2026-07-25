@@ -112,6 +112,7 @@ describe("initial PostgreSQL migration", () => {
       "0013_storage_quotas.sql",
       "0014_personal_access_tokens.sql",
       "0015_drawing_search_texts.sql",
+      "0016_chat_mentions.sql",
     ]);
     expect(second.alreadyApplied).toEqual(first.applied);
     expect(record.rows).toEqual(first.applied);
@@ -500,6 +501,49 @@ describe("chat messages", () => {
       [drawingId],
     );
     expect(remaining.rowCount).toBe(0);
+  });
+
+  it("stores optional mentions and anchors and keeps them after the mentioned user goes", async () => {
+    const ownerId = await createUser();
+    const mentionedId = await createUser();
+    const drawingId = await createDrawing(ownerId);
+
+    const plain = await pool.query<{
+      mentions: string[] | null;
+      anchor: unknown;
+    }>(
+      `
+        INSERT INTO chat_messages (drawing_id, user_id, body)
+        VALUES ($1, $2, 'plain')
+        RETURNING mentions, anchor
+      `,
+      [drawingId, ownerId],
+    );
+    expect(plain.rows[0]).toEqual({ mentions: null, anchor: null });
+
+    const annotated = await pool.query<{ id: string }>(
+      `
+        INSERT INTO chat_messages (drawing_id, user_id, body, mentions, anchor)
+        VALUES ($1, $2, 'look here', $3, $4)
+        RETURNING id
+      `,
+      [drawingId, ownerId, [mentionedId], { elementIds: ["el-1", "el-2"] }],
+    );
+
+    // mentions carries no foreign key on purpose: who was mentioned is history,
+    // and it must survive that member being deleted.
+    await pool.query(`DELETE FROM "user" WHERE id = $1`, [mentionedId]);
+
+    const kept = await pool.query<{
+      mentions: string[] | null;
+      anchor: { elementIds: string[] } | null;
+    }>(`SELECT mentions, anchor FROM chat_messages WHERE id = $1`, [
+      annotated.rows[0]!.id,
+    ]);
+    expect(kept.rows[0]).toEqual({
+      mentions: [mentionedId],
+      anchor: { elementIds: ["el-1", "el-2"] },
+    });
   });
 });
 

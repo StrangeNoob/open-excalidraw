@@ -40,7 +40,12 @@ import {
   CloudOutboxDb,
   type CloudOutboxRecord,
 } from "../connectivity/storage/cloudOutboxDb";
-import { ChatClient, ChatPanel, type ChatSource } from "../chat";
+import {
+  ChatClient,
+  ChatPanel,
+  type ChatEditorBridge,
+  type ChatSource,
+} from "../chat";
 import {
   CollaborationController,
   isEventLocalProblem,
@@ -274,6 +279,7 @@ export const DrawingPage = ({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatUnread, setChatUnread] = useState(0);
+  const [chatMentioned, setChatMentioned] = useState(false);
   const [chatTransport, setChatTransport] = useState<SocketIoTransport | null>(
     null,
   );
@@ -288,12 +294,16 @@ export const DrawingPage = ({
     return chatTransport.onChatMessage((message) => {
       if (message.drawingId === drawingId && message.userId !== userId) {
         setChatUnread((count) => count + 1);
+        if (message.mentions?.includes(userId)) {
+          setChatMentioned(true);
+        }
       }
     });
   }, [chatTransport, chatOpen, drawingId, userId]);
 
   const toggleChat = useCallback(() => {
     setChatUnread(0);
+    setChatMentioned(false);
     setChatOpen((open) => !open);
   }, []);
   const [restoringRevision, setRestoringRevision] = useState(false);
@@ -422,6 +432,7 @@ export const DrawingPage = ({
         setAssetFailures(new Map());
         setRestoringRevision(false);
         setChatUnread(0);
+        setChatMentioned(false);
         setSharingGated(false);
       }
     });
@@ -818,6 +829,42 @@ export const DrawingPage = ({
   // useLibrarySync above persists it to the account.
   useHandleLibrary({ excalidrawAPI: editorApi });
 
+  // Chat anchors hold element ids captured when the message was written, so
+  // focusing resolves them against the live scene and reports what it found.
+  const chatEditorBridge = useMemo<ChatEditorBridge | undefined>(() => {
+    if (!editorApi) {
+      return undefined;
+    }
+    return {
+      focusElements: (elementIds) => {
+        const wanted = new Set(elementIds);
+        const targets = editorApi
+          .getSceneElements()
+          .filter((element) => wanted.has(element.id));
+        if (targets.length === 0) {
+          return false;
+        }
+        const selectedElementIds: Record<string, true> = {};
+        for (const element of targets) {
+          selectedElementIds[element.id] = true;
+        }
+        editorApi.updateScene({
+          appState: { selectedElementIds },
+          captureUpdate: CaptureUpdateAction.NEVER,
+        });
+        editorApi.scrollToContent(targets, {
+          animate: true,
+          fitToViewport: true,
+        });
+        return true;
+      },
+      getSelectedElementIds: () => {
+        const selected = editorApi.getAppState().selectedElementIds;
+        return Object.keys(selected).filter((id) => selected[id]);
+      },
+    };
+  }, [editorApi]);
+
   const reloadServer = useCallback(
     (server: LoadedContent) => {
       controller?.acceptServer(toAcknowledgedContent(server));
@@ -1111,18 +1158,19 @@ export const DrawingPage = ({
             </span>
             {collaborationEnabled ? (
               <button
-                aria-label={
-                  chatUnread > 0
-                    ? `Chat, ${chatUnread} unread message${chatUnread === 1 ? "" : "s"}`
-                    : "Chat"
-                }
+                aria-label={chatButtonLabel(chatUnread, chatMentioned)}
                 className="canvas-action"
                 onClick={toggleChat}
                 type="button"
               >
                 Chat
                 {chatUnread > 0 ? (
-                  <span aria-hidden="true" className="chat-unread-badge">
+                  <span
+                    aria-hidden="true"
+                    className={`chat-unread-badge${
+                      chatMentioned ? " chat-unread-badge--mention" : ""
+                    }`}
+                  >
                     {chatUnread > 99 ? "99+" : chatUnread}
                   </span>
                 ) : null}
@@ -1184,6 +1232,7 @@ export const DrawingPage = ({
         <ChatPanel
           client={resolved.chat}
           drawingId={drawingId}
+          editorBridge={chatEditorBridge}
           error={collaboration.error}
           onClose={() => setChatOpen(false)}
           status={collaboration.status}
@@ -1211,6 +1260,14 @@ export const DrawingPage = ({
       />
     </main>
   );
+};
+
+const chatButtonLabel = (unread: number, mentioned: boolean) => {
+  if (unread === 0) {
+    return "Chat";
+  }
+  const label = `Chat, ${unread} unread message${unread === 1 ? "" : "s"}`;
+  return mentioned ? `${label}, you were mentioned` : label;
 };
 
 const statusTone = (

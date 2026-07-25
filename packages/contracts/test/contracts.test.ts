@@ -8,6 +8,8 @@ import {
   adminUserSchema,
   chatHistoryResponseSchema,
   chatMessageEventSchema,
+  chatMessageSchema,
+  chatParticipantsResponseSchema,
   clientRealtimeEventSchema,
   createDrawingRequestSchema,
   createInvitationRequestSchema,
@@ -303,6 +305,49 @@ describe("realtime contracts", () => {
     ).toHaveLength(1);
   });
 
+  it("carries optional mentions and a canvas anchor", () => {
+    const sent = clientRealtimeEventSchema.parse({
+      type: "chat.send",
+      messageId: mutationId,
+      body: "@ada look at this",
+      mentions: [clientInstanceId],
+      // Excalidraw element ids are opaque strings, never uuids.
+      anchor: { elementIds: ["Hq7Yt-3", "aBcD"] },
+    });
+
+    expect(sent).toMatchObject({
+      mentions: [clientInstanceId],
+      anchor: { elementIds: ["Hq7Yt-3", "aBcD"] },
+    });
+    expect(
+      chatMessageSchema.safeParse({
+        id: mutationId,
+        drawingId,
+        userId: clientInstanceId,
+        authorName: "Ada",
+        body: "done",
+        mentions: [clientInstanceId],
+        anchor: { elementIds: ["Hq7Yt-3"] },
+        createdAt: "2026-07-15T10:00:00.000+00:00",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("carries the mention roster without contact details", () => {
+    expect(
+      chatParticipantsResponseSchema.parse({
+        participants: [{ userId: clientInstanceId, name: "Ada" }],
+      }).participants,
+    ).toHaveLength(1);
+    expect(
+      chatParticipantsResponseSchema.safeParse({
+        participants: [
+          { userId: clientInstanceId, name: "Ada", email: "ada@example.com" },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
   it("rejects invalid chat payloads", () => {
     expect(
       clientRealtimeEventSchema.safeParse({
@@ -324,6 +369,46 @@ describe("realtime contracts", () => {
         messageId: mutationId,
         body: "hi",
         extra: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      clientRealtimeEventSchema.safeParse({
+        type: "chat.send",
+        messageId: mutationId,
+        body: "hi",
+        mentions: [],
+      }).success,
+    ).toBe(false);
+    expect(
+      clientRealtimeEventSchema.safeParse({
+        type: "chat.send",
+        messageId: mutationId,
+        body: "hi",
+        mentions: Array.from({ length: 21 }, () => clientInstanceId),
+      }).success,
+    ).toBe(false);
+    expect(
+      clientRealtimeEventSchema.safeParse({
+        type: "chat.send",
+        messageId: mutationId,
+        body: "hi",
+        anchor: { elementIds: [] },
+      }).success,
+    ).toBe(false);
+    expect(
+      clientRealtimeEventSchema.safeParse({
+        type: "chat.send",
+        messageId: mutationId,
+        body: "hi",
+        anchor: { elementIds: Array.from({ length: 11 }, () => "el") },
+      }).success,
+    ).toBe(false);
+    expect(
+      clientRealtimeEventSchema.safeParse({
+        type: "chat.send",
+        messageId: mutationId,
+        body: "hi",
+        anchor: { elementIds: ["el"], zoom: 2 },
       }).success,
     ).toBe(false);
   });

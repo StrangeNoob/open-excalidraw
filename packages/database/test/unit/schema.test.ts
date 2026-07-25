@@ -66,6 +66,18 @@ describe("database schema", () => {
     );
   });
 
+  it("mirrors the nullable chat mention and anchor columns", () => {
+    const columns = Object.fromEntries(
+      getTableConfig(chatMessages).columns.map((column) => [
+        column.name,
+        { type: column.getSQLType(), notNull: column.notNull },
+      ]),
+    );
+
+    expect(columns.mentions).toEqual({ type: "uuid[]", notNull: false });
+    expect(columns.anchor).toEqual({ type: "jsonb", notNull: false });
+  });
+
   it("keeps membership roles database constrained", () => {
     const config = getTableConfig(drawingMembers);
 
