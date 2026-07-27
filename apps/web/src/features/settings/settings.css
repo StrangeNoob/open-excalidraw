@@ -90,6 +90,12 @@
   padding: 0;
 }
 
+.settings-toggle {
+  align-items: center;
+  display: flex;
+  gap: 0.5rem;
+}
+
 .settings-token-note {
   color: #555;
   font-size: 0.9rem;

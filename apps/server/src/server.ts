@@ -61,7 +61,9 @@ import { attachCollaborationGateway } from "./modules/collaboration/socket-gatew
 import {
   ChatService,
   createChatRouter,
+  MentionEmailNotifier,
   PostgresChatRepository,
+  PostgresMentionNotificationRepository,
 } from "./modules/chat/index.js";
 import {
   ContentService,
@@ -73,6 +75,10 @@ import {
   LibraryService,
   PostgresLibraryRepository,
 } from "./modules/library/index.js";
+import {
+  createNotificationRouter,
+  PostgresNotificationSettingsRepository,
+} from "./modules/notifications/index.js";
 import {
   createSharingRouter,
   PostgresSharingRepository,
@@ -205,7 +211,15 @@ const adminService = new AdminService(
   ),
   storageQuotaPerUserBytes,
 );
-const maintenanceJobs = new MaintenanceJobs(database.pool, storage);
+// At most one mention email per recipient per drawing per window, whatever the
+// message volume. The maintenance prune uses the same window.
+const mentionEmailCooldownMinutes = positiveEnvironmentInteger(
+  "MENTION_EMAIL_COOLDOWN_MINUTES",
+  15,
+);
+const maintenanceJobs = new MaintenanceJobs(database.pool, storage, {
+  mentionEmailCooldownMs: mentionEmailCooldownMinutes * 60_000,
+});
 const maintenanceIntervalMs = positiveEnvironmentInteger(
   "MAINTENANCE_INTERVAL_MS",
   6 * 60 * 60 * 1_000,
@@ -240,6 +254,7 @@ const runMaintenance = (): Promise<void> => {
             stage,
           })),
           latencyMs: Date.now() - startedAt,
+          mentionEmailStatesDeleted: result.mentionEmailStatesDeleted,
           mutationsDeleted: result.mutationsDeleted,
           orphanAssetsDeleted: result.orphanAssetsDeleted,
           revisionsPruned: result.revisionsPruned,
@@ -321,6 +336,23 @@ const presenceService = new PresenceService({
 const chatService = new ChatService({
   repository: new PostgresChatRepository(database.pool),
   membershipResolver,
+  mentionNotifier: new MentionEmailNotifier({
+    repository: new PostgresMentionNotificationRepository(database.pool),
+    mailer,
+    // Presence in this drawing's room only: being elsewhere in the app is not
+    // being in the conversation.
+    presentUserIds: (drawingId) =>
+      presenceService
+        .roster(drawingId)
+        .map((participant) => participant.userId),
+    appBaseUrl: baseUrl,
+    cooldownMinutes: mentionEmailCooldownMinutes,
+    heroImageUrl: emailHeroImageUrl,
+    onError: (error) =>
+      operationalLog("error", "chat.mention_email_failed", {
+        errorType: safeErrorType(error),
+      }),
+  }),
 });
 const assetRouter = Router().use(
   "/api/v1",
@@ -387,6 +419,10 @@ const app = createApp({
     createSharingRouter({ service: sharingService, identity }),
     createChatRouter({ service: chatService, identity }),
     createTokenRouter({ service: tokenService, identity }),
+    createNotificationRouter({
+      repository: new PostgresNotificationSettingsRepository(database.pool),
+      identity,
+    }),
     assetRouter,
     createDocsRouter(),
     createMetricsRouter({

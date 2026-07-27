@@ -31,7 +31,11 @@ function record(overrides: Partial<ChatMessageRecord> = {}): ChatMessageRecord {
 
 function createService(
   repository: Partial<ChatRepository>,
-  options: { role?: "owner" | "editor" | "viewer" | null; nowMs?: number } = {},
+  options: {
+    role?: "owner" | "editor" | "viewer" | null;
+    nowMs?: number;
+    mentionNotifier?: { notify: (input: unknown) => Promise<void> };
+  } = {},
 ) {
   const clockMs = { value: options.nowMs ?? 0 };
   const getRole = vi
@@ -45,6 +49,9 @@ function createService(
       refillTokensPerSecond: 1,
       clock: { now: () => clockMs.value },
     }),
+    ...(options.mentionNotifier
+      ? { mentionNotifier: options.mentionNotifier }
+      : {}),
   });
   return { service, clockMs, getRole };
 }
@@ -141,6 +148,54 @@ describe("ChatService.send", () => {
 
     expect(insert).toHaveBeenCalledWith(expect.objectContaining({ anchor }));
     expect(message?.anchor).toEqual(anchor);
+  });
+
+  it("hands persisted mentions to the notifier without awaiting it", async () => {
+    const insert = vi.fn().mockResolvedValue(record({ mentions: [MEMBER_ID] }));
+    let resolveNotify = () => {};
+    const notify = vi.fn().mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveNotify = resolve;
+      }),
+    );
+    const { service } = createService(
+      { insert },
+      { mentionNotifier: { notify } },
+    );
+
+    await expect(
+      service.send(binding, {
+        type: "chat.send",
+        messageId: MESSAGE_ID,
+        body: "hello",
+        mentions: [MEMBER_ID],
+      }),
+    ).resolves.toMatchObject({ id: MESSAGE_ID });
+    expect(notify).toHaveBeenCalledWith({
+      drawingId: DRAWING_ID,
+      senderUserId: USER_ID,
+      senderName: "Ada",
+      mentions: [MEMBER_ID],
+    });
+    resolveNotify();
+  });
+
+  it("still delivers the message when the notifier rejects", async () => {
+    const insert = vi.fn().mockResolvedValue(record({ mentions: [MEMBER_ID] }));
+    const notify = vi.fn().mockRejectedValue(new Error("mail down"));
+    const { service } = createService(
+      { insert },
+      { mentionNotifier: { notify } },
+    );
+
+    await expect(
+      service.send(binding, {
+        type: "chat.send",
+        messageId: MESSAGE_ID,
+        body: "hello",
+        mentions: [MEMBER_ID],
+      }),
+    ).resolves.toMatchObject({ id: MESSAGE_ID });
   });
 
   it("returns null for a duplicate messageId so it is not re-broadcast", async () => {

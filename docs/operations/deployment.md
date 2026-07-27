@@ -130,7 +130,14 @@ DOMAIN=draw.example.com
 If the database password is not URL-safe, set `DATABASE_URL` with a
 percent-encoded password. OAuth providers are disabled when their client ID or
 secret is blank. SMTP is disabled when `SMTP_HOST` is blank; invitation links
-remain available for an owner to copy manually.
+remain available for an owner to copy manually, and mention emails are simply
+not sent.
+
+When a chat message mentions a member who is not currently in that drawing,
+they get an email — unless they turned mention emails off, or already got one
+for that drawing within the last `MENTION_EMAIL_COOLDOWN_MINUTES` (default
+15). The email carries the sender, the drawing title, and a link; never the
+message text.
 
 Set `DISABLE_SIGNUPS=true` to block all new account registration —
 email/password, Google, GitHub, and OIDC alike — while existing users keep

@@ -8,6 +8,7 @@ export * from "./content.js";
 export * from "./drawings.js";
 export * from "./library.js";
 export * from "./limits.js";
+export * from "./notifications.js";
 export * from "./realtime.js";
 export * from "./sharing.js";
 export * from "./tokens.js";

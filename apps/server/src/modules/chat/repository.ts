@@ -4,7 +4,12 @@ import type {
 } from "@open-excalidraw/contracts";
 import type { Pool, QueryResultRow } from "pg";
 
-import type { ChatMessageRecord, ChatRepository } from "./types.js";
+import type {
+  ChatMessageRecord,
+  ChatRepository,
+  MentionEmailRecipient,
+  MentionNotificationRepository,
+} from "./types.js";
 
 interface ChatParticipantRow extends QueryResultRow {
   user_id: string;
@@ -92,6 +97,68 @@ export class PostgresChatRepository implements ChatRepository {
       [drawingId],
     );
     return result.rows.map((row) => ({ userId: row.user_id, name: row.name }));
+  }
+}
+
+interface MentionRecipientRow extends QueryResultRow {
+  user_id: string;
+  email: string;
+  mention_emails: boolean;
+  drawing_title: string;
+}
+
+export class PostgresMentionNotificationRepository implements MentionNotificationRepository {
+  public constructor(private readonly pool: Pool) {}
+
+  public async findMentionRecipients(input: {
+    drawingId: string;
+    userIds: string[];
+  }): Promise<MentionEmailRecipient[]> {
+    // No settings row means opted in, so the join is a LEFT one and the
+    // default lives in COALESCE rather than in a backfill. Membership is
+    // re-checked here: the caller filtered at send time, but notification is
+    // detached, and nobody who lost access in between may be told the title.
+    const result = await this.pool.query<MentionRecipientRow>(
+      `SELECT u.id AS user_id, u.email, d.title AS drawing_title,
+              COALESCE(s.mention_emails, true) AS mention_emails
+       FROM drawings d
+       JOIN "user" u ON u.id = ANY($2::uuid[])
+       LEFT JOIN user_notification_settings s ON s.user_id = u.id
+       WHERE d.id = $1 AND d.deleted_at IS NULL AND u.disabled_at IS NULL
+         AND (u.id = d.owner_user_id
+              OR EXISTS (SELECT 1 FROM drawing_members m
+                         WHERE m.drawing_id = d.id AND m.user_id = u.id))`,
+      [input.drawingId, input.userIds],
+    );
+    return result.rows.map((row) => ({
+      userId: row.user_id,
+      email: row.email,
+      mentionEmails: row.mention_emails,
+      drawingTitle: row.drawing_title,
+    }));
+  }
+
+  public async claimMentionEmailCooldown(input: {
+    drawingId: string;
+    userIds: string[];
+    cooldownMinutes: number;
+  }): Promise<string[]> {
+    // The conditional DO UPDATE is the claim: a row still inside its window
+    // matches no update and is therefore not returned, so two concurrent
+    // mentions of the same person in the same drawing yield one email. The
+    // ORDER BY is what keeps that concurrency safe: every claimant locks the
+    // shared rows in user_id order, so overlapping batches cannot deadlock.
+    const result = await this.pool.query<{ user_id: string }>(
+      `INSERT INTO mention_email_state (user_id, drawing_id, last_sent_at)
+       SELECT DISTINCT unnest($2::uuid[]), $1::uuid, now()
+       ORDER BY 1
+       ON CONFLICT (user_id, drawing_id) DO UPDATE SET last_sent_at = now()
+         WHERE mention_email_state.last_sent_at
+               <= now() - ($3::int * interval '1 minute')
+       RETURNING user_id`,
+      [input.drawingId, input.userIds, input.cooldownMinutes],
+    );
+    return result.rows.map((row) => row.user_id);
   }
 }
 

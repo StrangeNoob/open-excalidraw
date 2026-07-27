@@ -11,6 +11,7 @@ export const DEFAULT_ASSET_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 export const DEFAULT_DELETED_DRAWING_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 export const DEFAULT_AUDIT_RETENTION_MS = 90 * 24 * 60 * 60 * 1_000;
 export const DEFAULT_MUTATION_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
+export const DEFAULT_MENTION_EMAIL_COOLDOWN_MS = 15 * 60 * 1_000;
 export const DEFAULT_CANDIDATE_BATCH_SIZE = 500;
 
 export interface MaintenanceJobOptions {
@@ -20,6 +21,7 @@ export interface MaintenanceJobOptions {
   deletedDrawingRetentionMs?: number;
   auditRetentionMs?: number;
   mutationRetentionMs?: number;
+  mentionEmailCooldownMs?: number;
   candidateBatchSize?: number;
 }
 
@@ -42,6 +44,7 @@ export interface MaintenanceResult {
   expiredVerificationsDeleted: number;
   auditEventsDeleted: number;
   mutationsDeleted: number;
+  mentionEmailStatesDeleted: number;
   drawingsPurged: number;
   failures: MaintenanceFailure[];
 }
@@ -72,6 +75,7 @@ export class MaintenanceJobs {
   readonly #deletedDrawingRetentionMs: number;
   readonly #auditRetentionMs: number;
   readonly #mutationRetentionMs: number;
+  readonly #mentionEmailCooldownMs: number;
   readonly #candidateBatchSize: number;
 
   public constructor(
@@ -100,6 +104,10 @@ export class MaintenanceJobs {
       "mutationRetentionMs",
       options.mutationRetentionMs ?? DEFAULT_MUTATION_RETENTION_MS,
     );
+    this.#mentionEmailCooldownMs = nonnegativeInteger(
+      "mentionEmailCooldownMs",
+      options.mentionEmailCooldownMs ?? DEFAULT_MENTION_EMAIL_COOLDOWN_MS,
+    );
     this.#candidateBatchSize = positiveInteger(
       "candidateBatchSize",
       options.candidateBatchSize ?? DEFAULT_CANDIDATE_BATCH_SIZE,
@@ -121,6 +129,8 @@ export class MaintenanceJobs {
     throwIfAborted(signal);
     const security = await this.cleanupExpiredSecurityRecords(now);
     throwIfAborted(signal);
+    const mentionEmailStatesDeleted = await this.cleanupMentionEmailState(now);
+    throwIfAborted(signal);
     const auditEventsDeleted = await this.cleanupAuditEvents(now);
     throwIfAborted(signal);
     const purgedDrawings = await this.purgeDeletedDrawings(now, signal);
@@ -133,6 +143,7 @@ export class MaintenanceJobs {
       expiredVerificationsDeleted: security.verifications,
       auditEventsDeleted,
       mutationsDeleted,
+      mentionEmailStatesDeleted,
       drawingsPurged: purgedDrawings.deleted,
       failures: [...orphanAssets.failures, ...purgedDrawings.failures],
     };
@@ -250,6 +261,17 @@ export class MaintenanceJobs {
         verifications: verifications.rowCount ?? 0,
       };
     });
+  }
+
+  // A cooldown row outside its window can no longer suppress anything, so it
+  // is indistinguishable from an absent one.
+  public async cleanupMentionEmailState(now = this.#now()): Promise<number> {
+    const cutoff = before(now, this.#mentionEmailCooldownMs);
+    const result = await this.pool.query(
+      `DELETE FROM mention_email_state WHERE last_sent_at < $1`,
+      [cutoff],
+    );
+    return result.rowCount ?? 0;
   }
 
   public async cleanupAuditEvents(now = this.#now()): Promise<number> {

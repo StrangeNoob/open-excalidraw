@@ -23,6 +23,7 @@ const maintenanceResult: MaintenanceResult = {
   expiredVerificationsDeleted: 0,
   auditEventsDeleted: 9,
   mutationsDeleted: 2,
+  mentionEmailStatesDeleted: 3,
   drawingsPurged: 1,
   failures: [{ id: "a", errorType: "StorageError", stage: "asset-delete" }],
 };
