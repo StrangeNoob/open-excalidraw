@@ -417,6 +417,9 @@ export const ChatPanel = ({
             >
               <span className="chat-author">You</span>
               <span className="chat-body">{entry.body}</span>
+              {entry.anchor ? (
+                <AnchorChip anchor={entry.anchor} bridge={editorBridge} />
+              ) : null}
               <span className="chat-time">sending…</span>
             </li>
           ))}
@@ -427,6 +430,9 @@ export const ChatPanel = ({
             >
               <span className="chat-author">You</span>
               <span className="chat-body">{entry.body}</span>
+              {entry.anchor ? (
+                <AnchorChip anchor={entry.anchor} bridge={editorBridge} />
+              ) : null}
               <button
                 className="chat-retry"
                 onClick={() => send(entry, entry.messageId)}

@@ -852,9 +852,13 @@ export const DrawingPage = ({
           appState: { selectedElementIds },
           captureUpdate: CaptureUpdateAction.NEVER,
         });
+        // maxZoom keeps a jump to a couple of small shapes from slamming the
+        // view past 100%; large anchors still zoom out to fit.
         editorApi.scrollToContent(targets, {
           animate: true,
           fitToViewport: true,
+          viewportZoomFactor: 0.7,
+          maxZoom: 1,
         });
         return true;
       },

@@ -252,6 +252,11 @@ describe("ChatPanel", () => {
     expect(
       screen.getByRole("button", { name: "Attach selection (2)" }),
     ).toBeInTheDocument();
+    // The echo has not arrived yet, so the message is still a pending outbox
+    // row — its anchor chip must already be visible there.
+    expect(
+      screen.getByRole("button", { name: "2 elements" }),
+    ).toBeInTheDocument();
   });
 
   it("drops a mention whose token no longer appears in the body", async () => {
