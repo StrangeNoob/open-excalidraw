@@ -1,5 +1,6 @@
 import {
   boolean,
+  index,
   pgTable,
   primaryKey,
   timestamp,
@@ -43,6 +44,7 @@ export const mentionEmailState = pgTable(
       name: "mention_email_state_pkey",
       columns: [table.userId, table.drawingId],
     }),
+    index("mention_email_state_last_sent_at_idx").on(table.lastSentAt),
   ],
 );
 

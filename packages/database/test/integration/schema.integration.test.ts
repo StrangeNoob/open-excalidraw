@@ -236,6 +236,7 @@ describe("database constraints", () => {
         "personal_access_tokens_token_hash_unique",
         "personal_access_tokens_user_id_idx",
         "drawing_search_texts_search_tsv_idx",
+        "mention_email_state_last_sent_at_idx",
       ]),
     );
   });

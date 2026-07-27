@@ -18,3 +18,7 @@ CREATE TABLE mention_email_state (
   last_sent_at TIMESTAMPTZ NOT NULL,
   CONSTRAINT mention_email_state_pkey PRIMARY KEY (user_id, drawing_id)
 );
+
+-- The prune scans by age alone, which the composite PK cannot serve.
+CREATE INDEX mention_email_state_last_sent_at_idx
+  ON mention_email_state (last_sent_at);
