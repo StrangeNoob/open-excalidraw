@@ -7,6 +7,10 @@
   trailers, no "Generated with" footers, no session links. The
   `.claude/settings.json` attribution settings enforce this for commits and
   PRs; apply the same rule manually to everything else you post.
+- Commits must be authored as the repository owner, never as Claude. The
+  `GIT_AUTHOR_*`/`GIT_COMMITTER_*` env vars in `.claude/settings.json` pin the
+  identity; verify with `git log --format="%an <%ae>"` before pushing if in
+  doubt.
 
 ## Branching
 
