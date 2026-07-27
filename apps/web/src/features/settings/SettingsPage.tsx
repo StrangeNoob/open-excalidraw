@@ -12,6 +12,11 @@ import type { OAuthProvider } from "../auth";
 import { githubIcon, googleIcon, ssoIcon } from "../auth/provider-icons";
 import { ApiError } from "../../shared/api";
 import {
+  NOTIFICATION_SETTINGS_QUERY_KEY,
+  defaultNotificationSettingsApi,
+  type NotificationSettingsApi,
+} from "./notifications-api";
+import {
   TOKENS_QUERY_KEY,
   defaultTokensApi,
   type TokensApi,
@@ -723,6 +728,62 @@ const TokensSection = ({ api }: { api: TokensApi }) => {
   );
 };
 
+const NotificationsSection = ({ api }: { api: NotificationSettingsApi }) => {
+  const queryClient = useQueryClient();
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const settings = useQuery({
+    queryFn: () => api.getNotificationSettings(),
+    queryKey: NOTIFICATION_SETTINGS_QUERY_KEY,
+  });
+
+  // The saved response is authoritative, so the checkbox follows the server
+  // rather than a second copy of the state in this component.
+  const save = useMutation({
+    mutationFn: (mentionEmails: boolean) =>
+      api.saveNotificationSettings({ mentionEmails }),
+    onError: (error) => setActionError(error.message),
+    onSuccess: (saved) => {
+      setActionError(null);
+      queryClient.setQueryData(NOTIFICATION_SETTINGS_QUERY_KEY, saved);
+    },
+  });
+
+  return (
+    <section aria-labelledby="settings-notifications-title">
+      <h2 id="settings-notifications-title">Email notifications</h2>
+      <p className="settings-token-note">
+        Mention emails only go out when you are away from the drawing, and at
+        most one per drawing within a short window. They never include the
+        message.
+      </p>
+
+      {settings.isPending ? (
+        <p aria-live="polite">Loading notification settings…</p>
+      ) : settings.isError ? (
+        <div className="dashboard-error" role="alert">
+          <p>{settings.error.message}</p>
+          <button onClick={() => void settings.refetch()} type="button">
+            Try again
+          </button>
+        </div>
+      ) : (
+        <label className="settings-toggle">
+          <input
+            checked={settings.data.mentionEmails}
+            disabled={save.isPending}
+            onChange={(event) => save.mutate(event.target.checked)}
+            type="checkbox"
+          />
+          Email me when I’m mentioned
+        </label>
+      )}
+
+      {actionError ? <p role="alert">{actionError}</p> : null}
+    </section>
+  );
+};
+
 const SignOutSection = () => {
   const auth = useAuth();
   const navigate = useNavigate();
@@ -758,10 +819,12 @@ const SignOutSection = () => {
 };
 
 export interface SettingsPageProps {
+  notificationsApi?: NotificationSettingsApi;
   tokensApi?: TokensApi;
 }
 
 export const SettingsPage = ({
+  notificationsApi = defaultNotificationSettingsApi,
   tokensApi = defaultTokensApi,
 }: SettingsPageProps = {}) => {
   const auth = useAuth();
@@ -805,6 +868,7 @@ export const SettingsPage = ({
             )}
           />
           <TwoFactorSection />
+          <NotificationsSection api={notificationsApi} />
           <TokensSection api={tokensApi} />
           <SignOutSection />
         </>

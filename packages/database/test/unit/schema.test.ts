@@ -15,6 +15,10 @@ import {
   drawingRevisions,
   drawings,
 } from "../../src/schema/drawings";
+import {
+  mentionEmailState,
+  userNotificationSettings,
+} from "../../src/schema/notifications";
 import { drawingInvitations, drawingMembers } from "../../src/schema/sharing";
 
 describe("database schema", () => {
@@ -76,6 +80,23 @@ describe("database schema", () => {
 
     expect(columns.mentions).toEqual({ type: "uuid[]", notNull: false });
     expect(columns.anchor).toEqual({ type: "jsonb", notNull: false });
+  });
+
+  it("defaults notification settings on and keys cooldowns per drawing", () => {
+    const settings = getTableConfig(userNotificationSettings);
+    const mentionEmails = settings.columns.find(
+      (column) => column.name === "mention_emails",
+    );
+
+    expect(settings.name).toBe("user_notification_settings");
+    // An absent row means opted in, so the column default must agree.
+    expect(mentionEmails?.default).toBe(true);
+    expect(mentionEmails?.notNull).toBe(true);
+    expect(
+      getTableConfig(mentionEmailState).primaryKeys[0]?.columns.map(
+        (column) => column.name,
+      ),
+    ).toEqual(["user_id", "drawing_id"]);
   });
 
   it("keeps membership roles database constrained", () => {

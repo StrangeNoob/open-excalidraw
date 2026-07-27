@@ -1,4 +1,5 @@
 import { renderInvitationEmail } from "../src/templates/invitation.js";
+import { renderMentionEmail } from "../src/templates/mention.js";
 import { renderPasswordResetEmail } from "../src/templates/password-reset.js";
 import { renderVerificationEmail } from "../src/templates/verification.js";
 
@@ -21,6 +22,28 @@ describe("mail templates", () => {
     expect(email.html).not.toContain("<script>");
     expect(email.html).not.toContain("<img src=x");
     expect(email.text).toContain("as a viewer");
+  });
+
+  it("names the sender and drawing without carrying the message body", () => {
+    const email = renderMentionEmail({
+      to: "member@example.com",
+      drawingUrl: "https://draw.example.com/drawings/d1?ref=a&b=c",
+      senderName: "Alice\r\nBcc: attacker@example.com",
+      drawingTitle: 'Roadmap </a><img src=x onerror="bad">',
+      productName: "Draw & Share",
+    });
+
+    expect(email.subject).toBe(
+      'Alice Bcc: attacker@example.com mentioned you in “Roadmap </a><img src=x onerror="bad">”',
+    );
+    expect(email.subject).not.toMatch(/[\r\n]/);
+    expect(email.html).toContain("&lt;img src=x onerror=&quot;bad&quot;&gt;");
+    expect(email.html).not.toContain("<img src=x");
+    expect(email.html).toContain("ref=a&amp;b=c");
+    expect(email.html).toContain("Open drawing");
+    expect(email.text).toContain(
+      "https://draw.example.com/drawings/d1?ref=a&b=c",
+    );
   });
 
   it("renders verification and reset action links", () => {

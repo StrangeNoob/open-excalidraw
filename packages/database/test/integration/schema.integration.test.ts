@@ -113,6 +113,7 @@ describe("initial PostgreSQL migration", () => {
       "0014_personal_access_tokens.sql",
       "0015_drawing_search_texts.sql",
       "0016_chat_mentions.sql",
+      "0017_mention_email_notifications.sql",
     ]);
     expect(second.alreadyApplied).toEqual(first.applied);
     expect(record.rows).toEqual(first.applied);
@@ -203,10 +204,13 @@ describe("database constraints", () => {
       "drawing_user_tags.drawing_id->drawings.id (CASCADE)",
       "drawing_user_tags.user_id->user.id (CASCADE)",
       "drawings.owner_user_id->user.id (RESTRICT)",
+      "mention_email_state.drawing_id->drawings.id (CASCADE)",
+      "mention_email_state.user_id->user.id (CASCADE)",
       "personal_access_tokens.user_id->user.id (CASCADE)",
       "session.user_id->user.id (CASCADE)",
       "two_factor.user_id->user.id (CASCADE)",
       "user_libraries.user_id->user.id (CASCADE)",
+      "user_notification_settings.user_id->user.id (CASCADE)",
     ]);
 
     const indexes = await pool.query<{ indexname: string }>(`

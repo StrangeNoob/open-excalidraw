@@ -17,6 +17,10 @@ import {
   drawings,
 } from "./schema/drawings.js";
 import { userLibraries } from "./schema/libraries.js";
+import {
+  mentionEmailState,
+  userNotificationSettings,
+} from "./schema/notifications.js";
 import { drawingSearchTexts } from "./schema/search.js";
 import { appSettings } from "./schema/settings.js";
 import { drawingInvitations, drawingMembers } from "./schema/sharing.js";
@@ -34,11 +38,13 @@ export const schema = {
   drawingRevisions,
   drawingSearchTexts,
   drawings,
+  mentionEmailState,
   personalAccessTokens,
   session,
   twoFactor,
   user,
   userLibraries,
+  userNotificationSettings,
   verification,
 };
 

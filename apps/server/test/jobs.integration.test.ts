@@ -7,6 +7,7 @@ import {
   DEFAULT_ASSET_RETENTION_MS,
   DEFAULT_AUDIT_RETENTION_MS,
   DEFAULT_DELETED_DRAWING_RETENTION_MS,
+  DEFAULT_MENTION_EMAIL_COOLDOWN_MS,
   DEFAULT_MUTATION_RETENTION_MS,
   MaintenanceJobs,
 } from "../src/jobs/index.js";
@@ -306,6 +307,23 @@ describeDatabase("maintenance jobs", () => {
       `maintenance-${ownerId}-boundary`,
       `maintenance-${ownerId}-new`,
     ]);
+  });
+
+  it("prunes mention cooldowns past the window but keeps the boundary", async () => {
+    const cutoff = ago(DEFAULT_MENTION_EMAIL_COOLDOWN_MS);
+    // One row per (user, drawing), so the three ages are three drawings.
+    const expired = await createDrawing(ownerId);
+    const boundary = await createDrawing(ownerId);
+    const active = await createDrawing(ownerId);
+    await insertMentionCooldown(expired, new Date(cutoff.getTime() - 1));
+    await insertMentionCooldown(boundary, cutoff);
+    await insertMentionCooldown(active, new Date(cutoff.getTime() + 1));
+
+    expect(await jobs.cleanupMentionEmailState()).toBe(1);
+    expect(await jobs.cleanupMentionEmailState()).toBe(0);
+    expect(await mentionCooldownDrawingIds()).toEqual(
+      [boundary, active].sort(),
+    );
   });
 
   it("purges deleted drawings after seven days, including blobs, with safe retries", async () => {
@@ -630,6 +648,22 @@ describeDatabase("maintenance jobs", () => {
        VALUES ('maintenance.test', $1, $2)`,
       [`maintenance-${ownerId}-${name}`, createdAt],
     );
+  }
+
+  async function insertMentionCooldown(drawingId: string, lastSentAt: Date) {
+    await database.pool.query(
+      `INSERT INTO mention_email_state (user_id, drawing_id, last_sent_at)
+       VALUES ($1, $2, $3)`,
+      [ownerId, drawingId, lastSentAt],
+    );
+  }
+
+  async function mentionCooldownDrawingIds() {
+    const result = await database.pool.query<{ drawing_id: string }>(
+      `SELECT drawing_id FROM mention_email_state WHERE user_id = $1`,
+      [ownerId],
+    );
+    return result.rows.map((row) => row.drawing_id).sort();
   }
 
   async function drawingIds(ids: string[]) {

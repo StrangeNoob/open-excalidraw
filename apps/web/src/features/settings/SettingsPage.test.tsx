@@ -1,4 +1,5 @@
 import type {
+  NotificationSettings,
   PersonalAccessToken,
   PersonalAccessTokenCreate,
   PersonalAccessTokenCreated,
@@ -19,6 +20,7 @@ import type {
 import { AuthProvider } from "../auth";
 import { ApiError } from "../../shared/api";
 import { SettingsPage } from "./SettingsPage";
+import type { NotificationSettingsApi } from "./notifications-api";
 import type { TokensApi } from "./tokens-api";
 
 const session: SessionResponse = {
@@ -123,6 +125,24 @@ class FakeTokensApi implements TokensApi {
   }
 }
 
+class FakeNotificationSettingsApi implements NotificationSettingsApi {
+  settings: NotificationSettings;
+
+  readonly getNotificationSettings = vi.fn(() =>
+    Promise.resolve(this.settings),
+  );
+  readonly saveNotificationSettings = vi.fn(
+    (settings: NotificationSettings) => {
+      this.settings = settings;
+      return Promise.resolve(settings);
+    },
+  );
+
+  constructor(settings: NotificationSettings = { mentionEmails: true }) {
+    this.settings = settings;
+  }
+}
+
 const enabledSession: SessionResponse = {
   ...session,
   user: session.user && { ...session.user, twoFactorEnabled: true },
@@ -136,6 +156,7 @@ const renderSettings = (
   accounts: LinkedAccount[],
   sessionResponse: SessionResponse = session,
   tokensApi: TokensApi = new FakeTokensApi(),
+  notificationsApi: NotificationSettingsApi = new FakeNotificationSettingsApi(),
 ) => {
   const client = new FakeAuthClient();
   client.getSession.mockResolvedValue(sessionResponse);
@@ -150,7 +171,10 @@ const renderSettings = (
     <QueryClientProvider client={queryClient}>
       <AuthProvider client={client}>
         <MemoryRouter initialEntries={["/app/settings"]}>
-          <SettingsPage tokensApi={tokensApi} />
+          <SettingsPage
+            notificationsApi={notificationsApi}
+            tokensApi={tokensApi}
+          />
         </MemoryRouter>
       </AuthProvider>
     </QueryClientProvider>,
@@ -403,6 +427,64 @@ describe("SettingsPage", () => {
     );
 
     expect(await screen.findByText("Invalid code.")).toBeVisible();
+  });
+
+  it("turns mention emails off and reflects the saved value", async () => {
+    const notificationsApi = new FakeNotificationSettingsApi();
+    renderSettings(
+      [{ providerId: "credential" }],
+      session,
+      new FakeTokensApi(),
+      notificationsApi,
+    );
+
+    const toggle = await screen.findByLabelText("Email me when I’m mentioned");
+    expect(toggle).toBeChecked();
+
+    const user = userEvent.setup();
+    await user.click(toggle);
+
+    await waitFor(() =>
+      expect(notificationsApi.saveNotificationSettings).toHaveBeenCalledWith({
+        mentionEmails: false,
+      }),
+    );
+    await waitFor(() => expect(toggle).not.toBeChecked());
+  });
+
+  it("shows mention emails as off when the account opted out", async () => {
+    renderSettings(
+      [{ providerId: "credential" }],
+      session,
+      new FakeTokensApi(),
+      new FakeNotificationSettingsApi({ mentionEmails: false }),
+    );
+
+    expect(
+      await screen.findByLabelText("Email me when I’m mentioned"),
+    ).not.toBeChecked();
+  });
+
+  it("surfaces an error when saving notification settings fails", async () => {
+    const notificationsApi = new FakeNotificationSettingsApi();
+    notificationsApi.saveNotificationSettings.mockRejectedValueOnce(
+      new Error("Could not save your preferences."),
+    );
+    renderSettings(
+      [{ providerId: "credential" }],
+      session,
+      new FakeTokensApi(),
+      notificationsApi,
+    );
+
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByLabelText("Email me when I’m mentioned"),
+    );
+
+    expect(
+      await screen.findByText("Could not save your preferences."),
+    ).toBeVisible();
   });
 
   it("lists API tokens with a masked hint and expiry", async () => {

@@ -24,6 +24,15 @@ export class ChatService {
       repository: ChatRepository;
       membershipResolver: DrawingMembershipResolver;
       rateLimiter?: TokenBucketRateLimiter;
+      /** Absent when mention email is not wired; sending never depends on it. */
+      mentionNotifier?: {
+        notify(input: {
+          drawingId: string;
+          senderUserId: string;
+          senderName: string;
+          mentions: string[];
+        }): Promise<void>;
+      };
     },
   ) {
     this.#rateLimiter =
@@ -52,6 +61,19 @@ export class ChatService {
       // can only be resolved against the client's live scene.
       anchor: event.anchor,
     });
+    if (record?.mentions?.length) {
+      // Detached on purpose: mail must never delay or fail a chat message. The
+      // notifier reports its own failures; this guard only keeps a rejection
+      // from escaping as an unhandled rejection.
+      void this.options.mentionNotifier
+        ?.notify({
+          drawingId: record.drawingId,
+          senderUserId: record.userId,
+          senderName: record.authorName,
+          mentions: record.mentions,
+        })
+        .catch(() => {});
+    }
     return record ? toChatMessage(record) : null;
   }
 

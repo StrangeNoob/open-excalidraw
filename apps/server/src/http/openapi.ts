@@ -34,6 +34,7 @@ import {
   invitationSchema,
   libraryItemSchema,
   libraryResponseSchema,
+  notificationSettingsSchema,
   personalAccessTokenCreateSchema,
   personalAccessTokenCreatedSchema,
   personalAccessTokenListSchema,
@@ -80,6 +81,7 @@ const contractSchemas = {
   Invitation: invitationSchema,
   LibraryItem: libraryItemSchema,
   LibraryResponse: libraryResponseSchema,
+  NotificationSettings: notificationSettingsSchema,
   PersonalAccessToken: personalAccessTokenSchema,
   PersonalAccessTokenCreate: personalAccessTokenCreateSchema,
   PersonalAccessTokenCreated: personalAccessTokenCreatedSchema,
@@ -231,6 +233,10 @@ export const openApiDocument = {
       description: "Per-account persistence of Excalidraw shape libraries.",
     },
     { name: "Chat", description: "Per-drawing chat history." },
+    {
+      name: "Notifications",
+      description: "Per-account notification preferences.",
+    },
     { name: "Assets", description: "Binary assets referenced by scenes." },
     {
       name: "Tokens",
@@ -928,6 +934,31 @@ export const openApiDocument = {
             "The saved library items and their new timestamp.",
             ref("LibraryResponse"),
           ),
+          "400": invalidRequest,
+          "401": unauthorized,
+        },
+      },
+    },
+    "/api/v1/notification-settings": {
+      get: {
+        tags: ["Notifications"],
+        summary: "Read the signed-in user's notification preferences",
+        description:
+          "Every preference defaults to on for accounts that never changed one.",
+        responses: {
+          "200": json(
+            "The caller's notification preferences.",
+            ref("NotificationSettings"),
+          ),
+          "401": unauthorized,
+        },
+      },
+      put: {
+        tags: ["Notifications"],
+        summary: "Replace the signed-in user's notification preferences",
+        requestBody: jsonBody(ref("NotificationSettings")),
+        responses: {
+          "200": json("The stored preferences.", ref("NotificationSettings")),
           "400": invalidRequest,
           "401": unauthorized,
         },
