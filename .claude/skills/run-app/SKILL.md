@@ -25,35 +25,40 @@ The container images ship a dormant Postgres 16 cluster. Check and start it:
 ```bash
 pg_lsclusters                      # expect: 16 main 5432 down
 pg_ctlcluster 16 main start
-su postgres -c "psql -c \"CREATE ROLE open_excalidraw LOGIN PASSWORD 'localdev' SUPERUSER\""
+su postgres -c "psql -c \"CREATE ROLE open_excalidraw LOGIN PASSWORD 'localdev'\""
 su postgres -c "createdb -O open_excalidraw open_excalidraw"
 ```
 
 `initdb` refuses to run as root, so reuse this cluster rather than creating
 one. Role/db creation is not idempotent — "already exists" errors on a rerun
-are fine.
+are fine. No SUPERUSER is needed: migration 0001 installs the `citext` and
+`pgcrypto` extensions, but both are trusted on Postgres 13+, so the database
+owner may install them (verified against this cluster).
 
 ## 2. Environment
 
 The server loads dotenv from `$PWD/.env` or the repo root `.env` (gitignored —
-never commit it). Only `DATABASE_URL` and `BETTER_AUTH_SECRET` are hard
-requirements; the secret must be ≥32 chars. Write the repo-root `.env`:
+never commit it). `DATABASE_URL` and `BETTER_AUTH_SECRET` (≥32 chars) are
+always required, and `ADMIN_RESET_TOKEN` is also required whenever `SMTP_HOST`
+is unset — which it is in this runbook. Write the repo-root `.env`:
 
-```
+```dotenv
 APP_BASE_URL=http://localhost:3000
 APP_PORT=3000
 BETTER_AUTH_SECRET=local-dev-secret-0123456789abcdefghijklmnopqrstuv
 ADMIN_RESET_TOKEN=local-dev-reset-0123456789abcdefghijklmnopqrstuv
 DATABASE_URL=postgresql://open_excalidraw:localdev@localhost:5432/open_excalidraw
 STORAGE_DRIVER=local
-STORAGE_LOCAL_PATH=<any writable scratch dir>
+STORAGE_LOCAL_PATH=/tmp/open-excalidraw-assets
 ```
 
 ## 3. Migrate, then launch
 
+Run from the repo root:
+
 ```bash
-cd packages/database && DATABASE_URL=postgresql://open_excalidraw:localdev@localhost:5432/open_excalidraw pnpm db:migrate
-cd <repo root> && pnpm dev   # run in background; logs both web and server
+DATABASE_URL=postgresql://open_excalidraw:localdev@localhost:5432/open_excalidraw pnpm --filter @open-excalidraw/database db:migrate
+pnpm dev   # run in background; logs both web and server
 ```
 
 Ready when the log shows `"event":"server.listening","port":3000` and
@@ -66,8 +71,9 @@ The `test:integration` suites need a live database via `DATABASE_TEST_URL`:
 
 ```bash
 su postgres -c "createdb -O open_excalidraw open_excalidraw_test"
-cd packages/database && DATABASE_TEST_URL=postgresql://open_excalidraw:localdev@localhost:5432/open_excalidraw_test pnpm test:integration
-cd apps/server     && DATABASE_TEST_URL=... pnpm test:integration
+export DATABASE_TEST_URL=postgresql://open_excalidraw:localdev@localhost:5432/open_excalidraw_test
+pnpm --filter @open-excalidraw/database test:integration
+pnpm --filter @open-excalidraw/server test:integration
 ```
 
 Do not run the root-level `pnpm test:integration`: `packages/storage` and
