@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   check,
   index,
+  jsonb,
   pgTable,
   text,
   timestamp,
@@ -10,6 +11,10 @@ import {
 
 import { user } from "./auth.js";
 import { drawings } from "./drawings.js";
+
+export type StoredChatAnchor = {
+  elementIds: string[];
+};
 
 export const chatMessages = pgTable(
   "chat_messages",
@@ -22,6 +27,10 @@ export const chatMessages = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
     body: text("body").notNull(),
+    // No foreign key: mentions are filtered against membership at send time and
+    // must outlive the mentioned member's removal from the drawing.
+    mentions: uuid("mentions").array(),
+    anchor: jsonb("anchor").$type<StoredChatAnchor>(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

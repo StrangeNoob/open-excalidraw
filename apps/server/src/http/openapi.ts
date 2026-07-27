@@ -18,6 +18,8 @@ import {
   authCapabilitiesSchema,
   chatHistoryResponseSchema,
   chatMessageSchema,
+  chatParticipantSchema,
+  chatParticipantsResponseSchema,
   contentResponseSchema,
   createDrawingRequestSchema,
   createInvitationRequestSchema,
@@ -62,6 +64,8 @@ const contractSchemas = {
   AuthCapabilities: authCapabilitiesSchema,
   ChatHistoryResponse: chatHistoryResponseSchema,
   ChatMessage: chatMessageSchema,
+  ChatParticipant: chatParticipantSchema,
+  ChatParticipantsResponse: chatParticipantsResponseSchema,
   ContentResponse: contentResponseSchema,
   CreateDrawingRequest: createDrawingRequestSchema,
   CreateInvitationRequest: createInvitationRequestSchema,
@@ -1166,6 +1170,26 @@ export const openApiDocument = {
         ],
         responses: {
           "200": json("A page of messages.", ref("ChatHistoryResponse")),
+          "401": unauthorized,
+          "404": notFound,
+        },
+      },
+    },
+    "/api/v1/drawings/{drawingId}/chat/participants": {
+      parameters: [drawingIdParameter],
+      get: {
+        tags: ["Chat"],
+        summary: "List who can be mentioned in this drawing's chat",
+        description:
+          "Names and ids of the drawing's owner and members, readable by " +
+          "every member so mentions can be composed and rendered. The " +
+          "sharing member list, which also carries emails, roles and " +
+          "invitations, stays owner-only.",
+        responses: {
+          "200": json(
+            "The drawing's chat participants.",
+            ref("ChatParticipantsResponse"),
+          ),
           "401": unauthorized,
           "404": notFound,
         },

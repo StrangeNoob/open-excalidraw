@@ -2,6 +2,7 @@ import {
   uuidSchema,
   type ChatHistoryResponse,
   type ChatMessage,
+  type ChatParticipantsResponse,
   type ChatSendEvent,
 } from "@open-excalidraw/contracts";
 
@@ -46,15 +47,53 @@ export class ChatService {
       drawingId: binding.drawingId,
       userId: binding.userId,
       body: event.body,
+      mentions: await this.#resolveMentions(binding.drawingId, event.mentions),
+      // Anchored element ids are stored verbatim: the scene moves on, so they
+      // can only be resolved against the client's live scene.
+      anchor: event.anchor,
     });
     return record ? toChatMessage(record) : null;
   }
 
-  public async history(
+  /**
+   * Mentions of users who are not members of the drawing are dropped silently
+   * rather than rejected: the message itself is still valid, and a stale
+   * mention is no reason to lose it. The filtered set is echoed back to the
+   * sender as the delivery ack, which tells them no more about who belongs to
+   * the drawing than the participant roster every member may read.
+   */
+  async #resolveMentions(
+    drawingId: string,
+    mentions: string[] | undefined,
+  ): Promise<string[] | undefined> {
+    if (!mentions || mentions.length === 0) {
+      return undefined;
+    }
+    const unique = [...new Set(mentions)];
+    const roles = await Promise.all(
+      unique.map((userId) =>
+        this.options.membershipResolver.getRole(drawingId, userId),
+      ),
+    );
+    const members = unique.filter((_, index) => roles[index] != null);
+    return members.length > 0 ? members : undefined;
+  }
+
+  /**
+   * The roster behind the mention picker. Every member may read it, unlike the
+   * owner-only sharing list, so it carries names and ids and nothing else.
+   */
+  public async participants(
     userId: string,
     drawingId: string,
-    before?: string,
-  ): Promise<ChatHistoryResponse> {
+  ): Promise<ChatParticipantsResponse> {
+    await this.#assertMember(userId, drawingId);
+    return {
+      participants: await this.options.repository.listParticipants(drawingId),
+    };
+  }
+
+  async #assertMember(userId: string, drawingId: string): Promise<void> {
     const role = await this.options.membershipResolver.getRole(
       drawingId,
       userId,
@@ -66,6 +105,14 @@ export class ChatService {
         "The drawing does not exist or is not accessible",
       );
     }
+  }
+
+  public async history(
+    userId: string,
+    drawingId: string,
+    before?: string,
+  ): Promise<ChatHistoryResponse> {
+    await this.#assertMember(userId, drawingId);
     // The cursor is simply the oldest already-loaded message id; the
     // repository resolves its exact position database-side.
     const records = await this.options.repository.listBefore(

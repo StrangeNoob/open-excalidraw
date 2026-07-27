@@ -88,6 +88,10 @@
   vertical-align: middle;
 }
 
+.chat-unread-badge--mention {
+  background: var(--danger-ink, #c92a2a);
+}
+
 .canvas-action--primary {
   background: var(--accent);
   border-color: var(--accent);

@@ -42,7 +42,10 @@ const editorApi = {
   addFiles: apiAddFiles,
   updateScene: apiUpdateScene,
   updateLibrary: apiUpdateLibrary,
-  getAppState: () => appState,
+  // The real app state always carries a selection map; the chat anchor bridge
+  // reads it.
+  getAppState: () => ({ ...appState, selectedElementIds: {} }),
+  getSceneElements: () => [],
   getFiles: () => ({}),
   getSceneElementsIncludingDeleted: () => [],
 } as unknown as ExcalidrawImperativeAPI;
@@ -1157,6 +1160,7 @@ describe("DrawingPage", () => {
         history: vi.fn(() =>
           Promise.resolve({ messages: [], nextCursor: null }),
         ),
+        participants: vi.fn(() => Promise.resolve({ participants: [] })),
       },
       createRealtimeTransport: () => fakeTransport as never,
     };

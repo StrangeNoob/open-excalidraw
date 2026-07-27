@@ -1,6 +1,8 @@
 import {
   chatHistoryResponseSchema,
+  chatParticipantsResponseSchema,
   type ChatHistoryResponse,
+  type ChatParticipantsResponse,
 } from "@open-excalidraw/contracts";
 
 import { HttpApiClient } from "../../shared/api";
@@ -10,6 +12,7 @@ export interface ChatSource {
     drawingId: string,
     before: string | null,
   ): Promise<ChatHistoryResponse>;
+  participants(drawingId: string): Promise<ChatParticipantsResponse>;
 }
 
 export class ChatClient implements ChatSource {
@@ -24,6 +27,16 @@ export class ChatClient implements ChatSource {
       `/v1/drawings/${encodeURIComponent(drawingId)}/messages${query}`,
       { method: "GET" },
       chatHistoryResponseSchema,
+    );
+  }
+
+  // The sharing member list is owner-only; this roster is what lets an editor
+  // or viewer mention anybody.
+  participants(drawingId: string): Promise<ChatParticipantsResponse> {
+    return this.api.request(
+      `/v1/drawings/${encodeURIComponent(drawingId)}/chat/participants`,
+      { method: "GET" },
+      chatParticipantsResponseSchema,
     );
   }
 }

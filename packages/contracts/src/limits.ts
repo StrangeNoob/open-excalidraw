@@ -1,5 +1,7 @@
 export const CONTRACT_LIMITS = {
   assetManifestEntries: 10_000,
+  chatAnchorElements: 10,
+  chatMentionsPerMessage: 20,
   chatMessageCharacters: 4_000,
   drawingTagCharacters: 32,
   drawingTagsPerDrawing: 20,

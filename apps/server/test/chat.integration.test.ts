@@ -11,6 +11,7 @@ const describeDatabase = databaseUrl ? describe : describe.skip;
 describeDatabase("chat message persistence and history", () => {
   const database = createDatabase(databaseUrl ?? "postgresql://unused");
   const authorId = randomUUID();
+  const viewerId = randomUUID();
   const drawingId = randomUUID();
   const repository = new PostgresChatRepository(database.pool);
   const service = new ChatService({
@@ -27,6 +28,11 @@ describeDatabase("chat message persistence and history", () => {
        VALUES ($1, 'Chat Author', $2, true)`,
       [authorId, `${authorId}@example.test`],
     );
+    await database.pool.query(
+      `INSERT INTO "user" (id, name, email, email_verified)
+       VALUES ($1, 'Chat Viewer', $2, true)`,
+      [viewerId, `${viewerId}@example.test`],
+    );
     const scene = JSON.stringify({
       type: "excalidraw",
       version: 2,
@@ -40,13 +46,20 @@ describeDatabase("chat message persistence and history", () => {
        VALUES ($1, $2, 'Chatty drawing', $3::jsonb, 2, $4)`,
       [drawingId, authorId, scene, Buffer.byteLength(scene)],
     );
+    await database.pool.query(
+      `INSERT INTO drawing_members (drawing_id, user_id, role, created_by_user_id)
+       VALUES ($1, $2, 'viewer', $3)`,
+      [drawingId, viewerId, authorId],
+    );
   });
 
   afterAll(async () => {
     await database.pool.query(`DELETE FROM drawings WHERE id = $1`, [
       drawingId,
     ]);
-    await database.pool.query(`DELETE FROM "user" WHERE id = $1`, [authorId]);
+    await database.pool.query(`DELETE FROM "user" WHERE id = ANY($1::uuid[])`, [
+      [authorId, viewerId],
+    ]);
     await database.close();
   });
 
@@ -107,5 +120,48 @@ describeDatabase("chat message persistence and history", () => {
     for (const message of secondPage.messages) {
       expect(seen.has(message.id)).toBe(false);
     }
+  });
+
+  it("round-trips mentions and anchors and leaves both null when absent", async () => {
+    const annotatedId = randomUUID();
+    const mentionedId = randomUUID();
+    const anchor = { elementIds: ["Zx1", "Zx2"] };
+
+    const annotated = await repository.insert({
+      id: annotatedId,
+      drawingId,
+      userId: authorId,
+      body: "look at this",
+      mentions: [mentionedId],
+      anchor,
+    });
+    const plain = await repository.insert({
+      id: randomUUID(),
+      drawingId,
+      userId: authorId,
+      body: "no metadata",
+    });
+
+    expect(annotated).toMatchObject({ mentions: [mentionedId], anchor });
+    expect(plain).toMatchObject({ mentions: null, anchor: null });
+
+    const reloaded = (await repository.listBefore(drawingId, null, 5)).find(
+      (message) => message.id === annotatedId,
+    );
+    expect(reloaded).toMatchObject({ mentions: [mentionedId], anchor });
+  });
+
+  it("lists the owner and every member as chat participants", async () => {
+    const participants = await repository.listParticipants(drawingId);
+
+    expect(participants).toEqual([
+      { userId: authorId, name: "Chat Author" },
+      { userId: viewerId, name: "Chat Viewer" },
+    ]);
+    // The roster a viewer reads to mention people, which the owner-only
+    // sharing member list would refuse them.
+    await expect(service.participants(viewerId, drawingId)).resolves.toEqual({
+      participants,
+    });
   });
 });
