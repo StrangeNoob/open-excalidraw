@@ -1,6 +1,8 @@
 # Plan: v1 "Claude draws on the hosted app" — skill + resync broadcast
 
-Status: planned (research: 2026-07-29 viability study — verdict VIABLE)
+Status: implemented 2026-07-29 (workstreams A–C; live-resync, CAS-retry, and
+tombstone-delete scenarios verified against a running stack — remaining
+workstream D scenarios: concurrent-drag convergence, restore recovery)
 Branch: `feature/mcp-drawing-skill`
 Estimated effort: ~5 dev-days
 
