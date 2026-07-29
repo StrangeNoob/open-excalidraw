@@ -429,6 +429,11 @@ const app = createApp({
       content: contentService,
       sharing: sharingService,
       publicBaseUrl: baseUrl,
+      logError: (event, error, context) =>
+        operationalLog("error", event, {
+          ...context,
+          errorType: safeErrorType(error),
+        }),
     }),
     createNotificationRouter({
       repository: new PostgresNotificationSettingsRepository(database.pool),

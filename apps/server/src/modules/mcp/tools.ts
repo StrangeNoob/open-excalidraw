@@ -23,6 +23,12 @@ export interface McpServices {
   content: ContentService;
   sharing: SharingService;
   publicBaseUrl: string;
+  /** Receives errors the tool layer cannot describe to the caller. */
+  logError?: (
+    event: string,
+    error: unknown,
+    context?: Record<string, unknown>,
+  ) => void;
 }
 
 // One re-read plus three retries: past that the drawing is being edited faster
@@ -43,6 +49,20 @@ export function createMcpServer(
   });
   const url = (drawingId: string) =>
     `${services.publicBaseUrl}/drawings/${drawingId}`;
+  const run = async (
+    action: () => Promise<unknown>,
+  ): Promise<CallToolResult> => {
+    try {
+      return text(JSON.stringify(await action()));
+    } catch (error) {
+      if (!isDescribable(error)) {
+        services.logError?.("mcp.tool_failed", error, {
+          requestId: auditRequestId,
+        });
+      }
+      return { ...text(describe(error)), isError: true };
+    }
+  };
 
   server.registerTool(
     "read_format",
@@ -212,17 +232,19 @@ function referencedAssetIds(elements: readonly ExcalidrawElementDTO[]) {
   return [...fileIds].sort();
 }
 
-async function run(action: () => Promise<unknown>): Promise<CallToolResult> {
-  try {
-    return text(JSON.stringify(await action()));
-  } catch (error) {
-    return { ...text(describe(error)), isError: true };
-  }
-}
-
 const text = (value: string): CallToolResult => ({
   content: [{ type: "text", text: value }],
 });
+
+function isDescribable(error: unknown): boolean {
+  return (
+    error instanceof ContentDomainError ||
+    error instanceof DrawingDomainError ||
+    error instanceof SharingDomainError ||
+    error instanceof SceneEditError ||
+    error instanceof z.ZodError
+  );
+}
 
 function describe(error: unknown): string {
   if (

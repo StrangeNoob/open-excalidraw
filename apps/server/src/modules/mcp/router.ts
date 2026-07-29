@@ -41,7 +41,8 @@ export function createMcpRouter(input: CreateMcpRouterInput): Router {
       });
       await server.connect(transport);
       await transport.handleRequest(request, response, request.body);
-    } catch {
+    } catch (error) {
+      input.logError?.("mcp.request_failed", error, { requestId });
       if (response.headersSent) return;
       response.setHeader("x-request-id", requestId);
       response.status(500).type("application/problem+json").json({

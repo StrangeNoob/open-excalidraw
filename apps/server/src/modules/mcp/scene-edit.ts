@@ -132,24 +132,24 @@ function assertReferencesResolve(
   scene: ReadonlyMap<string, ExcalidrawElementDTO>,
 ): void {
   const problems: string[] = [];
+  const live = (id: string) => scene.get(id)?.isDeleted === false;
   for (const element of touched) {
+    // A tombstone's references are dead weight, not constraints.
+    if (element.isDeleted) continue;
     for (const field of ["startBinding", "endBinding"] as const) {
       const target = (element[field] as { elementId?: unknown } | null)
         ?.elementId;
-      if (typeof target === "string" && !scene.has(target)) {
+      if (typeof target === "string" && !live(target)) {
         problems.push(`${element.id}.${field} -> ${target}`);
       }
     }
-    if (
-      typeof element.containerId === "string" &&
-      !scene.has(element.containerId)
-    ) {
+    if (typeof element.containerId === "string" && !live(element.containerId)) {
       problems.push(`${element.id}.containerId -> ${element.containerId}`);
     }
   }
   if (problems.length > 0) {
     throw new SceneEditError(
-      `Elements reference ids that are not in the scene: ${problems.join("; ")}`,
+      `Elements reference ids that are missing or deleted: ${problems.join("; ")}`,
     );
   }
 }

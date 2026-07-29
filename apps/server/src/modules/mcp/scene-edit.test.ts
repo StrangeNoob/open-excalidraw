@@ -150,4 +150,58 @@ describe("applyEdit validation", () => {
       applyEdit([], { upsert: [draft("label", { containerId: "gone" })] }),
     ).toThrow(SceneEditError);
   });
+
+  it("rejects a binding to an element deleted in the same edit", () => {
+    expect(() =>
+      applyEdit([stored({ id: "boxA" }), stored({ id: "boxB", index: "a1" })], {
+        upsert: [
+          draft("arrow", {
+            type: "arrow",
+            startBinding: { elementId: "boxA", focus: 0, gap: 4 },
+            endBinding: { elementId: "boxB", focus: 0, gap: 4 },
+          }),
+        ],
+        deleteIds: ["boxB"],
+      }),
+    ).toThrow(/arrow\.endBinding -> boxB/);
+  });
+
+  it("rejects a binding to an already-tombstoned element", () => {
+    expect(() =>
+      applyEdit([stored({ id: "gone", isDeleted: true })], {
+        upsert: [draft("label", { containerId: "gone" })],
+      }),
+    ).toThrow(/label\.containerId -> gone/);
+  });
+
+  it("allows deleting both members of a bound pair together", () => {
+    const scene = [
+      stored({ id: "boxA" }),
+      stored({
+        id: "arrow",
+        type: "arrow",
+        index: "a1",
+        startBinding: { elementId: "boxA", focus: 0, gap: 4 },
+      }),
+    ];
+    const { elements } = applyEdit(scene, { deleteIds: ["boxA", "arrow"] });
+    expect(elements.every((element) => element.isDeleted)).toBe(true);
+  });
+
+  it("does not validate references on an upserted tombstone", () => {
+    const { elements } = applyEdit([stored({ id: "boxA" })], {
+      upsert: [
+        draft("arrow", {
+          type: "arrow",
+          isDeleted: true,
+          startBinding: { elementId: "boxA", focus: 0, gap: 4 },
+          endBinding: { elementId: "never-existed", focus: 0, gap: 4 },
+        }),
+      ],
+      deleteIds: ["boxA"],
+    });
+    expect(elements.find((element) => element.id === "arrow")?.isDeleted).toBe(
+      true,
+    );
+  });
 });
