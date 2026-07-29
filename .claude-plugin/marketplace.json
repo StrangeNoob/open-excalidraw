@@ -1,0 +1,18 @@
+{
+  "name": "open-excalidraw",
+  "owner": {
+    "name": "StrangeNoob",
+    "url": "https://github.com/StrangeNoob"
+  },
+  "description": "Plugins for working with a self-hosted Open Excalidraw instance.",
+  "plugins": [
+    {
+      "name": "open-excalidraw",
+      "source": "./plugins/open-excalidraw",
+      "description": "Create and edit drawings on a self-hosted Open Excalidraw instance over its REST API.",
+      "version": "0.1.0",
+      "category": "productivity",
+      "keywords": ["excalidraw", "diagram", "drawing", "whiteboard", "rest-api"]
+    }
+  ]
+}

@@ -58,6 +58,7 @@ Mirror the existing revision-restore seam. Verified facts this rests on:
    `roomRegistry.requestResync(drawingId, revision, "external-save")`.
 
 Notes:
+
 - When collaboration is disabled or nobody has the drawing open, there is no
   room; `requestResync` is a no-op. The web client's own REST-fallback
   autosave also lands here — a broadcast to an empty/own room is harmless.
@@ -69,16 +70,14 @@ Notes:
 
 - Unit (content service): `saved` fires on commit with the new revision; does
   NOT fire on idempotent replay or 412 conflict.
-- Integration (collab, model on `collaboration-services.test.ts` /
-  `run-app` Postgres suites): two clients join a room → REST `PUT` content →
-  both receive `room.resyncRequired` with reason `external-save` and converge
-  to the new scene.
-- Merge-safety: client with an in-flight dirty element survives the resync
-  with its edit preserved; a REST scene that tombstones an element
-  (`isDeleted: true`, version bumped) stays deleted after resync — and a REST
-  scene that merely *omits* an element gets it resurrected from the client
-  outbox (expected reconcile behavior; the test documents it so the skill's
-  tombstone rule stays honest).
+- Gateway relay (FakeServer, `socket-gateway.integration.test.ts`): a
+  `requestResync` with reason `external-save` reaches every room member as
+  `room.resyncRequired`.
+- Client convergence and merge-safety (dirty in-flight element survives,
+  tombstone stays deleted, omitted element resurrects from the outbox) need a
+  real browser client — they live in workstream D's e2e scenarios, not the
+  server suite. The server-side glue in `server.ts` is typecheck-enforced
+  (the `saved` event member is required, not optional).
 
 ## Workstream B — SKILL.md (~2–2.5d, the load-bearing artifact)
 
@@ -118,7 +117,7 @@ sheet (label centering, strict-JSON rules).
    - **Versioning**: new elements `version: 1`; any touched element gets
      `version` strictly above the base it was read at; `versionNonce` =
      random int32 (lower nonce wins version ties — the bump, not the nonce,
-     is the protection). Concurrent edits to the *same* element by a live
+     is the protection). Concurrent edits to the _same_ element by a live
      user are last-write-wins and may be lost; don't fight the user's
      in-progress drags.
    - **Deletes are tombstones**: `isDeleted: true` + version bump. An
@@ -126,7 +125,7 @@ sheet (label centering, strict-JSON rules).
    - Bindings: arrows carry `startBinding`/`endBinding` with reciprocal
      `boundElements` on the shapes; labels as separate centered text
      elements (official-MCP convention: `x = shape.x + (shape.width -
-     text.width)/2`) rather than container binding.
+text.width)/2`) rather than container binding.
    - Limits: 50k elements / 10 MiB per scene.
 4. **Verification loop** — after every PUT, re-GET the scene and sanity-check
    structure; give the user the drawing/share URL (live resync from
@@ -181,12 +180,12 @@ Then full `pnpm test`, `pnpm lint`, `pnpm typecheck` before push.
 
 ## Risks
 
-| Risk | Mitigation |
-|---|---|
-| Model emits schema-valid but render-breaking elements | Strict format reference (B3); revision-restore recovery documented; if it bites in practice, promote validation into the v1.1 `/mcp` route |
-| Resync churn if the agent streams many small PUTs | Skill mandates one batched PUT per logical change; incremental `scene.committed` path stays deferred until measured |
-| Unscoped PAT in agent env | Dedicated short-expiry token mandated in docs; scoped tokens = first post-v1 server feature |
-| Skill format reference rots against upstream Excalidraw drift | Workstream D scenarios double as a canary — rerun on `@excalidraw/excalidraw` upgrades |
+| Risk                                                          | Mitigation                                                                                                                                 |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Model emits schema-valid but render-breaking elements         | Strict format reference (B3); revision-restore recovery documented; if it bites in practice, promote validation into the v1.1 `/mcp` route |
+| Resync churn if the agent streams many small PUTs             | Skill mandates one batched PUT per logical change; incremental `scene.committed` path stays deferred until measured                        |
+| Unscoped PAT in agent env                                     | Dedicated short-expiry token mandated in docs; scoped tokens = first post-v1 server feature                                                |
+| Skill format reference rots against upstream Excalidraw drift | Workstream D scenarios double as a canary — rerun on `@excalidraw/excalidraw` upgrades                                                     |
 
 ## v1.1 pointer (out of scope, pre-committed)
 

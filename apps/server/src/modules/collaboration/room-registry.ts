@@ -10,7 +10,7 @@ export type RoomRegistryEvent =
       type: "resync-requested";
       drawingId: string;
       revision: bigint;
-      reason: "revision-restored";
+      reason: "revision-restored" | "external-save";
     }
   | {
       type: "role-changed";
@@ -115,7 +115,7 @@ export class RoomRegistry {
   public requestResync(
     drawingId: string,
     revision: bigint,
-    reason: "revision-restored",
+    reason: "revision-restored" | "external-save",
   ) {
     const event = {
       type: "resync-requested" as const,

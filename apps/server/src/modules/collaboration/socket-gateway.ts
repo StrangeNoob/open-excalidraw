@@ -115,7 +115,7 @@ export type GatewayRoomEvent =
       type: "resync-requested";
       drawingId: string;
       revision: bigint;
-      reason: "revision-restored";
+      reason: "revision-restored" | "external-save";
     }
   | {
       type: "role-changed";
@@ -150,7 +150,7 @@ export interface GatewayRoomRegistry {
   requestResync(
     drawingId: string,
     revision: bigint,
-    reason: "revision-restored",
+    reason: "revision-restored" | "external-save",
   ): GatewayRoomEvent;
   subscribe(listener: (event: GatewayRoomEvent) => void): () => void;
 }

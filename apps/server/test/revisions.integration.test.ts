@@ -16,10 +16,11 @@ describeDatabase("revision checkpoints", () => {
   const ownerId = randomUUID();
   const drawingId = randomUUID();
   const restoredEvent = vi.fn();
+  const savedEvent = vi.fn();
   const service = new ContentService(
     new PostgresContentRepository(database.pool),
     60_000,
-    { restored: restoredEvent },
+    { restored: restoredEvent, saved: savedEvent },
   );
 
   beforeAll(async () => {

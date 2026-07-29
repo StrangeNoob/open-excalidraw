@@ -153,6 +153,9 @@ const contentService = new ContentService(
     restored: (drawingId, revision) => {
       roomRegistry.requestResync(drawingId, revision, "revision-restored");
     },
+    saved: (drawingId, revision) => {
+      roomRegistry.requestResync(drawingId, revision, "external-save");
+    },
   },
 );
 const sharingRepository = new PostgresSharingRepository(database.pool);

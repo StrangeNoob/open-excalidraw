@@ -123,6 +123,7 @@ export const roomResyncRequiredEventSchema = z
     reason: z.enum([
       "revision-gap",
       "revision-restored",
+      "external-save",
       "stale-preview",
       "server-restart",
     ]),
