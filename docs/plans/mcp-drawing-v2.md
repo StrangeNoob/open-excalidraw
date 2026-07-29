@@ -1,9 +1,9 @@
 # Plan: v2 — agent drawing hardening and depth
 
-Status: planned 2026-07-29 (follows `mcp-drawing-skill-v1.md`, whose v1 and
-v1.1 are implemented and live-verified)
-Branch: `feature/*` per workstream; independent workstreams may ship
-separately
+Status: implemented 2026-07-29 (follows `mcp-drawing-skill-v1.md`). Shipped on
+`feature/mcp-drawing-skill` in three commits: `f9a9cca` (workstreams 1, 5-metric
+and 6), `f08e19d` (2 and 3), `b71e580` (4). Workstream 5's incremental broadcast
+stays dormant behind its metric, as designed.
 Estimated effort: ~12–14 dev-days total
 
 Scope: the six backlog items carried out of the v1 research, including OAuth
