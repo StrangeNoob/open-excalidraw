@@ -217,6 +217,11 @@ describe("collaboration socket gateway", () => {
     ];
     expect(editor.events("room.resyncRequired")).toEqual(expected);
     expect(viewer.events("room.resyncRequired")).toEqual(expected);
+    // Both reasons are counted with the room size they broadcast to.
+    expect(fixture.gateway.resyncBroadcasts()).toEqual([
+      { reason: "revision-restored", members: "2+", count: 1 },
+      { reason: "external-save", members: "2+", count: 1 },
+    ]);
   });
 
   it("expires silent presence and disconnects the stale socket", async () => {

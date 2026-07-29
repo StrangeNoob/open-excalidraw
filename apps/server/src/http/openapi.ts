@@ -333,7 +333,8 @@ export const openApiDocument = {
         summary: "Create a personal access token",
         description:
           "Returns the full secret exactly once in `secret`; store it now, it " +
-          "cannot be retrieved later. Each account may hold at most 25 tokens.",
+          "cannot be retrieved later. Each account may hold at most 25 tokens. " +
+          "An omitted `scope` defaults to `write`.",
         security: [{ sessionCookie: [] }],
         requestBody: jsonBody(ref("PersonalAccessTokenCreate")),
         responses: {
@@ -1400,7 +1401,10 @@ export const openApiDocument = {
         description:
           "A personal access token (`oepat_…`) created under /api/v1/tokens. " +
           "Authenticates any REST route in place of the session cookie, but " +
-          "cannot manage tokens or open realtime collaboration sessions.",
+          "cannot manage tokens or open realtime collaboration sessions. Its " +
+          "scope narrows that further: a `read` token is refused any unsafe " +
+          "method and anything below `full` is refused /api/v1/admin, both " +
+          "with 403 `INSUFFICIENT_SCOPE`.",
       },
     },
     schemas: {

@@ -80,11 +80,13 @@ internet over HTTPS with a valid certificate.
 
 ## Security
 
-Personal access tokens are **unscoped**: a token can do anything its owner can do
-over REST — read, edit, rename, trash, and share _every_ drawing in the account,
-not just the one Claude is working on. Mitigate accordingly:
+A token reaches every drawing in the account, not just the one Claude is working
+on, and its scope decides what it may do there: **read** allows safe reads only,
+**write** adds creating, editing, renaming, trashing and sharing, and **full**
+additionally allows instance administration. Mitigate accordingly:
 
-- mint a **dedicated** token for this plugin, never reuse a CI or script token;
+- mint a **dedicated write-scoped** token for this plugin, never reuse a CI or
+  script token, and never give an agent a `full` token;
 - always set an expiry — a token created with **Never** stays valid until someone
   remembers to delete it;
 - revoke it from the same settings page when the work is done, or if the machine

@@ -1,4 +1,7 @@
-import type { PersonalAccessToken } from "@open-excalidraw/contracts";
+import type {
+  PersonalAccessToken,
+  TokenScope,
+} from "@open-excalidraw/contracts";
 import type { Pool, PoolClient } from "pg";
 
 import { TokenDomainError } from "./errors.js";
@@ -7,13 +10,14 @@ import type { TokenOwner, TokenRepository } from "./types.js";
 interface TokenRow {
   id: string;
   name: string;
+  scopes: TokenScope | null;
   last_four: string;
   created_at: Date;
   expires_at: Date | null;
   last_used_at: Date | null;
 }
 
-const TOKEN_COLUMNS = `id, name, last_four, created_at, expires_at, last_used_at`;
+const TOKEN_COLUMNS = `id, name, scopes, last_four, created_at, expires_at, last_used_at`;
 
 export class PostgresTokenRepository implements TokenRepository {
   public constructor(private readonly pool: Pool) {}
@@ -24,6 +28,7 @@ export class PostgresTokenRepository implements TokenRepository {
     tokenHash: Buffer;
     lastFour: string;
     expiresInDays: number | null;
+    scope: TokenScope;
     requestId: string;
     maxTokens: number;
   }): Promise<PersonalAccessToken> {
@@ -54,11 +59,12 @@ export class PostgresTokenRepository implements TokenRepository {
       }
       const inserted = await client.query<TokenRow>(
         `INSERT INTO personal_access_tokens
-           (user_id, name, token_hash, last_four, expires_at)
+           (user_id, name, token_hash, last_four, expires_at, scopes)
          VALUES (
            $1, $2, $3, $4,
            CASE WHEN $5::int IS NULL THEN NULL
-                ELSE now() + ($5::int * interval '1 day') END
+                ELSE now() + ($5::int * interval '1 day') END,
+           $6
          )
          RETURNING ${TOKEN_COLUMNS}`,
         [
@@ -67,6 +73,7 @@ export class PostgresTokenRepository implements TokenRepository {
           input.tokenHash,
           input.lastFour,
           input.expiresInDays,
+          input.scope,
         ],
       );
       const row = inserted.rows[0]!;
@@ -119,6 +126,7 @@ export class PostgresTokenRepository implements TokenRepository {
   public async resolveOwner(tokenHash: Buffer): Promise<TokenOwner | null> {
     const result = await this.pool.query<{
       user_id: string;
+      scopes: TokenScope | null;
       email: string;
       name: string;
       image: string | null;
@@ -126,7 +134,7 @@ export class PostgresTokenRepository implements TokenRepository {
       two_factor_enabled: boolean;
       created_at: Date;
     }>(
-      `SELECT u.id AS user_id, u.email, u.name, u.image,
+      `SELECT u.id AS user_id, t.scopes, u.email, u.name, u.image,
               u.email_verified, u.two_factor_enabled, u.created_at
        FROM personal_access_tokens t
        JOIN "user" u ON u.id = t.user_id
@@ -142,6 +150,7 @@ export class PostgresTokenRepository implements TokenRepository {
     }
     return {
       userId: row.user_id,
+      scope: row.scopes ?? "full",
       email: row.email,
       name: row.name,
       image: row.image,
@@ -183,6 +192,8 @@ function toToken(row: TokenRow): PersonalAccessToken {
   return {
     id: row.id,
     name: row.name,
+    // Tokens minted before scopes existed carry NULL and keep their old reach.
+    scope: row.scopes ?? "full",
     lastFour: row.last_four,
     createdAt: row.created_at.toISOString(),
     expiresAt: row.expires_at ? row.expires_at.toISOString() : null,

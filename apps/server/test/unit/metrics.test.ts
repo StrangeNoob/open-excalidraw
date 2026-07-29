@@ -12,6 +12,7 @@ const sources = {
     Promise.resolve({ users: 7, drawings: 3, storageBytes: 4096 }),
   activeSessions: () => Promise.resolve(2),
   collabConnections: () => 5,
+  resyncBroadcasts: () => [],
   lastMaintenance: () => null,
 } satisfies Omit<CreateMetricsRouterInput, "token">;
 
@@ -64,8 +65,33 @@ describe("metrics endpoint", () => {
     expect(response.text).toContain("openexcalidraw_storage_bytes 4096");
     expect(response.text).toContain("openexcalidraw_active_sessions 2");
     expect(response.text).toContain("openexcalidraw_collab_connections 5");
+    expect(response.text).toContain(
+      "# TYPE openexcalidraw_resync_broadcasts_total counter",
+    );
     // No maintenance run has completed yet, so its gauges are absent.
     expect(response.text).not.toContain("openexcalidraw_maintenance");
+  });
+
+  it("counts resync broadcasts by reason and room size", async () => {
+    const response = await request(
+      app({
+        ...sources,
+        token: "scrape-token",
+        resyncBroadcasts: () => [
+          { reason: "external-save", members: "2+", count: 12 },
+          { reason: "revision-restored", members: "0", count: 1 },
+        ],
+      }),
+    )
+      .get("/metrics")
+      .set("authorization", "Bearer scrape-token");
+
+    expect(response.text).toContain(
+      'openexcalidraw_resync_broadcasts_total{reason="external-save",members="2+"} 12',
+    );
+    expect(response.text).toContain(
+      'openexcalidraw_resync_broadcasts_total{reason="revision-restored",members="0"} 1',
+    );
   });
 
   it("reports the most recent maintenance run", async () => {

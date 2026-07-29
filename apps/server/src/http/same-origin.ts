@@ -12,7 +12,9 @@ export function requireSameOrigin(
   return (request, response, next) => {
     if (
       SAFE_METHODS.has(request.method.toUpperCase()) ||
-      !request.path.startsWith("/api/")
+      // Lowercased because Express routes case-insensitively: /API/... reaches
+      // the same handler and must face the same gate.
+      !request.path.toLowerCase().startsWith("/api/")
     ) {
       next();
       return;

@@ -92,6 +92,7 @@ const createToken = (
   lastFour: "9f3a",
   lastUsedAt: null,
   name: "CI export",
+  scope: "write",
   ...overrides,
 });
 
@@ -107,6 +108,7 @@ class FakeTokensApi implements TokensApi {
         id: "22222222-2222-4222-8222-222222222222",
         lastFour: "beef",
         name: input.name,
+        scope: input.scope ?? "write",
       });
       this.tokens = [token, ...this.tokens];
       return Promise.resolve({
@@ -499,8 +501,12 @@ describe("SettingsPage", () => {
     ]);
     renderSettings([{ providerId: "credential" }], session, tokensApi);
 
-    expect(await screen.findByText("CI export")).toBeVisible();
+    const row = await screen.findByText("CI export");
+    expect(row).toBeVisible();
     expect(screen.getByText("oepat_…9f3a")).toBeVisible();
+    // The scope label also names a radio in the create form, so read it off
+    // the token's own row.
+    expect(row.closest("li")).toHaveTextContent("Read and write");
     // Null expiry and last-used both read as "Never".
     expect(screen.getAllByText("Never").length).toBeGreaterThanOrEqual(2);
   });
@@ -526,6 +532,8 @@ describe("SettingsPage", () => {
       expect(tokensApi.createToken).toHaveBeenCalledWith({
         expiresInDays: 90,
         name: "Deploy bot",
+        // Write, not full: a new token is never account-wide by default.
+        scope: "write",
       }),
     );
     // The full secret is revealed with a one-time warning.
@@ -556,6 +564,25 @@ describe("SettingsPage", () => {
       expect(tokensApi.createToken).toHaveBeenCalledWith({
         expiresInDays: null,
         name: "Forever",
+        scope: "write",
+      }),
+    );
+  });
+
+  it("creates a read-only token when that scope is picked", async () => {
+    const tokensApi = new FakeTokensApi();
+    renderSettings([{ providerId: "credential" }], session, tokensApi);
+
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText("Token name"), "Reporter");
+    await user.click(screen.getByRole("radio", { name: /Read only/ }));
+    await user.click(screen.getByRole("button", { name: "Create token" }));
+
+    await waitFor(() =>
+      expect(tokensApi.createToken).toHaveBeenCalledWith({
+        expiresInDays: 30,
+        name: "Reporter",
+        scope: "read",
       }),
     );
   });

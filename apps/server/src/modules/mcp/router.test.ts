@@ -1,4 +1,5 @@
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
+import type { TokenScope } from "@open-excalidraw/contracts";
 import type { Express } from "express";
 import request from "supertest";
 import type { Mock } from "vitest";
@@ -27,6 +28,7 @@ function createHarness(
   overrides: {
     content?: { load?: Mock; save?: Mock };
     drawings?: { list?: Mock; search?: Mock };
+    tokenScope?: TokenScope;
   } = {},
 ) {
   const content = {
@@ -45,7 +47,12 @@ function createHarness(
     resolve: (headers) =>
       Promise.resolve(
         (headers as Record<string, string>).authorization === `Bearer ${TOKEN}`
-          ? ({ userId: USER_ID } as never)
+          ? ({
+              userId: USER_ID,
+              ...(overrides.tokenScope
+                ? { tokenScope: overrides.tokenScope }
+                : {}),
+            } as never)
           : null,
       ),
   };
@@ -143,11 +150,31 @@ describe("MCP endpoint", () => {
     ).toEqual([
       "read_format",
       "list_drawings",
-      "create_drawing",
       "get_scene",
+      "create_drawing",
       "edit_scene",
       "share_drawing",
     ]);
+  });
+
+  it("hides the write tools from a read-scoped token", async () => {
+    const { app } = createHarness({ tokenScope: "read" });
+
+    const listed = await rpc(app, "tools/list");
+
+    expect(
+      (listed.body.result.tools as { name: string }[]).map((tool) => tool.name),
+    ).toEqual(["read_format", "list_drawings", "get_scene"]);
+  });
+
+  it("keeps the write tools for a write-scoped token", async () => {
+    const { app } = createHarness({ tokenScope: "write" });
+
+    const listed = await rpc(app, "tools/list");
+
+    expect(
+      (listed.body.result.tools as { name: string }[]).map((tool) => tool.name),
+    ).toContain("edit_scene");
   });
 
   it("serves the format reference", async () => {

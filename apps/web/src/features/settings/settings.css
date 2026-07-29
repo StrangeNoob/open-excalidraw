@@ -157,10 +157,30 @@
   font-family: monospace;
 }
 
+.settings-token-scopes {
+  border: 1px solid #e4e4e7;
+  border-radius: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* Beats the column layout `.settings-page form label` gives every other field:
+   here the radio sits beside its label, with the blast radius underneath. */
+.settings-page form .settings-token-scopes label {
+  display: grid;
+  gap: 0 0.5rem;
+  grid-template-columns: auto 1fr;
+}
+
+.settings-token-scopes label span {
+  grid-column: 2;
+}
+
 .settings-token-meta {
   display: grid;
   gap: 0.5rem 1rem;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
   margin: 0;
 }
 

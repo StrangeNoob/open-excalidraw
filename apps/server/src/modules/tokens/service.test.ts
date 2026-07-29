@@ -9,6 +9,7 @@ import type { TokenOwner, TokenRepository } from "./types.js";
 const sampleToken: PersonalAccessToken = {
   id: "11111111-1111-4111-8111-111111111111",
   name: "ci",
+  scope: "write",
   lastFour: "abcd",
   createdAt: "2026-07-01T00:00:00.000Z",
   expiresAt: null,
@@ -30,6 +31,7 @@ function fakeRepository(
 
 const owner: TokenOwner = {
   userId: "22222222-2222-4222-8222-222222222222",
+  scope: "write",
   email: "owner@example.test",
   name: "Owner",
   image: null,
@@ -58,6 +60,38 @@ describe("TokenService", () => {
     );
     // The hash is 32 bytes and the plaintext is never handed to the repository.
     expect(insertArgs.tokenHash).toHaveLength(32);
+  });
+
+  it("defaults an omitted scope to write, never full", async () => {
+    const insert = vi.fn().mockResolvedValue(sampleToken);
+    const service = new TokenService(fakeRepository({ insert }));
+
+    await service.create({
+      userId: owner.userId,
+      requestId: "req",
+      body: { name: "ci", expiresInDays: null },
+    });
+    await service.create({
+      userId: owner.userId,
+      requestId: "req",
+      body: { name: "reader", expiresInDays: null, scope: "read" },
+    });
+
+    expect(insert.mock.calls[0]![0].scope).toBe("write");
+    expect(insert.mock.calls[1]![0].scope).toBe("read");
+  });
+
+  it("carries the token's scope onto the resolved identity", async () => {
+    const service = new TokenService(
+      fakeRepository({
+        resolveOwner: vi.fn().mockResolvedValue({ ...owner, scope: "read" }),
+      }),
+    );
+
+    expect(await service.resolveIdentity("oepat_whatever")).toMatchObject({
+      authKind: "token",
+      tokenScope: "read",
+    });
   });
 
   it("resolves a valid secret to a token-authenticated identity", async () => {

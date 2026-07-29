@@ -122,7 +122,11 @@ describeDatabase("personal access tokens", () => {
 
   async function createToken(
     userId: string,
-    body: { name: string; expiresInDays: number | null } = {
+    body: {
+      name: string;
+      expiresInDays: number | null;
+      scope?: "read" | "write" | "full";
+    } = {
       name: "ci",
       expiresInDays: null,
     },
@@ -184,6 +188,41 @@ describeDatabase("personal access tokens", () => {
 
     const empty = await asSession(userId)(request(app).get("/api/v1/tokens"));
     expect(empty.body.tokens).toHaveLength(0);
+  });
+
+  it("stores the requested scope and reads a legacy NULL row as full", async () => {
+    const userId = await createUser();
+    const reader = await createToken(userId, {
+      name: "reader",
+      expiresInDays: null,
+      scope: "read",
+    });
+    const legacy = await createToken(userId, {
+      name: "legacy",
+      expiresInDays: null,
+    });
+    // A token minted before the scopes column existed.
+    await database.pool.query(
+      `UPDATE personal_access_tokens SET scopes = NULL WHERE id = $1`,
+      [legacy.tokenId],
+    );
+
+    const listed = await asSession(userId)(request(app).get("/api/v1/tokens"));
+    const byId = new Map<string, { scope: string }>(
+      (listed.body.tokens as { id: string; scope: string }[]).map((token) => [
+        token.id,
+        token,
+      ]),
+    );
+    expect(byId.get(reader.tokenId)?.scope).toBe("read");
+    expect(byId.get(legacy.tokenId)?.scope).toBe("full");
+
+    expect(await tokenService.resolveIdentity(reader.secret)).toMatchObject({
+      tokenScope: "read",
+    });
+    expect(await tokenService.resolveIdentity(legacy.secret)).toMatchObject({
+      tokenScope: "full",
+    });
   });
 
   it("returns 404 revoking a token owned by another user", async () => {

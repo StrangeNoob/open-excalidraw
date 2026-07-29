@@ -5,6 +5,13 @@ import { Router } from "express";
 
 import type { MaintenanceResult } from "../jobs/index.js";
 
+/** One `(reason, room size)` combination and how often it has broadcast. */
+export interface ResyncBroadcastSample {
+  reason: string;
+  members: string;
+  count: number;
+}
+
 export interface LastMaintenanceRun {
   finishedAt: Date;
   result: MaintenanceResult;
@@ -16,6 +23,7 @@ export interface CreateMetricsRouterInput {
   overview(): Promise<AdminOverview>;
   activeSessions(): Promise<number>;
   collabConnections(): number;
+  resyncBroadcasts(): readonly ResyncBroadcastSample[];
   lastMaintenance(): LastMaintenanceRun | null;
 }
 
@@ -81,6 +89,16 @@ export function createMetricsRouter(input: CreateMetricsRouterInput): Router {
         "Live collaboration socket connections.",
         input.collabConnections(),
       );
+
+      lines.push(
+        "# HELP openexcalidraw_resync_broadcasts_total Full-snapshot resyncs pushed to a room, by reason and room size.",
+        "# TYPE openexcalidraw_resync_broadcasts_total counter",
+      );
+      for (const sample of input.resyncBroadcasts()) {
+        lines.push(
+          `openexcalidraw_resync_broadcasts_total{reason="${sample.reason}",members="${sample.members}"} ${sample.count}`,
+        );
+      }
 
       const maintenance = input.lastMaintenance();
       if (maintenance) {

@@ -5,10 +5,17 @@ import { isoDateTimeSchema, uuidSchema } from "./common/primitives.js";
 /** Personal access tokens are prefixed so leaked strings are attributable. */
 export const PERSONAL_ACCESS_TOKEN_PREFIX = "oepat_";
 
+export const tokenScopeSchema = z.enum(["read", "write", "full"]).meta({
+  description:
+    "read: safe methods only. write: adds unsafe methods, but not " +
+    "/api/v1/admin. full: everything the owner can do over REST.",
+});
+
 export const personalAccessTokenSchema = z
   .object({
     id: uuidSchema,
     name: z.string().min(1).max(100),
+    scope: tokenScopeSchema,
     lastFour: z.string().length(4).meta({
       description: "Last four characters of the secret, for identification.",
     }),
@@ -35,6 +42,9 @@ export const personalAccessTokenCreateSchema = z
     expiresInDays: z.number().int().min(1).max(365).nullable().meta({
       description: "Null means the token never expires.",
     }),
+    scope: tokenScopeSchema.optional().meta({
+      description: "Defaults to `write`; omitting it never grants `full`.",
+    }),
   })
   .strict();
 
@@ -48,6 +58,7 @@ export const personalAccessTokenCreatedSchema = z
   })
   .strict();
 
+export type TokenScope = z.infer<typeof tokenScopeSchema>;
 export type PersonalAccessToken = z.infer<typeof personalAccessTokenSchema>;
 export type PersonalAccessTokenList = z.infer<
   typeof personalAccessTokenListSchema

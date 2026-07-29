@@ -1,4 +1,7 @@
-import { PERSONAL_ACCESS_TOKEN_PREFIX } from "@open-excalidraw/contracts";
+import {
+  PERSONAL_ACCESS_TOKEN_PREFIX,
+  type TokenScope,
+} from "@open-excalidraw/contracts";
 import { fromNodeHeaders } from "better-auth/node";
 import type { IncomingHttpHeaders } from "node:http";
 
@@ -18,6 +21,11 @@ export interface RequestIdentity {
    * from realtime collaboration.
    */
   authKind: "session" | "token";
+  /**
+   * What the presented token may do. Present only for `authKind: "token"`;
+   * a session identity is never scope-limited.
+   */
+  tokenScope?: TokenScope;
   /** Present only for `authKind: "session"`. */
   sessionId?: string;
   /** Present only for `authKind: "session"`. */

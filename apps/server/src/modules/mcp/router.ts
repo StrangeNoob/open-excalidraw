@@ -30,7 +30,13 @@ export function createMcpRouter(input: CreateMcpRouterInput): Router {
         });
         return;
       }
-      const server = createMcpServer(input, identity.userId, requestId);
+      // Session identities are never scope-limited; only tokens carry a scope.
+      const server = createMcpServer(
+        input,
+        identity.userId,
+        requestId,
+        identity.tokenScope ?? "full",
+      );
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
         enableJsonResponse: true,

@@ -114,6 +114,7 @@ describe("initial PostgreSQL migration", () => {
       "0015_drawing_search_texts.sql",
       "0016_chat_mentions.sql",
       "0017_mention_email_notifications.sql",
+      "0018_token_scopes.sql",
     ]);
     expect(second.alreadyApplied).toEqual(first.applied);
     expect(record.rows).toEqual(first.applied);

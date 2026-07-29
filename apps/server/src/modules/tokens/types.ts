@@ -1,8 +1,12 @@
-import type { PersonalAccessToken } from "@open-excalidraw/contracts";
+import type {
+  PersonalAccessToken,
+  TokenScope,
+} from "@open-excalidraw/contracts";
 
 /** The owner fields a resolved token needs to build a token RequestIdentity. */
 export interface TokenOwner {
   userId: string;
+  scope: TokenScope;
   email: string;
   name: string;
   image: string | null;
@@ -23,6 +27,7 @@ export interface TokenRepository {
     tokenHash: Buffer;
     lastFour: string;
     expiresInDays: number | null;
+    scope: TokenScope;
     requestId: string;
     maxTokens: number;
   }): Promise<PersonalAccessToken>;

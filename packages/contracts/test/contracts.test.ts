@@ -432,6 +432,7 @@ describe("personal access token contracts", () => {
   const token = {
     id: "0d9c1a44-93de-4dd1-8b6f-9a3fd0f1a1aa",
     name: "backup script",
+    scope: "write",
     lastFour: "ab12",
     createdAt: "2026-07-24T10:00:00.000+00:00",
     expiresAt: null,
@@ -457,6 +458,20 @@ describe("personal access token contracts", () => {
         expiresInDays: 90,
       }).expiresInDays,
     ).toBe(90);
+    // Scope is optional on create; the server picks the default.
+    expect(
+      personalAccessTokenCreateSchema.parse({
+        name: "ci",
+        expiresInDays: 90,
+      }).scope,
+    ).toBeUndefined();
+    expect(
+      personalAccessTokenCreateSchema.parse({
+        name: "ci",
+        expiresInDays: 90,
+        scope: "read",
+      }).scope,
+    ).toBe("read");
   });
 
   it("rejects bad hints, foreign prefixes, and out-of-range expiries", () => {
@@ -480,6 +495,13 @@ describe("personal access token contracts", () => {
       personalAccessTokenCreateSchema.safeParse({
         name: "",
         expiresInDays: null,
+      }).success,
+    ).toBe(false);
+    expect(
+      personalAccessTokenCreateSchema.safeParse({
+        name: "ci",
+        expiresInDays: null,
+        scope: "admin",
       }).success,
     ).toBe(false);
   });

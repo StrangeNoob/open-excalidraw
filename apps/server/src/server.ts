@@ -17,6 +17,7 @@ import {
   createMetricsRouter,
   type LastMaintenanceRun,
 } from "./http/metrics.js";
+import { enforceTokenScope } from "./http/token-scope.js";
 import {
   AdminService,
   createAdminRouter,
@@ -402,6 +403,11 @@ const app = createApp({
     await database.pool.query("SELECT 1");
   },
   routers: [
+    // Ahead of every router: a scoped token is refused here, once, rather than
+    // in each route's own authorization.
+    enforceTokenScope({
+      resolve: (secret) => tokenService.resolveIdentity(secret),
+    }),
     createAuthRouter({
       auth,
       identity,
@@ -451,6 +457,7 @@ const app = createApp({
         return Number(result.rows[0]?.count ?? 0);
       },
       collabConnections: () => roomRegistry.connectionCount(),
+      resyncBroadcasts: () => collaborationGateway.resyncBroadcasts(),
       lastMaintenance: () => lastMaintenance,
     }),
   ],

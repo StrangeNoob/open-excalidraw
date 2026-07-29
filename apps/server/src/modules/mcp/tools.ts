@@ -7,6 +7,7 @@ import {
   uuidSchema,
   type DrawingSummary,
   type ExcalidrawElementDTO,
+  type TokenScope,
 } from "@open-excalidraw/contracts";
 import { z } from "zod";
 
@@ -41,7 +42,10 @@ export function createMcpServer(
   services: McpServices,
   userId: string,
   auditRequestId?: string,
+  scope: TokenScope = "full",
 ): McpServer {
+  // A read-scoped client never sees the write tools, so it cannot call one.
+  const canWrite = scope !== "read";
   const server = new McpServer({
     name: "open-excalidraw",
     title: "Open Excalidraw",
@@ -102,24 +106,6 @@ export function createMcpServer(
   );
 
   server.registerTool(
-    "create_drawing",
-    {
-      title: "Create a drawing",
-      description: "Creates an empty drawing owned by the user.",
-      inputSchema: { title: drawingTitleSchema },
-    },
-    ({ title }) =>
-      run(async () => {
-        const drawing = await services.drawings.create(userId, {
-          id: randomUUID(),
-          title,
-          idempotencyKey: randomUUID(),
-        });
-        return { drawingId: drawing.id, url: url(drawing.id) };
-      }),
-  );
-
-  server.registerTool(
     "get_scene",
     {
       title: "Read a scene",
@@ -138,80 +124,100 @@ export function createMcpServer(
       }),
   );
 
-  server.registerTool(
-    "edit_scene",
-    {
-      title: "Edit a scene",
-      description:
-        "Adds or replaces the elements in `upsert` and tombstones the ids in " +
-        "`deleteIds`, leaving the rest of the scene untouched. Element " +
-        "versions, nonces and missing z-order indices are filled in for you, " +
-        "and a concurrent save is rebased on automatically. Send one call per " +
-        "logical change, not one per element. `elementCount` counts the live " +
-        "elements left in the scene.",
-      inputSchema: {
-        drawingId: uuidSchema,
-        upsert: z.array(elementSchema).optional(),
-        deleteIds: z.array(z.string().min(1)).optional(),
+  if (canWrite) {
+    server.registerTool(
+      "create_drawing",
+      {
+        title: "Create a drawing",
+        description: "Creates an empty drawing owned by the user.",
+        inputSchema: { title: drawingTitleSchema },
       },
-    },
-    ({ drawingId, upsert, deleteIds }) =>
-      run(async () => {
-        for (let attempt = 1; ; attempt += 1) {
-          const content = await services.content.load(userId, drawingId);
-          const applied = applyEdit(content.scene.elements, {
-            ...(upsert ? { upsert } : {}),
-            ...(deleteIds ? { deleteIds } : {}),
+      ({ title }) =>
+        run(async () => {
+          const drawing = await services.drawings.create(userId, {
+            id: randomUUID(),
+            title,
+            idempotencyKey: randomUUID(),
           });
-          try {
-            // A fresh mutation id per attempt: the rebased payload differs, and
-            // replaying the previous key would be an idempotency mismatch.
-            const saved = await services.content.save(
-              userId,
-              drawingId,
-              BigInt(content.revision),
-              randomUUID(),
-              {
-                scene: { ...content.scene, elements: applied.elements },
-                assetIds: referencedAssetIds(applied.elements),
-              },
-              auditRequestId,
-            );
-            return {
-              revision: saved.revision,
-              elementCount: applied.elements.filter(
-                (element) => !element.isDeleted,
-              ).length,
-              unknownDeleteIds: applied.unknownDeleteIds,
-              url: url(drawingId),
-            };
-          } catch (error) {
-            if (
-              attempt >= MAX_SAVE_ATTEMPTS ||
-              !(error instanceof ContentDomainError) ||
-              error.code !== "VERSION_CONFLICT"
-            ) {
-              throw error;
+          return { drawingId: drawing.id, url: url(drawing.id) };
+        }),
+    );
+
+    server.registerTool(
+      "edit_scene",
+      {
+        title: "Edit a scene",
+        description:
+          "Adds or replaces the elements in `upsert` and tombstones the ids in " +
+          "`deleteIds`, leaving the rest of the scene untouched. Element " +
+          "versions, nonces and missing z-order indices are filled in for you, " +
+          "and a concurrent save is rebased on automatically. Send one call per " +
+          "logical change, not one per element. `elementCount` counts the live " +
+          "elements left in the scene.",
+        inputSchema: {
+          drawingId: uuidSchema,
+          upsert: z.array(elementSchema).optional(),
+          deleteIds: z.array(z.string().min(1)).optional(),
+        },
+      },
+      ({ drawingId, upsert, deleteIds }) =>
+        run(async () => {
+          for (let attempt = 1; ; attempt += 1) {
+            const content = await services.content.load(userId, drawingId);
+            const applied = applyEdit(content.scene.elements, {
+              ...(upsert ? { upsert } : {}),
+              ...(deleteIds ? { deleteIds } : {}),
+            });
+            try {
+              // A fresh mutation id per attempt: the rebased payload differs, and
+              // replaying the previous key would be an idempotency mismatch.
+              const saved = await services.content.save(
+                userId,
+                drawingId,
+                BigInt(content.revision),
+                randomUUID(),
+                {
+                  scene: { ...content.scene, elements: applied.elements },
+                  assetIds: referencedAssetIds(applied.elements),
+                },
+                auditRequestId,
+              );
+              return {
+                revision: saved.revision,
+                elementCount: applied.elements.filter(
+                  (element) => !element.isDeleted,
+                ).length,
+                unknownDeleteIds: applied.unknownDeleteIds,
+                url: url(drawingId),
+              };
+            } catch (error) {
+              if (
+                attempt >= MAX_SAVE_ATTEMPTS ||
+                !(error instanceof ContentDomainError) ||
+                error.code !== "VERSION_CONFLICT"
+              ) {
+                throw error;
+              }
             }
           }
-        }
-      }),
-  );
+        }),
+    );
 
-  server.registerTool(
-    "share_drawing",
-    {
-      title: "Share a drawing",
-      description:
-        "Mints a public read-only link. Every call rotates the token, so any " +
-        "link handed out earlier stops working.",
-      inputSchema: { drawingId: uuidSchema },
-    },
-    ({ drawingId }) =>
-      run(async () => ({
-        url: (await services.sharing.createShareLink(userId, drawingId)).url,
-      })),
-  );
+    server.registerTool(
+      "share_drawing",
+      {
+        title: "Share a drawing",
+        description:
+          "Mints a public read-only link. Every call rotates the token, so any " +
+          "link handed out earlier stops working.",
+        inputSchema: { drawingId: uuidSchema },
+      },
+      ({ drawingId }) =>
+        run(async () => ({
+          url: (await services.sharing.createShareLink(userId, drawingId)).url,
+        })),
+    );
+  }
 
   return server;
 }
