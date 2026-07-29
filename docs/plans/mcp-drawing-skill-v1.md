@@ -190,10 +190,13 @@ Then full `pnpm test`, `pnpm lint`, `pnpm typecheck` before push.
 | Unscoped PAT in agent env                                     | Dedicated short-expiry token mandated in docs; scoped tokens = first post-v1 server feature                                                |
 | Skill format reference rots against upstream Excalidraw drift | Workstream D scenarios double as a canary — rerun on `@excalidraw/excalidraw` upgrades                                                     |
 
-## v1.1 pointer (out of scope, pre-committed)
+## v1.1 — implemented 2026-07-29
 
-Stateless Streamable HTTP `/mcp` route mounted on the API server (official TS
-SDK, PAT bearer, the same 4–5 coarse tools), moving the CAS/version/index/
-tombstone logic from prompt-space into tested TypeScript. Trigger: the first
-time workstream-D-style format errors show up in real use, or when claude.ai
-reach is wanted.
+Stateless Streamable HTTP endpoint at `POST /api/mcp`
+(`apps/server/src/modules/mcp/`, `@modelcontextprotocol/sdk` 1.30.0): same PAT
+bearer seam as REST, per-request server/transport, six tools (`read_format`,
+`list_drawings`, `create_drawing`, `get_scene`, `edit_scene`,
+`share_drawing`). `edit_scene` owns the CAS/version/index/tombstone logic in
+tested TypeScript (`scene-edit.ts`). Live-verified: MCP-drawn elements appear
+on an open canvas without reload. Setup docs:
+`docs/operations/agent-drawing.md` ("MCP endpoint").
