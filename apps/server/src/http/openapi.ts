@@ -866,6 +866,52 @@ export const openApiDocument = {
         },
       },
     },
+    "/api/v1/drawings/{drawingId}/export": {
+      parameters: [drawingIdParameter],
+      get: {
+        tags: ["Content"],
+        summary: "Render the drawing to an image",
+        description:
+          "Renders server-side with Excalidraw's own exporters and the " +
+          "instance's fonts — no browser involved. Any role that can read " +
+          "the drawing may export it. Nothing is cached: the `ETag` is built " +
+          "from the content revision, so `If-None-Match` gets a 304 until " +
+          "the drawing changes. Image assets are not embedded, and PNG text " +
+          "covers Latin scripts only.",
+        parameters: [
+          {
+            name: "format",
+            in: "query",
+            required: false,
+            schema: { type: "string", enum: ["svg", "png"], default: "svg" },
+          },
+          {
+            name: "scale",
+            in: "query",
+            required: false,
+            description: "PNG only; ignored for SVG.",
+            schema: { type: "integer", enum: [1, 2], default: 1 },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "The rendered image.",
+            content: {
+              "image/svg+xml": { schema: { type: "string" } },
+              "image/png": { schema: { type: "string", format: "binary" } },
+            },
+          },
+          "304": { description: "The rendered image has not changed." },
+          "400": problem("Unsupported `format` or `scale`."),
+          "401": unauthorized,
+          "404": notFound,
+          "413": problem("`EXPORT_TOO_LARGE`: the render exceeds 8 MiB."),
+          "503": problem(
+            "`EXPORT_UNAVAILABLE`: the renderer could not produce an image.",
+          ),
+        },
+      },
+    },
     "/api/v1/drawings/{drawingId}/revisions": {
       parameters: [drawingIdParameter],
       get: {

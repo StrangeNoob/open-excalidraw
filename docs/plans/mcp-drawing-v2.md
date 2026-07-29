@@ -91,6 +91,19 @@ one version, one source of truth, checked by a test.
 **Tests:** golden SVG snapshot for a fixture scene; ETag/304 behavior; PNG
 dimensions/scale; version-pin equality test.
 
+**Spike outcome (2026-07-29): green, both formats shipped.** Text metrics
+under `@napi-rs/canvas` matched Chromium to within 0.013% across 56
+string×font×size cases, and `exportToSvg` turned out to make no `measureText`
+calls at all — it emits stored geometry and inlines the exact woff2 subsets,
+so the SVG path is structurally immune to the risk above. `resvg` was dropped:
+it ignores the inlined `@font-face` rules and cannot read woff2, while
+`exportToCanvas` rasterizes directly from the same font files in ~13 ms.
+Two gaps were accepted rather than fixed, both documented in
+`agent-drawing.md`: PNG registers one latin subset per family, so non-Latin
+scripts render as gaps there (SVG is unaffected), and image assets are not
+embedded in either format — that belongs with workstream 3, which is where
+the asset plumbing already lives.
+
 ## Workstream 3 — image support in skill + MCP (~1.5d)
 
 The server side already works (asset endpoints, MIME sniffing, quotas, and

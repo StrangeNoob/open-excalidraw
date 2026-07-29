@@ -1,9 +1,10 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   drawingTitleSchema,
+  fileIdSchema,
   uuidSchema,
   type DrawingSummary,
   type ExcalidrawElementDTO,
@@ -11,10 +12,14 @@ import {
 } from "@open-excalidraw/contracts";
 import { z } from "zod";
 
+import { AssetError, assetError } from "../assets/errors.js";
+import type { AssetService } from "../assets/service.js";
 import { ContentDomainError } from "../content/errors.js";
 import type { ContentService } from "../content/service.js";
 import { DrawingDomainError } from "../drawings/errors.js";
 import type { DrawingService } from "../drawings/service.js";
+import { ExportDomainError } from "../export/errors.js";
+import type { ExportService } from "../export/service.js";
 import { SharingDomainError } from "../sharing/errors.js";
 import type { SharingService } from "../sharing/service.js";
 import { applyEdit, SceneEditError } from "./scene-edit.js";
@@ -23,6 +28,8 @@ export interface McpServices {
   drawings: DrawingService;
   content: ContentService;
   sharing: SharingService;
+  export: ExportService;
+  assets: AssetService;
   publicBaseUrl: string;
   /** Receives errors the tool layer cannot describe to the caller. */
   logError?: (
@@ -35,6 +42,16 @@ export interface McpServices {
 // One re-read plus three retries: past that the drawing is being edited faster
 // than an agent can rebase, and saying so beats looping.
 const MAX_SAVE_ATTEMPTS = 4;
+
+// Big enough to judge layout, small enough that the image does not dominate
+// the agent's context — the size the official excalidraw-mcp feeds back too.
+const MCP_IMAGE_MAX_DIMENSION = 512;
+
+// Base64 in the arguments inflates bytes by 4/3, so this keeps a maximal
+// upload well inside the JSON body limit. It matches the asset service's own
+// default ceiling, and is checked here first so an oversize payload costs no
+// database round trip.
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 
 const elementSchema = z.record(z.string(), z.unknown());
 
@@ -53,11 +70,12 @@ export function createMcpServer(
   });
   const url = (drawingId: string) =>
     `${services.publicBaseUrl}/drawings/${drawingId}`;
-  const run = async (
-    action: () => Promise<unknown>,
+  const run = async <T>(
+    action: () => Promise<T>,
+    toResult: (value: T) => CallToolResult = jsonResult,
   ): Promise<CallToolResult> => {
     try {
-      return text(JSON.stringify(await action()));
+      return toResult(await action());
     } catch (error) {
       if (!isDescribable(error)) {
         services.logError?.("mcp.tool_failed", error, {
@@ -124,6 +142,35 @@ export function createMcpServer(
       }),
   );
 
+  server.registerTool(
+    "export_png",
+    {
+      title: "Look at a drawing",
+      description:
+        "Renders the drawing to a PNG so you can see what you actually drew — " +
+        "overlapping shapes, uneven spacing, labels wider than their box. " +
+        `The longest side is ${MCP_IMAGE_MAX_DIMENSION}px.`,
+      inputSchema: { drawingId: uuidSchema },
+    },
+    ({ drawingId }) =>
+      run(
+        () =>
+          services.export.render(userId, drawingId, {
+            format: "png",
+            maxWidthOrHeight: MCP_IMAGE_MAX_DIMENSION,
+          }),
+        (result) => ({
+          content: [
+            {
+              type: "image",
+              data: result.body.toString("base64"),
+              mimeType: "image/png",
+            },
+          ],
+        }),
+      ),
+  );
+
   if (canWrite) {
     server.registerTool(
       "create_drawing",
@@ -182,6 +229,17 @@ export function createMcpServer(
                 },
                 auditRequestId,
               );
+              // A drawing written only through the API has never had a
+              // browser render its dashboard card. Do it here, and never let
+              // that cost the caller a save that already committed.
+              try {
+                await services.export.ensureThumbnail(userId, drawingId);
+              } catch (error) {
+                services.logError?.("mcp.thumbnail_failed", error, {
+                  requestId: auditRequestId,
+                  drawingId,
+                });
+              }
               return {
                 revision: saved.revision,
                 elementCount: applied.elements.filter(
@@ -200,6 +258,56 @@ export function createMcpServer(
               }
             }
           }
+        }),
+    );
+
+    server.registerTool(
+      "upload_asset",
+      {
+        title: "Upload an image",
+        description:
+          "Stores image bytes on a drawing and returns the fileId to put on an " +
+          "image element. Upload before the edit_scene that references it, or " +
+          "the save is rejected. PNG, JPEG, GIF, WebP, AVIF, BMP, SVG or ICO; " +
+          "the bytes are sniffed, so mimeType must be what they really are. " +
+          `Up to ${MAX_UPLOAD_BYTES} bytes decoded, base64 without line breaks.`,
+        inputSchema: {
+          drawingId: uuidSchema,
+          fileId: fileIdSchema.optional(),
+          mimeType: z.string().min(1).max(255),
+          // Bounded before decoding: 4 base64 characters per 3 bytes, plus
+          // padding.
+          dataBase64: z.base64().max(Math.ceil(MAX_UPLOAD_BYTES / 3) * 4 + 4),
+        },
+      },
+      ({ drawingId, fileId, mimeType, dataBase64 }) =>
+        run(async () => {
+          const bytes = Buffer.from(dataBase64, "base64");
+          if (bytes.byteLength > MAX_UPLOAD_BYTES) {
+            throw assetError(
+              413,
+              "ASSET_TOO_LARGE",
+              "Asset too large",
+              `Assets may not exceed ${MAX_UPLOAD_BYTES} bytes.`,
+            );
+          }
+          const sha256 = createHash("sha256").update(bytes).digest("hex");
+          const { asset } = await services.assets.upload({
+            identity: { userId },
+            drawingId,
+            // Content-addressed by default, so re-uploading the same picture
+            // returns the same id instead of conflicting with itself.
+            fileId: fileId ?? sha256,
+            declaredMimeType: mimeType,
+            expectedSha256: sha256,
+            fileVersion: null,
+            bytes,
+          });
+          return {
+            fileId: asset.fileId,
+            mimeType: asset.mimeType,
+            byteSize: asset.byteSize,
+          };
         }),
     );
 
@@ -242,10 +350,15 @@ const text = (value: string): CallToolResult => ({
   content: [{ type: "text", text: value }],
 });
 
+const jsonResult = (value: unknown): CallToolResult =>
+  text(JSON.stringify(value));
+
 function isDescribable(error: unknown): boolean {
   return (
+    error instanceof AssetError ||
     error instanceof ContentDomainError ||
     error instanceof DrawingDomainError ||
+    error instanceof ExportDomainError ||
     error instanceof SharingDomainError ||
     error instanceof SceneEditError ||
     error instanceof z.ZodError
@@ -256,11 +369,13 @@ function describe(error: unknown): string {
   if (
     error instanceof ContentDomainError ||
     error instanceof DrawingDomainError ||
+    error instanceof ExportDomainError ||
     error instanceof SharingDomainError
   ) {
     return `${error.code}: ${error.message}${error.detail ? ` ${error.detail}` : ""}`;
   }
-  if (error instanceof SceneEditError) {
+  // AssetError carries its detail as the message, so it reads the same way.
+  if (error instanceof SceneEditError || error instanceof AssetError) {
     return `${error.code}: ${error.message}`;
   }
   if (error instanceof z.ZodError) {
@@ -311,6 +426,14 @@ Labels are separate centred text elements, not container text:
 with textAlign "center", verticalAlign "middle", containerId null,
 fontFamily 3, fontSize 16, lineHeight 1.25, and originalText equal to text.
 List labels after their shapes so they draw on top.
+
+Images: upload_asset first, then place its fileId on an image element —
+  {"type": "image", "fileId": "<from upload_asset>", "status": "saved",
+   "scale": [1, 1], "crop": null}
+plus x, y, width and height. Saving a fileId whose bytes were never uploaded is
+rejected (MISSING_ASSET), width/height are canvas points so keep the bitmap's
+aspect ratio or it renders stretched, and asset bytes count against the owner's
+storage quota while scene JSON does not.
 
 Defaults that read well: roughness 0, opacity 100, strokeWidth 2, rounded
 boxes ("roundness": {"type": 3}), boxes near 180x90 with 80-120px gaps, flow

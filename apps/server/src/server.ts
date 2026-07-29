@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { createServer } from "node:http";
+import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -43,6 +44,11 @@ import {
   type OAuthProviderCredentials,
   type OidcProviderConfig,
 } from "./modules/auth/index.js";
+import {
+  createExportRouter,
+  createSceneRenderer,
+  ExportService,
+} from "./modules/export/index.js";
 import {
   createDrawingRouter,
   DrawingService,
@@ -392,6 +398,25 @@ const staticDirectory =
   (process.env.NODE_ENV === "production"
     ? productionStaticDirectory()
     : undefined);
+const exportService = new ExportService({
+  content: contentService,
+  drawings: drawingService,
+  assets: assetService,
+  renderer: createSceneRenderer({
+    // Excalidraw's `fonts/` tree: shipped in the web build, which the image
+    // serves as the static directory, and taken from the package itself when
+    // running from a source checkout.
+    assetRoot:
+      process.env.EXCALIDRAW_ASSET_ROOT?.trim() ||
+      staticDirectory ||
+      excalidrawPackageDirectory(),
+    // Built by `pnpm --filter @open-excalidraw/server run bundle:excalidraw-export`;
+    // exports 503 until it exists.
+    bundlePath:
+      process.env.EXCALIDRAW_EXPORT_BUNDLE?.trim() ||
+      join(process.cwd(), "dist", "excalidraw-export.mjs"),
+  }),
+});
 // Opt-in: only a proxy that overwrites the forwarded headers makes them
 // trustworthy. Defaulting off means a directly exposed port cannot have its
 // per-IP auth throttling bypassed by a spoofed header.
@@ -425,6 +450,15 @@ const app = createApp({
     createAdminRouter({ service: adminService, identity, adminEmails }),
     createDrawingRouter({ service: drawingService, identity }),
     createContentRouter({ service: contentService, identity }),
+    createExportRouter({
+      service: exportService,
+      identity,
+      logError: (event, error, context) =>
+        operationalLog("error", event, {
+          ...context,
+          errorType: safeErrorType(error),
+        }),
+    }),
     createLibraryRouter({ service: libraryService, identity }),
     createSharingRouter({ service: sharingService, identity }),
     createChatRouter({ service: chatService, identity }),
@@ -434,6 +468,8 @@ const app = createApp({
       drawings: drawingService,
       content: contentService,
       sharing: sharingService,
+      export: exportService,
+      assets: assetService,
       publicBaseUrl: baseUrl,
       logError: (event, error, context) =>
         operationalLog("error", event, {
@@ -621,6 +657,22 @@ function productionStaticDirectory(): string {
   const imageDirectory = join(process.cwd(), "public");
   if (existsSync(imageDirectory)) return imageDirectory;
   return join(dirname(fileURLToPath(import.meta.url)), "../../web/dist");
+}
+
+/**
+ * Where `@excalidraw/excalidraw` keeps its fonts in a source checkout, matching
+ * how `apps/web/vite.config.ts` finds the same tree. The package is a dev
+ * dependency, so a production install has to fall back to the static
+ * directory the web build already copied them into.
+ */
+function excalidrawPackageDirectory(): string {
+  try {
+    return dirname(
+      createRequire(import.meta.url).resolve("@excalidraw/excalidraw"),
+    );
+  } catch {
+    return join(process.cwd(), "public");
+  }
 }
 
 function oauthCredentials(

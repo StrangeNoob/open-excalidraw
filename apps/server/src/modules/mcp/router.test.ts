@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import type { TokenScope } from "@open-excalidraw/contracts";
 import type { Express } from "express";
@@ -5,10 +7,12 @@ import request from "supertest";
 import type { Mock } from "vitest";
 
 import { createApp } from "../../app.js";
+import type { AssetService } from "../assets/service.js";
 import type { IdentityService } from "../auth/identity.js";
 import { ContentDomainError } from "../content/errors.js";
 import type { ContentService } from "../content/service.js";
 import type { DrawingService } from "../drawings/service.js";
+import type { ExportService } from "../export/service.js";
 import type { SharingService } from "../sharing/service.js";
 import { createMcpRouter } from "./router.js";
 
@@ -28,6 +32,8 @@ function createHarness(
   overrides: {
     content?: { load?: Mock; save?: Mock };
     drawings?: { list?: Mock; search?: Mock };
+    exports?: { render?: Mock; ensureThumbnail?: Mock };
+    assets?: { upload?: Mock };
     tokenScope?: TokenScope;
   } = {},
 ) {
@@ -43,6 +49,28 @@ function createHarness(
       .mockResolvedValue({ revision: "5", savedAt: "2026-07-29T00:00:01Z" }),
     ...overrides.content,
   };
+  const exports = {
+    render: vi.fn().mockResolvedValue({
+      revision: "4",
+      contentType: "image/png",
+      body: Buffer.from([137, 80, 78, 71]),
+    }),
+    ensureThumbnail: vi.fn().mockResolvedValue(true),
+    ...overrides.exports,
+  };
+  const assets = {
+    upload: vi.fn().mockImplementation(({ fileId, declaredMimeType, bytes }) =>
+      Promise.resolve({
+        asset: {
+          fileId,
+          mimeType: declaredMimeType,
+          byteSize: (bytes as Buffer).byteLength,
+        },
+        created: true,
+      }),
+    ),
+    ...overrides.assets,
+  };
   const identity: IdentityService = {
     resolve: (headers) =>
       Promise.resolve(
@@ -56,6 +84,7 @@ function createHarness(
           : null,
       ),
   };
+  const logError = vi.fn();
   const app = createApp({
     routers: [
       createMcpRouter({
@@ -63,11 +92,14 @@ function createHarness(
         content: content as unknown as ContentService,
         drawings: (overrides.drawings ?? {}) as unknown as DrawingService,
         sharing: {} as SharingService,
+        export: exports as unknown as ExportService,
+        assets: assets as unknown as AssetService,
+        logError,
         publicBaseUrl: "https://draw.example.com",
       }),
     ],
   });
-  return { app, content };
+  return { app, content, exports, assets, logError };
 }
 
 let nextId = 0;
@@ -151,8 +183,10 @@ describe("MCP endpoint", () => {
       "read_format",
       "list_drawings",
       "get_scene",
+      "export_png",
       "create_drawing",
       "edit_scene",
+      "upload_asset",
       "share_drawing",
     ]);
   });
@@ -164,7 +198,7 @@ describe("MCP endpoint", () => {
 
     expect(
       (listed.body.result.tools as { name: string }[]).map((tool) => tool.name),
-    ).toEqual(["read_format", "list_drawings", "get_scene"]);
+    ).toEqual(["read_format", "list_drawings", "get_scene", "export_png"]);
   });
 
   it("keeps the write tools for a write-scoped token", async () => {
@@ -338,6 +372,111 @@ describe("MCP endpoint", () => {
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toBe(
       "DRAWING_NOT_FOUND: Drawing not found",
+    );
+  });
+
+  it("hands back a rendered PNG as an image block, not JSON", async () => {
+    const { app, exports } = createHarness();
+
+    const result = await callTool(app, "export_png", { drawingId: DRAWING_ID });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0]).toEqual({
+      type: "image",
+      data: Buffer.from([137, 80, 78, 71]).toString("base64"),
+      mimeType: "image/png",
+    });
+    expect(exports.render).toHaveBeenCalledWith(USER_ID, DRAWING_ID, {
+      format: "png",
+      maxWidthOrHeight: 512,
+    });
+  });
+
+  it("gives an agent-written drawing a dashboard thumbnail on save", async () => {
+    const { app, exports } = createHarness();
+
+    await callTool(app, "edit_scene", {
+      drawingId: DRAWING_ID,
+      upsert: [{ id: "box", type: "rectangle", x: 0, y: 0 }],
+    });
+
+    expect(exports.ensureThumbnail).toHaveBeenCalledWith(USER_ID, DRAWING_ID);
+  });
+
+  it("uploads image bytes under a content-addressed file ID", async () => {
+    const { app, assets } = createHarness();
+    const bytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+
+    const result = await callTool(app, "upload_asset", {
+      drawingId: DRAWING_ID,
+      mimeType: "image/png",
+      dataBase64: bytes.toString("base64"),
+    });
+
+    expect(assets.upload).toHaveBeenCalledWith({
+      identity: { userId: USER_ID },
+      drawingId: DRAWING_ID,
+      fileId: sha256,
+      declaredMimeType: "image/png",
+      expectedSha256: sha256,
+      fileVersion: null,
+      bytes,
+    });
+    expect(JSON.parse(result.content[0]?.text ?? "")).toEqual({
+      fileId: sha256,
+      mimeType: "image/png",
+      byteSize: bytes.byteLength,
+    });
+  });
+
+  it("refuses an oversize upload without calling the asset service", async () => {
+    const { app, assets } = createHarness();
+
+    const result = await callTool(app, "upload_asset", {
+      drawingId: DRAWING_ID,
+      mimeType: "image/png",
+      dataBase64: Buffer.alloc(4 * 1024 * 1024 + 1).toString("base64"),
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain("ASSET_TOO_LARGE");
+    expect(assets.upload).not.toHaveBeenCalled();
+  });
+
+  it("refuses malformed base64 instead of uploading truncated bytes", async () => {
+    const { app, assets } = createHarness();
+
+    const result = await callTool(app, "upload_asset", {
+      drawingId: DRAWING_ID,
+      mimeType: "image/png",
+      dataBase64: "not base64!!",
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/base64/i);
+    expect(assets.upload).not.toHaveBeenCalled();
+  });
+
+  it("keeps a committed save when the thumbnail render fails", async () => {
+    const failure = new Error("skia exploded");
+    const { app, logError } = createHarness({
+      exports: { ensureThumbnail: vi.fn().mockRejectedValue(failure) },
+    });
+
+    const result = await callTool(app, "edit_scene", {
+      drawingId: DRAWING_ID,
+      upsert: [{ id: "box", type: "rectangle", x: 0, y: 0 }],
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(result.content[0]?.text ?? "")).toMatchObject({
+      revision: "5",
+    });
+    expect(logError).toHaveBeenCalledWith(
+      "mcp.thumbnail_failed",
+      failure,
+      expect.objectContaining({ drawingId: DRAWING_ID }),
     );
   });
 });

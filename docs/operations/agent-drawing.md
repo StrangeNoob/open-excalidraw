@@ -67,10 +67,21 @@ Same token, same permissions — the endpoint authenticates with the personal
 access token from above and does everything as its owner.
 
 The tools mirror the skill's workflows — `read_format`, `list_drawings`,
-`create_drawing`, `get_scene`, `edit_scene`, `share_drawing` — with one
-difference: `edit_scene` takes only the elements you are adding, changing, or
-deleting. Element versions, z-order indices, tombstones, and the retry when
+`create_drawing`, `get_scene`, `edit_scene`, `upload_asset`, `share_drawing` —
+with one difference: `edit_scene` takes only the elements you are adding,
+changing, or deleting. Element versions, z-order indices, tombstones, and the retry when
 someone saves first are handled server-side rather than in the prompt.
+
+`upload_asset` takes the image as base64 in its arguments (up to 4 MiB decoded)
+and returns the `fileId` to put on an image element; the skill does the same
+thing with a `PUT` of the raw bytes. Either way the upload has to land before
+the save that references it. It is a write, so a `read`-scoped token does not
+see it.
+
+`export_png` has no equivalent in the skill: it renders a drawing server-side
+and hands the image back, so the agent can look at what it drew — overlapping
+shapes, uneven spacing, a label wider than its box — instead of inferring the
+layout from coordinates. It is a read, so a `read`-scoped token may call it.
 
 Skill or endpoint, not both: they do the same job, and loading both only spends
 context twice.
@@ -95,13 +106,55 @@ additionally allows instance administration. Mitigate accordingly:
 A token cannot mint further tokens and cannot open realtime collaboration
 sessions, so a leak stays bounded to REST access to the owner's drawings.
 
+## Exports
+
+`GET /api/v1/drawings/{id}/export?format=svg|png&scale=1|2` renders a drawing
+without a browser: Excalidraw's own exporters run in the API process under
+jsdom, with the instance's self-hosted fonts. Any account that can open the
+drawing can export it, including a `read`-scoped token, since it is a read.
+
+```bash
+curl -H "Authorization: Bearer $OPEN_EXCALIDRAW_TOKEN" \
+  "$OPEN_EXCALIDRAW_URL/api/v1/drawings/$ID/export?format=png&scale=2" \
+  -o drawing.png
+```
+
+`format` defaults to `svg` and `scale` to `1`; `scale` applies to PNG only.
+Nothing is cached on disk — the response carries an `ETag` built from the
+content revision, so `If-None-Match` gets a `304` until the drawing changes.
+Renders over 8 MiB are refused with `EXPORT_TOO_LARGE`.
+
+Two known gaps, both harmless for the drawings an agent authors:
+
+- **Images are not embedded.** Elements referencing an uploaded asset render
+  as empty placeholders. Everything else — shapes, arrows, text — is exact.
+- **PNG text is Latin-only.** SVG carries the right font subset for any
+  script; the PNG rasterizer has one subset per family registered, so
+  Cyrillic, CJK and emoji come out as gaps. Use `format=svg` for those.
+
+An agent-created drawing gets its dashboard thumbnail from the same renderer:
+the first `edit_scene` on a drawing with no thumbnail renders one, so the card
+is not blank before anyone opens the drawing in a browser.
+
+Operationally, the renderer is a lazy singleton — the first export in a
+process pays ~200 ms and roughly 250 MB of resident memory to boot, and
+renders are serialized after that. Each render costs on top of that boot
+figure, and roughly in proportion to the element count, so exports are capped:
+scenes over 10,000 elements answer `413 EXPORT_TOO_LARGE`, either dimension is
+clamped to 8192 px however large the scene's coordinates are, and a rendered
+body over 8 MiB is refused rather than streamed. It needs
+`dist/excalidraw-export.mjs` (produced by
+`pnpm --filter @open-excalidraw/server run bundle:excalidraw-export`, and by
+the image build); exports answer `503 EXPORT_UNAVAILABLE` while it is missing.
+
 ## What the skill does
 
 - creates drawings with client-minted ids so retries cannot duplicate them;
 - saves whole scenes with `If-Match`/`Idempotency-Key`, and rebases on `412`
   rather than clobbering a concurrent editor;
 - lists and searches drawings, and returns share links;
+- uploads image assets and places them as image elements;
 - restores from revision history when a save goes wrong.
 
-It does not upload image assets, and it deliberately batches one save per logical
-change instead of streaming small edits.
+It deliberately batches one save per logical change instead of streaming small
+edits.

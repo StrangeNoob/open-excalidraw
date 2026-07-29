@@ -181,8 +181,8 @@ No top-level `files` key — a standard `.excalidraw` export pasted as-is gets
 `assetIds` must be the sorted, de-duplicated list of every `fileId` referenced by
 the elements. Author scenes with no images and it stays `[]`; when editing a
 drawing that has images, echo back exactly what the `GET` returned and do not
-touch the image elements. A mismatch is `422 ASSET_MANIFEST_MISMATCH`. This skill
-does not upload assets.
+touch the image elements. A mismatch is `422 ASSET_MANIFEST_MISMATCH`. To add an
+image of your own, see [Images](#images).
 
 ### Every element needs
 
@@ -295,6 +295,91 @@ to right or top to bottom. Keep the palette small and consistent.
 
 50,000 elements per scene; 10 MiB of scene JSON (`413 SCENE_TOO_LARGE`); title
 120 characters.
+
+## Images
+
+Two steps, and the order is not negotiable: upload the bytes, **then** save a
+scene that references them. A save naming a `fileId` whose bytes are not stored
+yet is `422 MISSING_ASSET`.
+
+### 1. Upload the bytes
+
+The `fileId` is yours to pick — 1–256 characters of `[A-Za-z0-9_-]`. Use the
+file's SHA-256, which you need for the checksum header anyway: identical bytes
+then always get the same id, so a retry or a second reference is free.
+
+```bash
+FILE=logo.png
+SHA=$(shasum -a 256 "$FILE" | cut -d' ' -f1)   # 64 lowercase hex characters
+curl -sS -X PUT "$API/drawings/$ID/assets/$SHA" -H "$AUTH" \
+  -H "Content-Type: image/png" \
+  -H "x-content-sha256: $SHA" \
+  --data-binary @"$FILE"
+```
+
+`201` on the first upload, `200` when the exact same bytes are already stored;
+both return the asset JSON (`{"id":…,"fileId":…,"mimeType":…,"byteSize":…}`).
+`x-content-sha256` is mandatory and must be the lowercase hex SHA-256 of exactly
+the bytes you send — the server rehashes them.
+
+What the server enforces:
+
+- `Content-Type` must be one of `image/png`, `image/jpeg`, `image/jfif`,
+  `image/gif`, `image/webp`, `image/avif`, `image/bmp`, `image/svg+xml`,
+  `image/x-icon`. The bytes are sniffed, so a mislabelled file is
+  `415 ASSET_MIME_MISMATCH` and an unsupported one `415 UNSUPPORTED_ASSET_TYPE`.
+- 4 MiB per asset (`413 ASSET_TOO_LARGE`). Asset bytes count against the
+  owner's storage quota (`413 STORAGE_QUOTA_EXCEEDED`); scene JSON does not.
+- A `fileId` that already holds different bytes is `409 ASSET_FILE_ID_CONFLICT`.
+  Assets are immutable: to change a picture, upload it under a new id and point
+  the element at that.
+- Also: `400 INVALID_ASSET_CHECKSUM` (malformed header),
+  `422 ASSET_CHECKSUM_MISMATCH` (header does not match the bytes),
+  `403 ASSET_UPLOAD_FORBIDDEN` (read-only access), `404 DRAWING_NOT_FOUND`.
+
+### 2. Place the image element
+
+```json
+{
+  "type": "image",
+  "id": "logo1",
+  "index": "a05",
+  "fileId": "<the fileId you uploaded>",
+  "status": "saved",
+  "x": 120,
+  "y": 80,
+  "width": 200,
+  "height": 150,
+  "scale": [1, 1],
+  "crop": null,
+  "angle": 0,
+  "version": 1,
+  "versionNonce": 812304991,
+  "isDeleted": false,
+  "strokeColor": "transparent",
+  "backgroundColor": "transparent",
+  "fillStyle": "solid",
+  "strokeWidth": 2,
+  "strokeStyle": "solid",
+  "roughness": 0,
+  "opacity": 100,
+  "seed": 771249,
+  "roundness": null,
+  "frameId": null,
+  "groupIds": [],
+  "boundElements": null,
+  "link": null,
+  "locked": false
+}
+```
+
+- `status` must be `"saved"`. `"pending"` is the editor's own upload-in-flight
+  state and draws a placeholder.
+- `width`/`height` are canvas points, not pixels. Read the bitmap's real size
+  (`file logo.png` prints it) and keep that aspect ratio, or the image renders
+  stretched. `scale` is `[1, 1]` unless you mean to flip an axis (`[-1, 1]`).
+- Add the `fileId` to the envelope's `assetIds` — sorted and de-duplicated with
+  every other referenced id, or the save is `422 ASSET_MANIFEST_MISMATCH`.
 
 ## Finish
 

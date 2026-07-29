@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && pnpm run bundle",
+    "build": "tsc -p tsconfig.build.json && pnpm run bundle && pnpm run bundle:excalidraw-export",
     "bundle": "esbuild src/server.ts --bundle --platform=node --format=esm --target=node22 --packages=external --alias:@open-excalidraw/contracts=../../packages/contracts/src/index.ts --alias:@open-excalidraw/database=../../packages/database/src/index.ts --alias:@open-excalidraw/mail=../../packages/mail/src/index.ts --alias:@open-excalidraw/storage=../../packages/storage/src/index.ts --outfile=dist/server.mjs",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.mjs",
@@ -13,11 +13,13 @@
     "test:integration": "vitest run --passWithNoTests --config vitest.integration.config.ts",
     "typecheck": "tsc -p tsconfig.json --pretty false",
     "bundle:migrate-assets": "esbuild src/tools/migrate-assets.ts --bundle --platform=node --format=esm --target=node22 --packages=external --alias:@open-excalidraw/storage=../../packages/storage/src/index.ts --outfile=dist/migrate-assets.mjs",
-    "bundle:export-drawings": "esbuild src/tools/export-drawings.ts --bundle --platform=node --format=esm --target=node22 --packages=external --alias:@open-excalidraw/storage=../../packages/storage/src/index.ts --outfile=dist/export-drawings.mjs"
+    "bundle:export-drawings": "esbuild src/tools/export-drawings.ts --bundle --platform=node --format=esm --target=node22 --packages=external --alias:@open-excalidraw/storage=../../packages/storage/src/index.ts --outfile=dist/export-drawings.mjs",
+    "bundle:excalidraw-export": "esbuild src/modules/export/excalidraw-entry.mjs --bundle --platform=node --format=esm --target=node22 --loader:.json=json --outfile=dist/excalidraw-export.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1084.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "@napi-rs/canvas": "0.1.100",
     "@open-excalidraw/contracts": "workspace:*",
     "@open-excalidraw/database": "workspace:*",
     "@open-excalidraw/mail": "workspace:*",
@@ -29,6 +31,7 @@
     "express-rate-limit": "8.5.2",
     "file-type": "22.0.1",
     "helmet": "8.2.0",
+    "jsdom": "29.1.1",
     "nodemailer": "9.0.3",
     "pg": "8.22.0",
     "pino": "10.3.1",
@@ -39,11 +42,14 @@
   },
   "devDependencies": {
     "@better-auth/utils": "0.4.2",
+    "@excalidraw/excalidraw": "0.18.1",
     "@types/express": "5.0.6",
     "@types/pg": "8.20.0",
     "@types/supertest": "7.2.0",
     "@types/swagger-ui-express": "4.1.8",
     "esbuild": "0.28.1",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
     "supertest": "7.2.2",
     "testcontainers": "12.0.4",
     "tsx": "4.23.0"
