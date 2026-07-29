@@ -4,11 +4,12 @@ Status: planned 2026-07-29 (follows `mcp-drawing-skill-v1.md`, whose v1 and
 v1.1 are implemented and live-verified)
 Branch: `feature/*` per workstream; independent workstreams may ship
 separately
-Estimated effort: ~8–10 dev-days total
+Estimated effort: ~12–14 dev-days total
 
-Scope: the five backlog items carried out of the v1 research. Explicitly out
-of scope: OAuth for claude.ai connectors (wait for the request-headers beta
-to GA; revisit only if real multi-user claude.ai demand appears first).
+Scope: the six backlog items carried out of the v1 research, including OAuth
+for claude.ai connectors (workstream 4). OAuth ships last and is dropped if
+Anthropic's connector "Request headers" beta reaches GA first — at that point
+the existing PAT-bearer endpoint covers claude.ai with zero server work.
 
 ## Workstream 1 — scoped personal access tokens (~2.5d)
 
@@ -110,6 +111,43 @@ one tool are missing.
   Requires `write` scope (workstream 1).
 - e2e scenario: agent uploads a PNG, places it, canvas shows it live.
 
+## Workstream 4 — OAuth for claude.ai connectors (~3–4d, ships last, drop-if-obsolete)
+
+Why it exists: claude.ai's connector form only takes a URL, so a client we
+don't control has to _acquire_ the PAT-equivalent credential itself — that
+acquisition flow is what OAuth standardizes. The moment the connector
+"Request headers" beta GAs for this account, this whole workstream is
+unnecessary; check that before starting.
+
+**Design (lean on better-auth, which the app already uses):**
+
+- Authorization server: better-auth's OIDC/OAuth provider plugin on the
+  existing auth stack — authorization endpoint reuses the app session +
+  a minimal consent screen ("Claude wants to read and edit your drawings"),
+  token endpoint issues short-lived access tokens bound to
+  `(userId, scope)`, refresh tokens with PAT-style expiry rules.
+- Discovery: `/.well-known/oauth-protected-resource` (RFC 9728) pointing at
+  the app's own authorization-server metadata; 401s from `/api/mcp` gain a
+  `WWW-Authenticate` header referencing it (this is what claude.ai follows).
+- Client registration: Dynamic Client Registration for claude.ai's callback
+  (`https://claude.ai/api/mcp/auth_callback`), with CIMD accepted if the
+  plugin supports it.
+- Resource server: the MCP identity seam accepts OAuth bearer tokens
+  alongside `oepat_` PATs; OAuth scopes map 1:1 onto workstream 1's
+  `read`/`write` (never `full` — a connector should not get admin reach).
+
+**Depends on workstream 1** (the scope model is the consent language).
+
+**Tests:** discovery documents served and spec-shaped; full authorization-
+code round trip against a test client; MCP call with an OAuth token resolves
+the right user and scope; expired/revoked token → 401 with
+`WWW-Authenticate`.
+
+**Risk:** claude.ai connector quirks are only observable against a public
+HTTPS deployment — budget a half-day of live testing against the Railway
+instance; the local e2e can only prove the spec flow, not Anthropic's
+client behavior.
+
 ## Workstream 5 — incremental `scene.committed` for external writes (gated, metric first ~0.5d; implementation 3–5d only if triggered)
 
 Today every external save broadcasts a full-snapshot resync. Fine at agent
@@ -156,8 +194,11 @@ drift).
 1 (scoped PATs) and 6 (e2e suite) first and in parallel — one is the top
 security item, the other is the safety net everything else runs behind.
 Then 2 (export), then 3 (images, which reuses 2's thumbnail path for its
-e2e assertion). 5 stays dormant: ship the metric with whichever workstream
-lands first, implement only on trigger.
+e2e assertion). 4 (OAuth) last: it depends on 1's scope model, and every
+week of delay is a week for the request-headers beta to make it
+unnecessary — re-check the beta's status immediately before starting.
+5 stays dormant: ship the metric with whichever workstream lands first,
+implement only on trigger.
 
 Per project process: Opus implementation agents per workstream in isolated
 worktrees (pin the base sha in every prompt), review pass over each diff,
@@ -171,6 +212,10 @@ tests/lint before push.
   drawing shows a dashboard thumbnail without any browser having opened it.
 - An agent can place an uploaded image and it appears live on an open
   canvas.
+- A claude.ai custom connector pointed at the instance completes the OAuth
+  consent flow and can call the MCP tools as the consenting user with
+  `read`/`write` scope — or the workstream is closed as obsolete with the
+  request-headers beta documented as the path instead.
 - `resync_broadcasts_total` visible in `/metrics`.
 - The e2e suite passes locally and in CI, covers scenarios (a)–(e), and
   runs automatically on any `@excalidraw/excalidraw` version bump.
