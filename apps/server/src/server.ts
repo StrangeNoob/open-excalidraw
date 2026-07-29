@@ -75,6 +75,7 @@ import {
   LibraryService,
   PostgresLibraryRepository,
 } from "./modules/library/index.js";
+import { createMcpRouter } from "./modules/mcp/index.js";
 import {
   createNotificationRouter,
   PostgresNotificationSettingsRepository,
@@ -422,6 +423,13 @@ const app = createApp({
     createSharingRouter({ service: sharingService, identity }),
     createChatRouter({ service: chatService, identity }),
     createTokenRouter({ service: tokenService, identity }),
+    createMcpRouter({
+      identity,
+      drawings: drawingService,
+      content: contentService,
+      sharing: sharingService,
+      publicBaseUrl: baseUrl,
+    }),
     createNotificationRouter({
       repository: new PostgresNotificationSettingsRepository(database.pool),
       identity,

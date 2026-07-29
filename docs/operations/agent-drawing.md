@@ -53,6 +53,31 @@ block of `.claude/settings.json` — it is not a secret. Keep
 `OPEN_EXCALIDRAW_TOKEN` only in the launching shell or user-local secret
 storage; never put it in project-scoped settings files, and never commit it.
 
+## MCP endpoint
+
+An instance also speaks MCP at `POST /api/mcp` (stateless Streamable HTTP), for
+clients that prefer tools over a skill:
+
+```
+claude mcp add --transport http open-excalidraw https://draw.example.com/api/mcp \
+  --header "Authorization: Bearer $OPEN_EXCALIDRAW_TOKEN"
+```
+
+Same token, same permissions — the endpoint authenticates with the personal
+access token from above and does everything as its owner.
+
+The tools mirror the skill's workflows — `read_format`, `list_drawings`,
+`create_drawing`, `get_scene`, `edit_scene`, `share_drawing` — with one
+difference: `edit_scene` takes only the elements you are adding, changing, or
+deleting. Element versions, z-order indices, tombstones, and the retry when
+someone saves first are handled server-side rather than in the prompt.
+
+Skill or endpoint, not both: they do the same job, and loading both only spends
+context twice.
+
+For a claude.ai custom connector the instance has to be reachable from the
+internet over HTTPS with a valid certificate.
+
 ## Security
 
 Personal access tokens are **unscoped**: a token can do anything its owner can do

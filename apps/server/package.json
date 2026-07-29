@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1084.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@open-excalidraw/contracts": "workspace:*",
     "@open-excalidraw/database": "workspace:*",
     "@open-excalidraw/mail": "workspace:*",
