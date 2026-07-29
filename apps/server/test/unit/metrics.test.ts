@@ -22,6 +22,7 @@ const maintenanceResult: MaintenanceResult = {
   expiredInvitationsDeleted: 0,
   expiredSessionsDeleted: 6,
   expiredVerificationsDeleted: 0,
+  expiredOauthGrantsDeleted: 0,
   auditEventsDeleted: 9,
   mutationsDeleted: 2,
   mentionEmailStatesDeleted: 3,

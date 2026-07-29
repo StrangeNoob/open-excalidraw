@@ -145,6 +145,14 @@ describe("MCP endpoint", () => {
     expect(response.status).toBe(401);
     expect(response.body).toMatchObject({ code: "AUTHENTICATION_REQUIRED" });
     expect(content.load).not.toHaveBeenCalled();
+    // The challenge is what makes an MCP client start the OAuth flow: it
+    // points at this resource's metadata and names the scopes it wants.
+    expect(response.headers["www-authenticate"]).toBe(
+      'Bearer resource_metadata="https://draw.example.com/.well-known/oauth-protected-resource/api/mcp", scope="read write"',
+    );
+    expect(response.headers["access-control-expose-headers"]).toBe(
+      "WWW-Authenticate",
+    );
   });
 
   it("rejects a bad token", async () => {

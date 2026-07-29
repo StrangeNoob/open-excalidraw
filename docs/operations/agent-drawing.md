@@ -86,8 +86,51 @@ layout from coordinates. It is a read, so a `read`-scoped token may call it.
 Skill or endpoint, not both: they do the same job, and loading both only spends
 context twice.
 
-For a claude.ai custom connector the instance has to be reachable from the
-internet over HTTPS with a valid certificate.
+## claude.ai connector
+
+claude.ai's custom-connector form takes only a URL, so the connector cannot be
+given a personal access token — it has to obtain its own credential, which is
+what the instance's OAuth authorization server is for. Paste:
+
+```
+https://draw.example.com/api/mcp
+```
+
+The instance has to be reachable from the internet over HTTPS with a valid
+certificate; nothing else needs configuring, and Claude Code users are
+unaffected — bearer `oepat_` tokens keep working exactly as above.
+
+Claude discovers the authorization server from the endpoint itself
+(`/.well-known/oauth-protected-resource/api/mcp`, and the `WWW-Authenticate`
+header on an unauthenticated call), registers itself, and sends you to this
+instance to sign in. The consent screen then names the application and what it
+is asking for, in these words:
+
+- _See your drawings and everything in them_ (`read`)
+- _Create drawings, and change or delete anything in them_ (`write`)
+
+A connector that names no scope gets `write`, which is what the screen says
+before you approve it. There is no third option: an OAuth grant can never
+reach `/api/v1/admin/*` or token management, so a connector cannot administer
+the instance or mint tokens — the same gate that stops a scoped personal access
+token stops it.
+
+Access tokens last 15 minutes and refresh tokens 90 days, after which the
+connector asks again. Both are stored only as SHA-256 digests, like personal
+access tokens: a database read yields no usable credential, and expired grants
+are swept by the maintenance job. To cut a connector off before then, delete its grants:
+
+```sql
+DELETE FROM oauth_access_token WHERE client_id = '<client id>';
+-- or drop the client entirely, which cascades to its tokens and consent:
+DELETE FROM oauth_application WHERE client_id = '<client id>';
+```
+
+**Standing caveat:** this whole flow exists because the connector form cannot
+send a header. Anthropic's connector "Request headers" beta removes that limit;
+once it is generally available, pointing a connector at `/api/mcp` with an
+`Authorization: Bearer oepat_…` header is the simpler path and OAuth becomes
+optional.
 
 ## Security
 
@@ -104,7 +147,9 @@ additionally allows instance administration. Mitigate accordingly:
   it lives on is shared or lost.
 
 A token cannot mint further tokens and cannot open realtime collaboration
-sessions, so a leak stays bounded to REST access to the owner's drawings.
+sessions, so a leak stays bounded to REST access to the owner's drawings. An
+OAuth connector token is the same kind of credential with the same limits, and
+is additionally capped at `read` or `write`.
 
 ## Exports
 

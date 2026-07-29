@@ -10,6 +10,9 @@ const SECRETS: Record<string, TokenScope> = {
   oepat_read: "read",
   oepat_write: "write",
   oepat_full: "full",
+  // OAuth access tokens carry no prefix and are never `full`.
+  connectorRead: "read",
+  connectorWrite: "write",
 };
 
 // Every route answers 200, so any non-200 came from the scope middleware.
@@ -96,6 +99,25 @@ describe("token scope enforcement", () => {
     expect((await call("post", "/api/v1/drawings", "oepat_write")).status).toBe(
       200,
     );
+  });
+
+  it("holds an OAuth connector token to the same boundaries", async () => {
+    // Same gate, no prefix: a connector must not sail past what stops a PAT.
+    expect(
+      (await call("put", "/api/v1/drawings/x", "connectorRead")).status,
+    ).toBe(403);
+    expect(
+      (await call("post", "/api/v1/admin/users", "connectorWrite")).status,
+    ).toBe(403);
+    expect(
+      (await call("get", "/api/v1/admin/overview", "connectorWrite")).status,
+    ).toBe(403);
+    expect(
+      (await call("post", "/api/v1/drawings", "connectorWrite")).status,
+    ).toBe(200);
+    expect(
+      (await call("get", "/api/v1/drawings", "connectorRead")).status,
+    ).toBe(200);
   });
 
   it("leaves session and unauthenticated requests alone", async () => {

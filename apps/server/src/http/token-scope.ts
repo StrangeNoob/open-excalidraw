@@ -1,30 +1,29 @@
-import { PERSONAL_ACCESS_TOKEN_PREFIX } from "@open-excalidraw/contracts";
 import type { RequestHandler } from "express";
 
 import type { TokenIdentityResolver } from "../modules/auth/identity.js";
 import { requestIdFor } from "./request-context.js";
 
-const BEARER_TOKEN_PREFIX = `Bearer ${PERSONAL_ACCESS_TOKEN_PREFIX}`;
+const BEARER_PREFIX = "Bearer ";
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 /**
- * The single enforcement seam for personal access token scopes, mounted ahead
- * of the routers. It only speaks for requests that present an `oepat_` bearer
- * token: anything else (session cookie, no credentials, a foreign
- * Authorization scheme) passes through and the routes answer as they always
- * have, including the 401 for an invalid token.
+ * The single enforcement seam for bearer-token scopes, mounted ahead of the
+ * routers. It speaks for any request that presents a bearer token — an `oepat_`
+ * personal access token or an OAuth access token from a connector; anything
+ * else (session cookie, no credentials, a foreign Authorization scheme) passes
+ * through and the routes answer as they always have, including the 401 for an
+ * invalid token.
  *
- * `/api/mcp` is deliberately not covered: it is POST-only JSON-RPC whatever
- * the tool does, so the method rule would say nothing useful there. The MCP
- * layer enforces the same scopes by only registering write tools a scope
- * allows.
+ * `/api/mcp` is deliberately not covered: it is POST-only JSON-RPC whatever the
+ * tool does, so the method rule would say nothing useful there. The MCP layer
+ * enforces the same scopes by only registering write tools a scope allows.
  */
 export function enforceTokenScope(
   tokenResolver: TokenIdentityResolver,
 ): RequestHandler {
   return (request, response, next) => {
     const authorization = request.headers.authorization;
-    if (!authorization?.startsWith(BEARER_TOKEN_PREFIX)) {
+    if (!authorization?.startsWith(BEARER_PREFIX)) {
       next();
       return;
     }
@@ -42,14 +41,15 @@ export function enforceTokenScope(
     // A second resolution of the same token: a SHA-256 and one indexed select,
     // cheaper than threading the identity through every router's own resolve.
     void tokenResolver
-      .resolve(authorization.slice("Bearer ".length))
+      .resolve(authorization.slice(BEARER_PREFIX.length))
       .then((identity) => {
         if (!identity) {
           next();
           return;
         }
         // A token minted before scopes existed keeps its old reach, exactly as
-        // the repository reports it.
+        // the repository reports it. An OAuth grant is only ever read or write,
+        // so the admin branch always refuses it.
         const scope = identity.tokenScope ?? "full";
         if (admin ? scope === "full" : scope !== "read") {
           next();

@@ -13,9 +13,9 @@ import {
   createAuthRouter,
   createIdentityService,
   createOpenExcalidrawAuth,
-  hashSessionToken,
+  hashAuthToken,
   OneTimeManualResetLinkStore,
-  withHashedSessionTokens,
+  withHashedTokens,
 } from "../src/modules/auth/index.js";
 
 const BASE_URL = "https://draw.example.test";
@@ -148,6 +148,8 @@ describe("Better Auth configuration", () => {
 
     expect(options.plugins?.map((plugin) => plugin.id)).toEqual([
       "two-factor",
+      "mcp",
+      "oauth-refresh-rotation",
       "generic-oauth",
     ]);
     const plugin = findGenericOAuth(options);
@@ -183,9 +185,12 @@ describe("Better Auth configuration", () => {
     const plugin = findGenericOAuth(options);
     expect(plugin?.options.config[0]?.discoveryUrl).toBe(discoveryUrl);
 
-    // twoFactor is always registered; generic-oauth only with complete OIDC.
+    // twoFactor and the OAuth authorization server are always registered;
+    // generic-oauth only with complete OIDC.
     expect(buildBetterAuthOptions(base).plugins?.map((p) => p.id)).toEqual([
       "two-factor",
+      "mcp",
+      "oauth-refresh-rotation",
     ]);
     expect(
       buildBetterAuthOptions({
@@ -196,7 +201,7 @@ describe("Better Auth configuration", () => {
           clientSecret: "",
         },
       }).plugins?.map((p) => p.id),
-    ).toEqual(["two-factor"]);
+    ).toEqual(["two-factor", "mcp", "oauth-refresh-rotation"]);
   });
 
   it("passes through discovery URLs with query strings or trailing slashes", () => {
@@ -280,7 +285,7 @@ describe("Better Auth configuration", () => {
 describe("hashed database sessions", () => {
   it("stores only a hash while preserving the raw request token for cookies", async () => {
     const memory = createMemoryAdapter();
-    const adapter = withHashedSessionTokens(memory.factory)({});
+    const adapter = withHashedTokens(memory.factory)({});
     const rawToken = "raw-cookie-session-token";
 
     const created = await adapter.create<{ token: string; userId: string }>({
@@ -288,7 +293,7 @@ describe("hashed database sessions", () => {
       data: { token: rawToken, userId: randomUUID() },
     });
     expect(created.token).toBe(rawToken);
-    expect(memory.rows.session![0]?.token).toBe(hashSessionToken(rawToken));
+    expect(memory.rows.session![0]?.token).toBe(hashAuthToken(rawToken));
     expect(memory.rows.session![0]?.token).not.toContain(rawToken);
 
     const found = await adapter.findOne<{ token: string }>({

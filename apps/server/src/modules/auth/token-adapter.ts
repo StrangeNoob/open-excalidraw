@@ -10,45 +10,57 @@ import type {
 
 const HASH_PREFIX = "sha256:";
 
-export function hashSessionToken(token: string): string {
-  if (token.startsWith(HASH_PREFIX)) {
-    return token;
-  }
+/**
+ * Model fields Better Auth stores verbatim but that are bearer secrets: the
+ * database session token, and the MCP plugin's OAuth access and refresh tokens.
+ */
+const HASHED_FIELDS: Record<string, readonly string[]> = {
+  session: ["token"],
+  oauthAccessToken: ["accessToken", "refreshToken"],
+};
 
+/**
+ * Always hashes, never passes a value through. Results carry the caller's raw
+ * token back out (see `restoreTokens`), so nothing legitimately presents a
+ * digest here — and treating one as already-hashed would make the stored value
+ * a working credential in its own right.
+ */
+export function hashAuthToken(token: string): string {
   return `${HASH_PREFIX}${createHash("sha256").update(token).digest("base64url")}`;
 }
 
 /**
- * Better Auth stores database session tokens verbatim by default. This adapter
- * hashes token values before every session-table write or predicate while
- * restoring the caller's raw token on request-scoped results so cookie refresh
- * remains compatible with Better Auth.
+ * Better Auth stores these token values verbatim by default. This adapter
+ * hashes them before every write or predicate while restoring the caller's raw
+ * token on request-scoped results, so cookie refresh and the token endpoint's
+ * response stay compatible with Better Auth.
  */
-export function withHashedSessionTokens(
+export function withHashedTokens(
   baseFactory: DBAdapterInstance,
 ): DBAdapterInstance {
   return (options: BetterAuthOptions) => wrapAdapter(baseFactory(options));
 }
 
 function wrapAdapter(adapter: DBAdapter): DBAdapter {
-  const transformWhere = (model: string, where: Where[] | undefined) =>
-    model === "session" ? hashTokenWhere(where) : where;
-
   const restoreResult = <T>(
     model: string,
     value: T,
     where?: Where[],
-    originalToken?: string,
+    originalRecord?: Record<string, unknown>,
   ): T => {
-    if (model !== "session") {
+    const fields = HASHED_FIELDS[model];
+    if (!fields) {
       return value;
     }
 
-    const tokenMap = tokenMapFromWhere(where);
-    if (originalToken) {
-      tokenMap.set(hashSessionToken(originalToken), originalToken);
+    const tokens = tokenMapFromWhere(fields, where);
+    for (const field of fields) {
+      const raw = originalRecord?.[field];
+      if (typeof raw === "string") {
+        tokens.set(hashAuthToken(raw), raw);
+      }
     }
-    return restoreSessionTokens(value, tokenMap);
+    return restoreTokens(fields, value, tokens);
   };
 
   const wrapped: DBAdapter = {
@@ -59,10 +71,9 @@ function wrapAdapter(adapter: DBAdapter): DBAdapter {
       select?: string[];
       forceAllowId?: boolean;
     }): Promise<R> => {
-      const rawToken = sessionTokenFromRecord(input.model, input.data);
       const data = hashTokenRecord(input.model, input.data);
       const result = await adapter.create<T, R>({ ...input, data });
-      return restoreResult(input.model, result, undefined, rawToken);
+      return restoreResult(input.model, result, undefined, input.data);
     },
     findOne: async <T>(input: {
       model: string;
@@ -70,22 +81,22 @@ function wrapAdapter(adapter: DBAdapter): DBAdapter {
       select?: string[];
       join?: Parameters<DBAdapter["findOne"]>[0]["join"];
     }): Promise<T | null> => {
-      const where = transformWhere(input.model, input.where) ?? [];
+      const where = hashTokenWhere(input.model, input.where) ?? [];
       const result = await adapter.findOne<T>({ ...input, where });
       return restoreResult(input.model, result, input.where);
     },
     findMany: async <T>(input: Parameters<DBAdapter["findMany"]>[0]) => {
-      const where = transformWhere(input.model, input.where);
+      const where = hashTokenWhere(input.model, input.where);
       const result = await adapter.findMany<T>({ ...input, where });
       return restoreResult(input.model, result, input.where);
     },
     count: (input) =>
       adapter.count({
         ...input,
-        where: transformWhere(input.model, input.where),
+        where: hashTokenWhere(input.model, input.where),
       }),
     update: async <T>(input: Parameters<DBAdapter["update"]>[0]) => {
-      const where = transformWhere(input.model, input.where) ?? [];
+      const where = hashTokenWhere(input.model, input.where) ?? [];
       const update = hashTokenRecord(input.model, input.update);
       const result = await adapter.update<T>({ ...input, where, update });
       return restoreResult(input.model, result, input.where);
@@ -93,28 +104,28 @@ function wrapAdapter(adapter: DBAdapter): DBAdapter {
     updateMany: (input) =>
       adapter.updateMany({
         ...input,
-        where: transformWhere(input.model, input.where) ?? [],
+        where: hashTokenWhere(input.model, input.where) ?? [],
         update: hashTokenRecord(input.model, input.update),
       }),
     delete: <T>(input: Parameters<DBAdapter["delete"]>[0]) =>
       adapter.delete<T>({
         ...input,
-        where: transformWhere(input.model, input.where) ?? [],
+        where: hashTokenWhere(input.model, input.where) ?? [],
       }),
     deleteMany: (input) =>
       adapter.deleteMany({
         ...input,
-        where: transformWhere(input.model, input.where) ?? [],
+        where: hashTokenWhere(input.model, input.where) ?? [],
       }),
     consumeOne: async <T>(input: Parameters<DBAdapter["consumeOne"]>[0]) => {
-      const where = transformWhere(input.model, input.where) ?? [];
+      const where = hashTokenWhere(input.model, input.where) ?? [];
       const result = await adapter.consumeOne<T>({ ...input, where });
       return restoreResult(input.model, result, input.where);
     },
     incrementOne: async <T>(
       input: Parameters<DBAdapter["incrementOne"]>[0],
     ) => {
-      const where = transformWhere(input.model, input.where) ?? [];
+      const where = hashTokenWhere(input.model, input.where) ?? [];
       const result = await adapter.incrementOne<T>({ ...input, where });
       return restoreResult(input.model, result, input.where);
     },
@@ -133,43 +144,53 @@ function hashTokenRecord<T extends Record<string, unknown>>(
   model: string,
   record: T,
 ): T {
-  if (model !== "session" || typeof record.token !== "string") {
+  const fields = HASHED_FIELDS[model];
+  if (!fields) {
     return record;
   }
 
-  return { ...record, token: hashSessionToken(record.token) };
+  const hashed = { ...record };
+  for (const field of fields) {
+    const value = hashed[field];
+    if (typeof value === "string") {
+      (hashed as Record<string, unknown>)[field] = hashAuthToken(value);
+    }
+  }
+  return hashed;
 }
 
-function sessionTokenFromRecord(
+function hashTokenWhere(
   model: string,
-  record: Record<string, unknown>,
-): string | undefined {
-  return model === "session" && typeof record.token === "string"
-    ? record.token
-    : undefined;
-}
+  where: Where[] | undefined,
+): Where[] | undefined {
+  const fields = HASHED_FIELDS[model];
+  if (!fields) {
+    return where;
+  }
 
-function hashTokenWhere(where: Where[] | undefined): Where[] | undefined {
   return where?.map((condition) => {
-    if (condition.field !== "token") {
+    if (!fields.includes(condition.field)) {
       return condition;
     }
 
     return {
       ...condition,
       value: Array.isArray(condition.value)
-        ? condition.value.map((token) => hashSessionToken(String(token)))
+        ? condition.value.map((token) => hashAuthToken(String(token)))
         : typeof condition.value === "string"
-          ? hashSessionToken(condition.value)
+          ? hashAuthToken(condition.value)
           : condition.value,
     };
   });
 }
 
-function tokenMapFromWhere(where: Where[] | undefined): Map<string, string> {
+function tokenMapFromWhere(
+  fields: readonly string[],
+  where: Where[] | undefined,
+): Map<string, string> {
   const tokens = new Map<string, string>();
   for (const condition of where ?? []) {
-    if (condition.field !== "token") {
+    if (!fields.includes(condition.field)) {
       continue;
     }
 
@@ -178,18 +199,22 @@ function tokenMapFromWhere(where: Where[] | undefined): Map<string, string> {
       : [condition.value];
     for (const value of values) {
       if (typeof value === "string") {
-        tokens.set(hashSessionToken(value), value);
+        tokens.set(hashAuthToken(value), value);
       }
     }
   }
   return tokens;
 }
 
-function restoreSessionTokens<T>(value: T, tokens: Map<string, string>): T {
+function restoreTokens<T>(
+  fields: readonly string[],
+  value: T,
+  tokens: Map<string, string>,
+): T {
   if (Array.isArray(value)) {
     const restoredItems: unknown[] = [];
     for (const item of value as unknown[]) {
-      restoredItems.push(restoreSessionTokens(item, tokens));
+      restoredItems.push(restoreTokens(fields, item, tokens));
     }
     return restoredItems as T;
   }
@@ -199,8 +224,11 @@ function restoreSessionTokens<T>(value: T, tokens: Map<string, string>): T {
 
   const record = value as Record<string, unknown>;
   const restored: Record<string, unknown> = { ...record };
-  if (typeof record.token === "string") {
-    restored.token = tokens.get(record.token) ?? record.token;
+  for (const field of fields) {
+    const stored = record[field];
+    if (typeof stored === "string") {
+      restored[field] = tokens.get(stored) ?? stored;
+    }
   }
   if (record.user && typeof record.user === "object") {
     restored.user = record.user;

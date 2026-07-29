@@ -4,6 +4,7 @@ import { Router, type Request, type Response } from "express";
 import { requestIdFor } from "../../http/request-context.js";
 
 import type { IdentityService } from "../auth/identity.js";
+import { bearerChallenge } from "../oauth/metadata.js";
 import { createMcpServer, type McpServices } from "./tools.js";
 
 export type CreateMcpRouterInput = McpServices & { identity: IdentityService };
@@ -15,6 +16,10 @@ export type CreateMcpRouterInput = McpServices & { identity: IdentityService };
  */
 export function createMcpRouter(input: CreateMcpRouterInput): Router {
   const router = Router();
+  // Points an MCP client at the protected-resource metadata that names this
+  // instance's authorization server. This header is what makes a connector
+  // start the OAuth flow instead of just reporting a failure.
+  const challenge = bearerChallenge(input.publicBaseUrl);
 
   router.post("/api/mcp", async (request, response) => {
     const requestId = requestIdFor(request, response);
@@ -22,6 +27,8 @@ export function createMcpRouter(input: CreateMcpRouterInput): Router {
       const identity = await input.identity.resolve(request.headers);
       if (!identity) {
         response.setHeader("x-request-id", requestId);
+        response.setHeader("www-authenticate", challenge);
+        response.setHeader("access-control-expose-headers", "WWW-Authenticate");
         response.status(401).type("application/problem+json").json({
           code: "AUTHENTICATION_REQUIRED",
           status: 401,

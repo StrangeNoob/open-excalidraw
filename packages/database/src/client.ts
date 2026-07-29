@@ -21,6 +21,11 @@ import {
   mentionEmailState,
   userNotificationSettings,
 } from "./schema/notifications.js";
+import {
+  oauthAccessToken,
+  oauthApplication,
+  oauthConsent,
+} from "./schema/oauth.js";
 import { drawingSearchTexts } from "./schema/search.js";
 import { appSettings } from "./schema/settings.js";
 import { drawingInvitations, drawingMembers } from "./schema/sharing.js";
@@ -39,6 +44,9 @@ export const schema = {
   drawingSearchTexts,
   drawings,
   mentionEmailState,
+  oauthAccessToken,
+  oauthApplication,
+  oauthConsent,
   personalAccessTokens,
   session,
   twoFactor,

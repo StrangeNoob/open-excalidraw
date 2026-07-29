@@ -161,6 +161,77 @@ HTTPS deployment — budget a half-day of live testing against the Railway
 instance; the local e2e can only prove the spec flow, not Anthropic's
 client behavior.
 
+### Shipped (2026-07-29)
+
+Beta re-check first: the connector "Request headers" beta is still not GA for
+this account, so the workstream proceeded.
+
+better-auth 1.6.23 ships an `mcp` plugin (`better-auth/plugins`), a thin
+wrapper over its deprecated `oidc-provider`, mounting `/api/auth/mcp/{authorize,
+token,register}` plus `/oauth2/consent`, with three tables (`oauthApplication`,
+`oauthAccessToken`, `oauthConsent`). It was configured with `requirePKCE`,
+S256 only, 15-minute access tokens, 90-day refresh tokens, `scopes: [read,
+write]` and `defaultScope: "openid offline_access write"` — never `full`.
+
+Five gaps in the plugin were closed in `apps/server/src/modules/oauth`:
+
+- **Consent was optional.** The plugin only shows a consent screen when the
+  client sends `prompt=consent`, and otherwise hands a code straight to the
+  redirect URI — so any site could navigate a signed-in browser to the
+  authorize endpoint and collect a code. An express guard on the authorize
+  path forces `prompt=consent` and pins the scope to exactly one of
+  read/write before better-auth sees the request.
+- **Signed-out callers.** The same guard sends them through the app's own
+  `/login?returnTo=…`, because the plugin's resume-after-login hook rewrites
+  the SPA's JSON sign-in response into a 302 the client cannot follow.
+- **Registration was wide open** (the plugin ignores
+  `allowDynamicClientRegistration` and accepts any non-`javascript:` URI). The
+  guard requires a client name, exact HTTPS redirect URIs (loopback HTTP
+  excepted), no wildcards or fragments, at most five, code flow only, behind a
+  20/hour per-address limit.
+- **Discovery.** `/.well-known/oauth-protected-resource` (RFC 9728, served at
+  both the root and the `/api/mcp` path-inserted URL) and
+  `/.well-known/oauth-authorization-server` (plus the `openid-configuration`
+  alias) are served at the root, where clients probe; the plugin only serves
+  them under `/api/auth` and advertises a `/mcp/userinfo` and `/mcp/jwks` it
+  never registers. A test compares the published endpoints against the
+  plugin's own document so an upstream rename cannot pass silently.
+- **Refresh tokens were issued, not rotated** — the consumed row stayed valid.
+  A small after-hook deletes it.
+
+Tokens are hashed at rest by generalizing the session-token adapter wrapper
+(now `token-adapter.ts`) over `oauthAccessToken.accessToken/refreshToken`; the
+resource server hashes the presented value the same way and resolves it in one
+query that also rejects expired tokens and disabled owners. The resolved
+identity is `authKind: "token"`, so `enforceTokenScope`, the token-management
+gate and the collaboration gate all apply unchanged. Migration
+`0019_oauth_clients.sql`. Consent and post-login resume are two routes in the
+web app's existing auth pages (`/oauth/consent`, `/oauth/authorize`).
+
+Known limits, all judged acceptable rather than overlooked:
+
+- The plugin ignores the RFC 8707 `resource` parameter. Harmless here: tokens
+  are opaque, this deployment is the only resource, and a token is only valid
+  against the row that issued it.
+- Client secrets are stored as the plugin writes them, because its token
+  endpoint compares them in plaintext. PKCE, exact redirect matching and the
+  registration guard carry the weight instead; a connector registered with
+  `token_endpoint_auth_method: none` has no secret at all.
+- The plugin signs its `id_token` with a per-request throwaway HMAC key, so it
+  cannot be verified by anyone. We publish OAuth metadata with no `jwks_uri`,
+  so nothing should read it; a client that insists on OIDC will not work.
+- Expired grant rows are not swept. They cannot authenticate, and there is at
+  most one live row per grant (rotation deletes the consumed one), so this is
+  a line in `cleanupExpiredSecurityRecords` whenever someone wants it.
+- There is no "connected apps" UI yet — revoking a connector is a `DELETE`
+  documented in `agent-drawing.md`.
+
+Anthropic's real client behavior remains unverified: it needs a public HTTPS
+deployment. Everything below the connector — discovery shape, the challenge
+header, the code+PKCE round trip, rotation, expiry, revocation and the scope
+boundaries — is covered by `apps/server/test/oauth.integration.test.ts`
+against a real Postgres and a real better-auth instance.
+
 ## Workstream 5 — incremental `scene.committed` for external writes (gated, metric first ~0.5d; implementation 3–5d only if triggered)
 
 Today every external save broadcasts a full-snapshot resync. Fine at agent

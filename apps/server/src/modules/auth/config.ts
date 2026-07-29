@@ -14,18 +14,32 @@ import {
   type DBAdapterInstance,
 } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { APIError } from "better-auth/api";
-import { genericOAuth, twoFactor } from "better-auth/plugins";
+import { APIError, createAuthMiddleware } from "better-auth/api";
+import { genericOAuth, mcp, twoFactor } from "better-auth/plugins";
 
+import {
+  MCP_RESOURCE_PATH,
+  OAUTH_CONSENT_PATH,
+  OAUTH_LOGIN_PATH,
+  OAUTH_SCOPES,
+} from "../oauth/metadata.js";
 import {
   DisabledManualResetLinkSink,
   type ManualResetLinkSink,
 } from "./manual-reset.js";
-import { withHashedSessionTokens } from "./session-token-adapter.js";
+import { withHashedTokens } from "./token-adapter.js";
 
 const DEFAULT_SESSION_SECONDS = 60 * 60 * 24 * 7;
 const DEFAULT_RESET_SECONDS = 60 * 60;
 const OIDC_DISCOVERY_SUFFIX = "/.well-known/openid-configuration";
+// Short by design: a connector's access token is replayable until it expires,
+// and the client holds a refresh token to get another one.
+const OAUTH_ACCESS_TOKEN_SECONDS = 15 * 60;
+// Personal access tokens cap out at 365 days and may be endless; a connector
+// grant deliberately cannot, so a forgotten connector dies on its own.
+const OAUTH_REFRESH_TOKEN_SECONDS = 60 * 60 * 24 * 90;
+
+type AuthPlugin = NonNullable<BetterAuthOptions["plugins"]>[number];
 
 export interface OAuthProviderCredentials {
   clientId: string;
@@ -87,7 +101,7 @@ export function buildBetterAuthOptions(
     socialProviders.github = { ...input.github, disableSignUp };
   }
 
-  const adapter = withHashedSessionTokens(
+  const adapter = withHashedTokens(
     input.databaseAdapter ??
       drizzleAdapter(input.database, {
         provider: "pg",
@@ -100,7 +114,32 @@ export function buildBetterAuthOptions(
   // No options: appName is the TOTP issuer, skipVerificationOnEnable defaults
   // false so enrollment only flips twoFactorEnabled after a verify-totp, and
   // omitting otpOptions leaves sendOTP unset so /two-factor/send-otp is dead.
-  const plugins: NonNullable<BetterAuthOptions["plugins"]> = [twoFactor()];
+  const plugins: NonNullable<BetterAuthOptions["plugins"]> = [
+    twoFactor(),
+    // The authorization server behind claude.ai connectors. Its endpoints live
+    // under /api/auth/mcp/*; the oauth router publishes discovery at the
+    // well-known paths clients probe and guards registration and authorize.
+    mcp({
+      loginPage: OAUTH_LOGIN_PATH,
+      resource: new URL(MCP_RESOURCE_PATH, input.baseUrl).toString(),
+      oidcConfig: {
+        // Required by the option type even though the plugin overrides it with
+        // the value above; keep them the same so neither can go stale.
+        loginPage: OAUTH_LOGIN_PATH,
+        consentPage: OAUTH_CONSENT_PATH,
+        // OAuth 2.1: proof of possession of the code, S256 only.
+        requirePKCE: true,
+        allowPlainCodeChallengeMethod: false,
+        accessTokenExpiresIn: OAUTH_ACCESS_TOKEN_SECONDS,
+        refreshTokenExpiresIn: OAUTH_REFRESH_TOKEN_SECONDS,
+        scopes: [...OAUTH_SCOPES],
+        // What a connector gets when it names no scope of its own. Never
+        // "full": an OAuth grant must not reach the admin routes.
+        defaultScope: "openid offline_access write",
+      },
+    }),
+    rotateOAuthRefreshTokens(),
+  ];
   if (hasCompleteOidc(input.oidc)) {
     plugins.push(
       genericOAuth({
@@ -259,6 +298,54 @@ export function buildBetterAuthOptions(
         "/request-password-reset": { window: 60, max: 5 },
         "/send-verification-email": { window: 60, max: 5 },
       },
+    },
+  };
+}
+
+/**
+ * The MCP plugin mints a new refresh token on every refresh but leaves the
+ * consumed one valid until its own expiry, which is issuing rather than
+ * rotating. Deleting the row the presented token came from makes it rotation: a
+ * stolen refresh token stops working the moment the real client refreshes.
+ */
+function rotateOAuthRefreshTokens(): AuthPlugin {
+  return {
+    id: "oauth-refresh-rotation",
+    hooks: {
+      after: [
+        {
+          matcher: (context) => context.path === "/mcp/token",
+          handler: createAuthMiddleware(async (ctx) => {
+            const body: unknown =
+              ctx.body instanceof FormData
+                ? Object.fromEntries(ctx.body.entries())
+                : ctx.body;
+            if (typeof body !== "object" || body === null) {
+              return;
+            }
+            const { grant_type: grantType, refresh_token: refreshToken } =
+              body as Record<string, unknown>;
+            // Only a successful exchange consumed the token, and success is
+            // checked positively: a rejected or failed request must leave the
+            // row alone so a probe cannot revoke someone else's grant.
+            const issued =
+              typeof ctx.context.returned === "object" &&
+              ctx.context.returned !== null &&
+              "access_token" in ctx.context.returned;
+            if (
+              !issued ||
+              grantType !== "refresh_token" ||
+              typeof refreshToken !== "string"
+            ) {
+              return;
+            }
+            await ctx.context.adapter.delete({
+              model: "oauthAccessToken",
+              where: [{ field: "refreshToken", value: refreshToken }],
+            });
+          }),
+        },
+      ],
     },
   };
 }

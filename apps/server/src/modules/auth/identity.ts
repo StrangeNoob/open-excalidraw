@@ -53,10 +53,28 @@ export interface TokenIdentityResolver {
   resolve(secret: string): Promise<RequestIdentity | null>;
 }
 
-// Only a header that begins exactly with this triggers token resolution; any
-// other Authorization value falls through to session resolution, preserving
-// today's behavior for unrelated Authorization uses.
-const BEARER_TOKEN_PREFIX = `Bearer ${PERSONAL_ACCESS_TOKEN_PREFIX}`;
+// Any bearer credential resolves through the token path: `oepat_` values are
+// personal access tokens, everything else is offered to the OAuth resolver.
+// A non-bearer Authorization value still falls through to session resolution.
+const BEARER_PREFIX = "Bearer ";
+
+/**
+ * Routes a presented bearer secret to the resolver that owns it. Composed once
+ * and shared by the identity seam and the scope gate so both agree on which
+ * credential a request carries.
+ */
+export function createBearerResolver(input: {
+  personalAccessTokens: TokenIdentityResolver;
+  oauthAccessTokens: TokenIdentityResolver;
+}): TokenIdentityResolver {
+  return {
+    resolve(secret) {
+      return secret.startsWith(PERSONAL_ACCESS_TOKEN_PREFIX)
+        ? input.personalAccessTokens.resolve(secret)
+        : input.oauthAccessTokens.resolve(secret);
+    },
+  };
+}
 
 /**
  * An identity is an instance admin only when its email is on the allowlist AND
@@ -87,8 +105,8 @@ export function createIdentityService(
       // On failure it returns null WITHOUT falling back to the session cookie,
       // so a leaked/expired token can never ride a valid session alongside it.
       const authorization = webHeaders.get("authorization");
-      if (authorization?.startsWith(BEARER_TOKEN_PREFIX)) {
-        return tokenResolver.resolve(authorization.slice("Bearer ".length));
+      if (authorization?.startsWith(BEARER_PREFIX)) {
+        return tokenResolver.resolve(authorization.slice(BEARER_PREFIX.length));
       }
 
       const result = await auth.api.getSession({ headers: webHeaders });

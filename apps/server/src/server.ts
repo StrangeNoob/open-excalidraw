@@ -38,6 +38,7 @@ import {
 import {
   authCapabilities,
   createAuthRouter,
+  createBearerResolver,
   createIdentityService,
   createOpenExcalidrawAuth,
   OneTimeManualResetLinkStore,
@@ -83,6 +84,11 @@ import {
   PostgresLibraryRepository,
 } from "./modules/library/index.js";
 import { createMcpRouter } from "./modules/mcp/index.js";
+import {
+  createOauthClientLookup,
+  createOauthRouter,
+  PostgresOauthTokenResolver,
+} from "./modules/oauth/index.js";
 import {
   createNotificationRouter,
   PostgresNotificationSettingsRepository,
@@ -150,9 +156,15 @@ const tokenService = new TokenService(
       }),
   },
 );
-const identity = createIdentityService(auth, {
-  resolve: (secret) => tokenService.resolveIdentity(secret),
+// One place decides which resolver owns a presented bearer secret, so the
+// identity seam and the scope gate can never disagree about a credential.
+const bearerTokens = createBearerResolver({
+  personalAccessTokens: {
+    resolve: (secret) => tokenService.resolveIdentity(secret),
+  },
+  oauthAccessTokens: new PostgresOauthTokenResolver(database.pool),
 });
+const identity = createIdentityService(auth, bearerTokens);
 const roomRegistry = new RoomRegistry();
 const contentService = new ContentService(
   new PostgresContentRepository(database.pool),
@@ -430,8 +442,13 @@ const app = createApp({
   routers: [
     // Ahead of every router: a scoped token is refused here, once, rather than
     // in each route's own authorization.
-    enforceTokenScope({
-      resolve: (secret) => tokenService.resolveIdentity(secret),
+    enforceTokenScope(bearerTokens),
+    // Before the auth router: its authorize and register guards must run ahead
+    // of Better Auth's own handlers for those paths.
+    createOauthRouter({
+      identity,
+      publicBaseUrl: baseUrl,
+      findClient: createOauthClientLookup(database.pool),
     }),
     createAuthRouter({
       auth,
