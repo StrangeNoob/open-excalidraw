@@ -84,10 +84,11 @@ precondition for the save, and it changes on every save by anyone.
 ### Save the scene (CAS loop)
 
 ```bash
+KEY=$(uuid)   # capture it: reuse for retries of this exact payload
 curl -sS -X PUT "$API/drawings/$ID/content" -H "$AUTH" \
   -H "Content-Type: application/json" \
   -H "If-Match: $REVISION" \
-  -H "Idempotency-Key: $(uuid)" \
+  -H "Idempotency-Key: $KEY" \
   --data-binary @save.json
 ```
 
@@ -103,12 +104,15 @@ On `412 VERSION_CONFLICT` someone saved first:
 2. Rebase: re-apply your elements onto the fresh scene. For each element you are
    rewriting, set `version` to _that element's version in the fresh scene_ plus
    one. Elements you did not author stay untouched.
-3. `PUT` again with the new revision and a **new** `Idempotency-Key`.
+3. `PUT` again with the new revision and a **new** `Idempotency-Key` — the
+   rebased payload is different, and reusing the old key would be
+   `409 IDEMPOTENCY_MISMATCH`.
 
 Retry at most 3 times, then stop and tell the user the drawing is being edited
-right now. Reusing an idempotency key with a different payload is
-`409 IDEMPOTENCY_MISMATCH`; reusing it with the identical payload replays the
-first result (that is the safe retry for a timeout or a dropped connection).
+right now. The key rule: a **transport** failure (timeout, dropped connection)
+is retried with the **same** key and the identical payload — the server replays
+the first result instead of committing twice. Only a rebase (changed payload)
+gets a fresh key.
 
 Other failures: `403` (read-only access), `404` (unknown or trashed drawing),
 `413 SCENE_TOO_LARGE`, `422 ASSET_MANIFEST_MISMATCH` (see `assetIds` below),
@@ -123,8 +127,9 @@ curl -sS "$API/drawings/search?q=deploy+pipeline" -H "$AUTH"   # {"drawingIds":[
 
 Search covers canvas text only — text elements and frame names, never titles —
 and returns **bare ids ranked by relevance**. Join them against the list response
-to show the user names. A drawing with no text saved yet never matches; find
-those by title in the list response.
+to show the user names (if `nextCursor` is ever non-null, fetch further pages
+until it is — today the full list arrives in one response). A drawing with no
+text saved yet never matches; find those by title in the list response.
 
 ### Share a link
 
@@ -295,8 +300,10 @@ to right or top to bottom. Keep the palette small and consistent.
 
 After every save:
 
-1. `GET` the content again. Confirm the revision advanced and the elements you
-   wrote are present, indexed, and not `isDeleted`.
+1. `GET` the content again. Confirm the revision advanced and every element
+   matches the state you intended — present and indexed for writes, and
+   `isDeleted: true` for intentional tombstones. An expected tombstone is a
+   successful delete, not a failed save.
 2. Give the user the drawing URL: `$OPEN_EXCALIDRAW_URL/drawings/$ID` — plus the
    share URL if they asked for one.
 3. If they have the drawing open, say it updates live; no reload needed.

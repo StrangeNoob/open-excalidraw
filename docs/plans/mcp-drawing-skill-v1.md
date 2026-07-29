@@ -138,7 +138,8 @@ text.width)/2`) rather than container binding.
 - `plugins/open-excalidraw/.claude-plugin/plugin.json` + `skills/draw/SKILL.md`;
   repo-root `.claude-plugin/marketplace.json` listing the plugin (any GitHub
   repo with that file is a marketplace).
-- Run `claude plugin validate` locally; no CI wiring in v1.
+- Validate locally with both `claude plugin validate .` (marketplace root)
+  and `claude plugin validate ./plugins/open-excalidraw`; no CI wiring in v1.
 - Docs page (`docs/` or README section): install =
   `/plugin marketplace add <owner>/open-excalidraw` → `/plugin install`;
   PAT minting walkthrough with screenshots optional.

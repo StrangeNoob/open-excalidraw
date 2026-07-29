@@ -48,9 +48,10 @@ export OPEN_EXCALIDRAW_URL="https://draw.example.com"
 export OPEN_EXCALIDRAW_TOKEN="oepat_…"
 ```
 
-Set them in the shell that starts Claude Code, or in the `env` block of
-`.claude/settings.json` if the value is safe to keep there. Do not commit the
-secret.
+Set `OPEN_EXCALIDRAW_URL` in the shell that starts Claude Code or in the `env`
+block of `.claude/settings.json` — it is not a secret. Keep
+`OPEN_EXCALIDRAW_TOKEN` only in the launching shell or user-local secret
+storage; never put it in project-scoped settings files, and never commit it.
 
 ## Security
 
