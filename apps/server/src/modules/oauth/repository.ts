@@ -83,9 +83,11 @@ export class PostgresOauthTokenResolver implements TokenIdentityResolver {
               u.email_verified, u.two_factor_enabled, u.created_at
        FROM oauth_access_token t
        JOIN "user" u ON u.id = t.user_id
+       JOIN oauth_application a ON a.client_id = t.client_id
        WHERE t.access_token = $1
          AND t.access_token_expires_at > now()
          AND u.disabled_at IS NULL
+         AND a.disabled = false
        LIMIT 1`,
       [hashAuthToken(accessToken)],
     );

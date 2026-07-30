@@ -61,7 +61,7 @@ describe("GET /api/v1/drawings/:drawingId/export", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers["content-type"]).toContain("image/svg+xml");
-    expect(response.headers.etag).toBe('"7-svg-1x"');
+    expect(response.headers.etag).toBe('"7-svg"');
     expect(response.headers["cache-control"]).toBe("private, no-cache");
     expect(Buffer.from(response.body as Buffer).toString("utf8")).toBe(
       "<svg/>",
@@ -94,11 +94,11 @@ describe("GET /api/v1/drawings/:drawingId/export", () => {
   it("answers 304 without rendering when the tag still matches", async () => {
     const { app, render } = createHarness();
 
-    const response = await get(app).set("if-none-match", 'W/"7-svg-1x"');
+    const response = await get(app).set("if-none-match", 'W/"7-svg"');
 
     expect(response.status).toBe(304);
     expect(response.text).toBeFalsy();
-    expect(response.headers.etag).toBe('"7-svg-1x"');
+    expect(response.headers.etag).toBe('"7-svg"');
     // The whole point of reading the revision first: a render the caller would
     // discard is never paid for.
     expect(render).not.toHaveBeenCalled();
@@ -115,10 +115,10 @@ describe("GET /api/v1/drawings/:drawingId/export", () => {
   it("re-renders when the drawing moved on", async () => {
     const { app } = createHarness();
 
-    const response = await get(app).set("if-none-match", '"6-svg-1x"');
+    const response = await get(app).set("if-none-match", '"6-svg"');
 
     expect(response.status).toBe(200);
-    expect(response.headers.etag).toBe('"7-svg-1x"');
+    expect(response.headers.etag).toBe('"7-svg"');
   });
 
   it("rejects an unsupported format", async () => {

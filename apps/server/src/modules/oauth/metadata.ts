@@ -202,7 +202,12 @@ export function clientRegistrationError(body: unknown): string | null {
     }
   }
   // Only the authorization code flow is served; the implicit flow would put a
-  // token in a URL fragment, which OAuth 2.1 removed.
+  // token in a URL fragment, which OAuth 2.1 removed. A present-but-not-array
+  // value is refused rather than skipped, or `grant_types: "implicit"` would
+  // sail past this check into the plugin.
+  if (grantTypes !== undefined && !Array.isArray(grantTypes)) {
+    return "grant_types must be an array";
+  }
   if (
     Array.isArray(grantTypes) &&
     !grantTypes.every(
@@ -210,6 +215,9 @@ export function clientRegistrationError(body: unknown): string | null {
     )
   ) {
     return "Only the authorization_code and refresh_token grant types are supported";
+  }
+  if (responseTypes !== undefined && !Array.isArray(responseTypes)) {
+    return "response_types must be an array";
   }
   if (
     Array.isArray(responseTypes) &&

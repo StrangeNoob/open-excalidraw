@@ -47,8 +47,12 @@ export function createExportRouter(input: CreateExportRouterInput): Router {
         // plus the rendering parameters is the whole cache key — nothing is
         // stored, and reading the revision first means an unchanged drawing
         // never pays for the render its 304 would throw away.
+        // SVG is resolution independent, so `scale` changes nothing about the
+        // bytes and must not change the cache key either.
         const tagFor = (revision: string) =>
-          `"${revision}-${format}-${scale}x"`;
+          format === "svg"
+            ? `"${revision}-svg"`
+            : `"${revision}-${format}-${scale}x"`;
         const conditional = request.header("if-none-match");
         response.setHeader("cache-control", "private, no-cache");
         response.setHeader("x-request-id", requestId);

@@ -220,9 +220,12 @@ Known limits, all judged acceptable rather than overlooked:
 - The plugin signs its `id_token` with a per-request throwaway HMAC key, so it
   cannot be verified by anyone. We publish OAuth metadata with no `jwks_uri`,
   so nothing should read it; a client that insists on OIDC will not work.
-- Expired grant rows are not swept. They cannot authenticate, and there is at
-  most one live row per grant (rotation deletes the consumed one), so this is
-  a line in `cleanupExpiredSecurityRecords` whenever someone wants it.
+- Expired grant rows are swept by `cleanupExpiredSecurityRecords` once their
+  refresh token has expired, alongside sessions and verifications.
+- Refresh rotation deletes the consumed row after the exchange, so two
+  redemptions racing inside that one-request window can both succeed. An
+  atomic consume belongs inside the plugin's exchange; both winners hold the
+  same user and scope, so the exposure is a duplicate grant, not an escalation.
 - There is no "connected apps" UI yet — revoking a connector is a `DELETE`
   documented in `agent-drawing.md`.
 

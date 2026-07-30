@@ -104,6 +104,8 @@ describeDatabase("OAuth connector flow", () => {
   let sessionCookie = "";
   let userId = "";
 
+  const createdClients: string[] = [];
+
   /** Registers a public (PKCE-only) client, which is what a connector is. */
   async function registerClient(): Promise<string> {
     const response = await request(app)
@@ -117,6 +119,7 @@ describeDatabase("OAuth connector flow", () => {
       });
     expect(response.status).toBe(201);
     expect(response.body.client_secret).toBeUndefined();
+    createdClients.push(response.body.client_id as string);
     return response.body.client_id as string;
   }
 
@@ -224,7 +227,10 @@ describeDatabase("OAuth connector flow", () => {
     await database.pool.query(`DELETE FROM "user" WHERE id = ANY($1::uuid[])`, [
       createdUsers,
     ]);
-    await database.pool.query(`DELETE FROM oauth_application`);
+    await database.pool.query(
+      `DELETE FROM oauth_application WHERE client_id = ANY($1::text[])`,
+      [createdClients],
+    );
     await database.close();
   });
 

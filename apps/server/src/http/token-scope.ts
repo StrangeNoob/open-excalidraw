@@ -30,7 +30,9 @@ export function enforceTokenScope(
     // Express routes case-insensitively, so /API/V1/... reaches the same
     // handler and must face the same gate.
     const path = request.path.toLowerCase();
-    const admin = path.startsWith("/api/v1/admin/");
+    // The bare path has no handler today; matching it anyway means adding one
+    // later cannot quietly land outside the gate.
+    const admin = path === "/api/v1/admin" || path.startsWith("/api/v1/admin/");
     const unsafe =
       path.startsWith("/api/v1/") && !SAFE_METHODS.has(request.method);
     if (!admin && !unsafe) {

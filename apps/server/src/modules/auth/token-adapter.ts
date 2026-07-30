@@ -99,7 +99,10 @@ function wrapAdapter(adapter: DBAdapter): DBAdapter {
       const where = hashTokenWhere(input.model, input.where) ?? [];
       const update = hashTokenRecord(input.model, input.update);
       const result = await adapter.update<T>({ ...input, where, update });
-      return restoreResult(input.model, result, input.where);
+      // The update's own raw values matter as much as the predicate's: an
+      // update that sets a fresh token would otherwise hand the caller back
+      // the digest it just stored.
+      return restoreResult(input.model, result, input.where, input.update);
     },
     updateMany: (input) =>
       adapter.updateMany({

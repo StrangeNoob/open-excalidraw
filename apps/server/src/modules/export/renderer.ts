@@ -87,6 +87,9 @@ const EXPORT_PADDING = 10;
  */
 export const MAX_RENDER_DIMENSION = 8192;
 
+/** The DOM globals below are process-wide, so they are installed exactly once. */
+let domInstalled = false;
+
 /**
  * Renders scenes with the real Excalidraw exporters under jsdom.
  *
@@ -175,8 +178,15 @@ async function boot(
       `Excalidraw export bundle is missing: ${options.bundlePath}`,
     );
   }
-  installDom();
-  installFontShim(options.assetRoot);
+  // Installed once per process: a retried boot must not build a second JSDOM
+  // or wrap global fetch around the wrapper the last attempt left behind.
+  // Font registration is cheap and idempotent, so it stays outside the guard
+  // and a retry can still recover from a bad asset root.
+  if (!domInstalled) {
+    installDom();
+    installFontShim(options.assetRoot);
+    domInstalled = true;
+  }
   registerFonts(options.assetRoot);
   assertFontsRegistered();
   // The specifier is a runtime path, so the bundle is not a build-time

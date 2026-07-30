@@ -307,6 +307,11 @@ export function buildBetterAuthOptions(
  * consumed one valid until its own expiry, which is issuing rather than
  * rotating. Deleting the row the presented token came from makes it rotation: a
  * stolen refresh token stops working the moment the real client refreshes.
+ *
+ * The delete runs after the exchange, so two redemptions racing inside that
+ * window can both succeed. Closing it needs an atomic consume inside the
+ * plugin's own exchange; the window is one request wide, both winners get the
+ * same user and scope, and the loser's token is gone immediately afterwards.
  */
 function rotateOAuthRefreshTokens(): AuthPlugin {
   return {

@@ -185,8 +185,8 @@ describe("Better Auth configuration", () => {
     const plugin = findGenericOAuth(options);
     expect(plugin?.options.config[0]?.discoveryUrl).toBe(discoveryUrl);
 
-    // twoFactor and the OAuth authorization server are always registered;
-    // generic-oauth only with complete OIDC.
+    // two-factor, mcp (the OAuth authorization server) and its refresh
+    // rotation are always registered; generic-oauth only with complete OIDC.
     expect(buildBetterAuthOptions(base).plugins?.map((p) => p.id)).toEqual([
       "two-factor",
       "mcp",

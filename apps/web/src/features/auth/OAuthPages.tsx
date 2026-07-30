@@ -30,7 +30,9 @@ const api = new HttpApiClient();
 const navigateAway = (url: string) => {
   // The server validates redirect URIs at registration; this is the last line
   // if one ever slips through, since a javascript: URL here would run as us.
-  const protocol = URL.parse(url)?.protocol;
+  // Resolved against this page so the app's own relative destinations — the
+  // authorize endpoint we resume to after login — stay valid.
+  const protocol = URL.parse(url, globalThis.location.href)?.protocol;
   if (protocol !== "https:" && protocol !== "http:") {
     throw new Error("The application asked for an unsupported redirect.");
   }
