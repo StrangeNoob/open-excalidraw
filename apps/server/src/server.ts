@@ -474,6 +474,10 @@ const app = createApp({
         operationalLog("error", event, {
           ...context,
           errorType: safeErrorType(error),
+          // A failed render is the server's own fault — a missing bundle, an
+          // unregistered font — and the name alone leaves an operator with a
+          // 503 and nowhere to look.
+          errorMessage: safeErrorMessage(error),
         }),
     }),
     createLibraryRouter({ service: libraryService, identity }),
@@ -653,6 +657,17 @@ function safeErrorType(error: unknown): string {
     return error.name;
   }
   return "UnknownError";
+}
+
+/** One sanitized line: no control characters, bounded length. */
+function safeErrorMessage(error: unknown): string {
+  if (!(error instanceof Error)) return "";
+  return [...error.message]
+    .map((character) =>
+      (character.codePointAt(0) ?? 0) < 0x20 ? " " : character,
+    )
+    .join("")
+    .slice(0, 300);
 }
 
 function isAbortError(error: unknown): boolean {

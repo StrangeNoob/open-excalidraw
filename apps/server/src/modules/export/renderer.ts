@@ -396,17 +396,20 @@ function registerFonts(assetRoot: string): void {
  */
 function assertFontsRegistered(): void {
   const context = createCanvas(1, 1).getContext("2d");
-  const measure = (family: string) => {
-    context.font = `20px "${family}"`;
-    return context.measureText("Hello Wg").width;
-  };
-  const fallback = measure("open-excalidraw-absent-family");
   for (const family of Object.keys(LATIN_SUBSETS)) {
-    if (measure(family) === fallback) {
+    // Membership is asked directly rather than inferred by comparing against a
+    // deliberately absent family: the container image ships no system fonts, so
+    // an unknown family resolves to one of these instead of to a distinct
+    // default, and the two measurements matched on a perfectly good install.
+    if (!GlobalFonts.has(family)) {
       throw new Error(
-        `The ${family} font is not measurable; the latin woff2 subset in ` +
+        `The ${family} font is not registered; the latin woff2 subset in ` +
           "LATIN_SUBSETS no longer matches the installed @excalidraw/excalidraw",
       );
+    }
+    context.font = `20px "${family}"`;
+    if (context.measureText("Hello Wg").width <= 0) {
+      throw new Error(`The ${family} font registered but cannot be measured`);
     }
   }
 }
