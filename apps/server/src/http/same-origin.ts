@@ -1,8 +1,25 @@
 import type { RequestHandler } from "express";
 
+import {
+  OAUTH_REGISTER_ENDPOINT,
+  OAUTH_TOKEN_ENDPOINT,
+} from "../modules/oauth/metadata.js";
 import { requestIdFor } from "./request-context.js";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/**
+ * OAuth endpoints that any client may call by specification. They carry no
+ * cookie — the token endpoint is proved by a PKCE verifier or a refresh token,
+ * and registration is unauthenticated and reachable directly anyway — so the
+ * cross-site rule protects nothing here and would only turn a connector that
+ * happens to send an `Origin` into an unexplainable 403. The consent endpoint
+ * is NOT exempt: that one runs on the user's session.
+ */
+const PUBLIC_OAUTH_ENDPOINTS = new Set([
+  OAUTH_TOKEN_ENDPOINT,
+  OAUTH_REGISTER_ENDPOINT,
+]);
 
 export function requireSameOrigin(
   configuredOrigins: readonly string[],
@@ -10,9 +27,13 @@ export function requireSameOrigin(
   const allowedOrigins = new Set(configuredOrigins.map(normalizeOrigin));
 
   return (request, response, next) => {
+    // Lowercased because Express routes case-insensitively: /API/... reaches
+    // the same handler and must face the same gate.
+    const path = request.path.toLowerCase();
     if (
       SAFE_METHODS.has(request.method.toUpperCase()) ||
-      !request.path.startsWith("/api/")
+      !path.startsWith("/api/") ||
+      PUBLIC_OAUTH_ENDPOINTS.has(path)
     ) {
       next();
       return;

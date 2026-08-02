@@ -114,6 +114,8 @@ describe("initial PostgreSQL migration", () => {
       "0015_drawing_search_texts.sql",
       "0016_chat_mentions.sql",
       "0017_mention_email_notifications.sql",
+      "0018_token_scopes.sql",
+      "0019_oauth_clients.sql",
     ]);
     expect(second.alreadyApplied).toEqual(first.applied);
     expect(record.rows).toEqual(first.applied);
@@ -206,6 +208,11 @@ describe("database constraints", () => {
       "drawings.owner_user_id->user.id (RESTRICT)",
       "mention_email_state.drawing_id->drawings.id (CASCADE)",
       "mention_email_state.user_id->user.id (CASCADE)",
+      "oauth_access_token.client_id->oauth_application.client_id (CASCADE)",
+      "oauth_access_token.user_id->user.id (CASCADE)",
+      "oauth_application.user_id->user.id (CASCADE)",
+      "oauth_consent.client_id->oauth_application.client_id (CASCADE)",
+      "oauth_consent.user_id->user.id (CASCADE)",
       "personal_access_tokens.user_id->user.id (CASCADE)",
       "session.user_id->user.id (CASCADE)",
       "two_factor.user_id->user.id (CASCADE)",
@@ -235,6 +242,9 @@ describe("database constraints", () => {
         "two_factor_secret_idx",
         "personal_access_tokens_token_hash_unique",
         "personal_access_tokens_user_id_idx",
+        "oauth_application_client_id_unique",
+        "oauth_access_token_access_token_unique",
+        "oauth_access_token_refresh_token_unique",
         "drawing_search_texts_search_tsv_idx",
         "mention_email_state_last_sent_at_idx",
       ]),

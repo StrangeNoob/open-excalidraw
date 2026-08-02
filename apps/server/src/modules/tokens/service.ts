@@ -47,9 +47,8 @@ export class TokenService {
     requestId: string;
     body: unknown;
   }): Promise<PersonalAccessTokenCreated> {
-    const { name, expiresInDays } = personalAccessTokenCreateSchema.parse(
-      input.body,
-    );
+    const { name, expiresInDays, scope } =
+      personalAccessTokenCreateSchema.parse(input.body);
     const secret = generateSecret();
     const token = await this.repository.insert({
       userId: input.userId,
@@ -57,6 +56,8 @@ export class TokenService {
       tokenHash: hashSecret(secret),
       lastFour: secret.slice(-4),
       expiresInDays,
+      // Omitting the scope must never mint an account-wide token.
+      scope: scope ?? "write",
       requestId: input.requestId,
       maxTokens: MAX_TOKENS,
     });
@@ -108,6 +109,7 @@ export class TokenService {
       twoFactorEnabled: owner.twoFactorEnabled,
       createdAt: owner.createdAt,
       authKind: "token",
+      tokenScope: owner.scope,
     };
   }
 }

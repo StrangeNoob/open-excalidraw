@@ -23,6 +23,7 @@ export class ContentService {
     private readonly checkpointIntervalMs = DEFAULT_CHECKPOINT_INTERVAL_MS,
     private readonly events?: {
       restored(drawingId: string, revision: bigint): void;
+      saved(drawingId: string, revision: bigint): void;
     },
   ) {
     if (
@@ -68,6 +69,11 @@ export class ContentService {
     switch (result.status) {
       case "saved":
       case "replayed":
+        // A replay returns the already-committed revision; only a real commit
+        // changes what open canvases must converge to.
+        if (result.status === "saved") {
+          this.events?.saved(drawingId, result.revision);
+        }
         return {
           revision: result.revision.toString(),
           savedAt: result.savedAt.toISOString(),

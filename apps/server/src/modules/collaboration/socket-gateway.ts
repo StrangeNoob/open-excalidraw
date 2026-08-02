@@ -115,7 +115,7 @@ export type GatewayRoomEvent =
       type: "resync-requested";
       drawingId: string;
       revision: bigint;
-      reason: "revision-restored";
+      reason: "revision-restored" | "external-save";
     }
   | {
       type: "role-changed";
@@ -150,7 +150,7 @@ export interface GatewayRoomRegistry {
   requestResync(
     drawingId: string,
     revision: bigint,
-    reason: "revision-restored",
+    reason: "revision-restored" | "external-save",
   ): GatewayRoomEvent;
   subscribe(listener: (event: GatewayRoomEvent) => void): () => void;
 }
@@ -199,6 +199,12 @@ export interface CollaborationGatewayOptions {
 export interface CollaborationGateway {
   close(): void;
   connectionCount(): number;
+  /** Resync broadcast counts for the metrics endpoint, by reason and room size. */
+  resyncBroadcasts(): readonly {
+    reason: string;
+    members: string;
+    count: number;
+  }[];
 }
 
 const ROOM_PREFIX = "drawing:";
@@ -228,6 +234,21 @@ export function attachCollaborationGateway(
       .catch((caught: unknown) => next(toSocketConnectError(caught)));
   });
 
+  // Whether snapshot-resync churn is worth replacing with incremental commits
+  // is a question about rooms with other people in them, so the room size at
+  // broadcast time is bucketed alongside the reason.
+  const resyncBroadcasts = new Map<
+    string,
+    { reason: string; members: string; count: number }
+  >();
+  const countResyncBroadcast = (reason: string, memberCount: number) => {
+    const members = memberCount >= 2 ? "2+" : String(memberCount);
+    const key = `${reason}|${members}`;
+    const sample = resyncBroadcasts.get(key) ?? { reason, members, count: 0 };
+    sample.count += 1;
+    resyncBroadcasts.set(key, sample);
+  };
+
   const emitRoster = (drawingId: string) => {
     io.to(roomName(drawingId)).emit("presence.roster", {
       collaborators: collaboratorsFor(
@@ -239,6 +260,15 @@ export function attachCollaborationGateway(
 
   const unsubscribeRoomEvents = options.roomRegistry.subscribe((event) => {
     if (event.type === "resync-requested") {
+      countResyncBroadcast(
+        event.reason,
+        // Distinct people, not sockets: one user with two tabs is one member.
+        new Set(
+          options.roomRegistry
+            .list(event.drawingId)
+            .map((binding) => binding.userId),
+        ).size,
+      );
       io.to(roomName(event.drawingId)).emit("room.resyncRequired", {
         type: "room.resyncRequired",
         reason: event.reason,
@@ -659,6 +689,7 @@ export function attachCollaborationGateway(
       bindings.clear();
     },
     connectionCount: () => sockets.size,
+    resyncBroadcasts: () => [...resyncBroadcasts.values()],
   };
 }
 

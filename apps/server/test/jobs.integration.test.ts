@@ -270,9 +270,11 @@ describeDatabase("maintenance jobs", () => {
     expect(await jobs.cleanupExpiredSecurityRecords()).toEqual({
       sessions: 1,
       verifications: 1,
+      oauthGrants: 0,
     });
     expect(await jobs.cleanupExpiredInvitations()).toBe(0);
     expect(await jobs.cleanupExpiredSecurityRecords()).toEqual({
+      oauthGrants: 0,
       sessions: 0,
       verifications: 0,
     });

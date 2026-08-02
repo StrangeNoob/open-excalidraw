@@ -47,6 +47,22 @@ jobs:
 
   browser:
     runs-on: ubuntu-latest
+    # The agent suite drives the real API against Postgres; playwright's
+    # webServer boots the server and runs the migrations.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: open_excalidraw_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -58,4 +74,19 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
+      # The e2e suite is the only guard on @excalidraw/excalidraw element
+      # semantics (the scene format reference and scene-edit.ts have none), and
+      # it already runs on every pull request — so this step gates nothing. It
+      # names the guarantee, and puts an upgrade PR's drift risk in the log.
+      - name: Excalidraw upgrade canary
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --depth=1 origin "$GITHUB_BASE_REF"
+          if git diff FETCH_HEAD -- pnpm-lock.yaml | grep -q '^[+-].*@excalidraw/excalidraw'; then
+            echo "::notice::@excalidraw/excalidraw moved in pnpm-lock.yaml — the e2e agent suite below is this PR's upstream-drift check."
+          else
+            echo "@excalidraw/excalidraw unchanged in pnpm-lock.yaml."
+          fi
       - run: pnpm test:e2e
+        env:
+          E2E_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/open_excalidraw_test

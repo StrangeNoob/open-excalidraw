@@ -13,6 +13,8 @@ import {
   AuthProvider,
   ForgotPasswordPage,
   LoginPage,
+  OAuthAuthorizePage,
+  OAuthConsentPage,
   ResetPasswordPage,
   SignUpPage,
   useAuth,
@@ -313,6 +315,16 @@ export const appRoutes: RouteObject[] = [
       {
         path: "/reset-password",
         element: <ResetPasswordPage />,
+      },
+      {
+        // Consent and the post-login resume for OAuth connectors; the server's
+        // authorization endpoint redirects here.
+        path: "/oauth/authorize",
+        element: <OAuthAuthorizePage />,
+      },
+      {
+        path: "/oauth/consent",
+        element: <OAuthConsentPage />,
       },
       {
         path: "/invite/:token",

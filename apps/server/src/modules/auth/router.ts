@@ -192,6 +192,9 @@ export function createAuthRouter(input: CreateAuthRouterInput): Router {
       "/api/auth/revoke-session",
       "/api/auth/revoke-sessions",
       "/api/auth/revoke-other-sessions",
+      // Returns the whole grant row — refresh token, client id, scopes — to
+      // anyone holding a 15-minute access token. Nothing here calls it.
+      "/api/auth/mcp/get-session",
     ],
     (_request, response) => {
       response.status(404).type("application/problem+json").json({

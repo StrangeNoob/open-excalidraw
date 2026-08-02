@@ -1,6 +1,7 @@
 import {
   PERSONAL_ACCESS_TOKEN_PREFIX,
   type PersonalAccessToken,
+  type TokenScope,
 } from "@open-excalidraw/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, type ReactElement, useMemo, useState } from "react";
@@ -491,6 +492,33 @@ const EXPIRY_OPTIONS = [
   { days: "", label: "Never" },
 ] as const;
 
+const SCOPE_OPTIONS: {
+  value: TokenScope;
+  label: string;
+  blastRadius: string;
+}[] = [
+  {
+    value: "read",
+    label: "Read only",
+    blastRadius: "Can read every drawing in your account, and change nothing.",
+  },
+  {
+    value: "write",
+    label: "Read and write",
+    blastRadius:
+      "Can also create, edit, rename, trash and share every drawing.",
+  },
+  {
+    value: "full",
+    label: "Full account",
+    blastRadius:
+      "Adds instance administration if you are an admin. Rarely needed.",
+  },
+];
+
+const scopeLabel = (scope: TokenScope) =>
+  SCOPE_OPTIONS.find((option) => option.value === scope)?.label ?? scope;
+
 const TOKEN_SECRET_WARNING =
   "Copy this token now. It is shown only once and cannot be retrieved again.";
 
@@ -549,6 +577,10 @@ const TokenRow = ({
     </div>
     <dl className="settings-token-meta">
       <div>
+        <dt>Scope</dt>
+        <dd>{scopeLabel(token.scope)}</dd>
+      </div>
+      <div>
         <dt>Created</dt>
         <dd>
           <time dateTime={token.createdAt}>{formatDate(token.createdAt)}</time>
@@ -594,6 +626,7 @@ const TokensSection = ({ api }: { api: TokensApi }) => {
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [expiry, setExpiry] = useState<string>("30");
+  const [scope, setScope] = useState<TokenScope>("write");
   const [actionError, setActionError] = useState<string | null>(null);
   const [createdSecret, setCreatedSecret] = useState<string | null>(null);
 
@@ -610,6 +643,7 @@ const TokensSection = ({ api }: { api: TokensApi }) => {
       api.createToken({
         expiresInDays: expiry === "" ? null : Number(expiry),
         name: name.trim(),
+        scope,
       }),
     onError: (error) => setActionError(error.message),
     onSuccess: (created) => {
@@ -617,6 +651,7 @@ const TokensSection = ({ api }: { api: TokensApi }) => {
       setCreatedSecret(created.secret);
       setName("");
       setExpiry("30");
+      setScope("write");
       void invalidate();
     },
   });
@@ -682,6 +717,22 @@ const TokensSection = ({ api }: { api: TokensApi }) => {
             ))}
           </select>
         </label>
+        <fieldset className="settings-token-scopes">
+          <legend>Scope</legend>
+          {SCOPE_OPTIONS.map((option) => (
+            <label key={option.value}>
+              <input
+                checked={scope === option.value}
+                name="token-scope"
+                onChange={() => setScope(option.value)}
+                type="radio"
+                value={option.value}
+              />
+              {option.label}
+              <span className="settings-token-note">{option.blastRadius}</span>
+            </label>
+          ))}
+        </fieldset>
         <button disabled={create.isPending} type="submit">
           {create.isPending ? "Creating…" : "Create token"}
         </button>

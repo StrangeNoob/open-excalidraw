@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { createServer } from "node:http";
+import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -17,6 +18,7 @@ import {
   createMetricsRouter,
   type LastMaintenanceRun,
 } from "./http/metrics.js";
+import { enforceTokenScope } from "./http/token-scope.js";
 import {
   AdminService,
   createAdminRouter,
@@ -36,12 +38,18 @@ import {
 import {
   authCapabilities,
   createAuthRouter,
+  createBearerResolver,
   createIdentityService,
   createOpenExcalidrawAuth,
   OneTimeManualResetLinkStore,
   type OAuthProviderCredentials,
   type OidcProviderConfig,
 } from "./modules/auth/index.js";
+import {
+  createExportRouter,
+  createSceneRenderer,
+  ExportService,
+} from "./modules/export/index.js";
 import {
   createDrawingRouter,
   DrawingService,
@@ -75,6 +83,12 @@ import {
   LibraryService,
   PostgresLibraryRepository,
 } from "./modules/library/index.js";
+import { createMcpRouter } from "./modules/mcp/index.js";
+import {
+  createOauthClientLookup,
+  createOauthRouter,
+  PostgresOauthTokenResolver,
+} from "./modules/oauth/index.js";
 import {
   createNotificationRouter,
   PostgresNotificationSettingsRepository,
@@ -142,9 +156,15 @@ const tokenService = new TokenService(
       }),
   },
 );
-const identity = createIdentityService(auth, {
-  resolve: (secret) => tokenService.resolveIdentity(secret),
+// One place decides which resolver owns a presented bearer secret, so the
+// identity seam and the scope gate can never disagree about a credential.
+const bearerTokens = createBearerResolver({
+  personalAccessTokens: {
+    resolve: (secret) => tokenService.resolveIdentity(secret),
+  },
+  oauthAccessTokens: new PostgresOauthTokenResolver(database.pool),
 });
+const identity = createIdentityService(auth, bearerTokens);
 const roomRegistry = new RoomRegistry();
 const contentService = new ContentService(
   new PostgresContentRepository(database.pool),
@@ -152,6 +172,9 @@ const contentService = new ContentService(
   {
     restored: (drawingId, revision) => {
       roomRegistry.requestResync(drawingId, revision, "revision-restored");
+    },
+    saved: (drawingId, revision) => {
+      roomRegistry.requestResync(drawingId, revision, "external-save");
     },
   },
 );
@@ -387,6 +410,25 @@ const staticDirectory =
   (process.env.NODE_ENV === "production"
     ? productionStaticDirectory()
     : undefined);
+const exportService = new ExportService({
+  content: contentService,
+  drawings: drawingService,
+  assets: assetService,
+  renderer: createSceneRenderer({
+    // Excalidraw's `fonts/` tree: shipped in the web build, which the image
+    // serves as the static directory, and taken from the package itself when
+    // running from a source checkout.
+    assetRoot:
+      process.env.EXCALIDRAW_ASSET_ROOT?.trim() ||
+      staticDirectory ||
+      excalidrawPackageDirectory(),
+    // Built by `pnpm --filter @open-excalidraw/server run bundle:excalidraw-export`;
+    // exports 503 until it exists.
+    bundlePath:
+      process.env.EXCALIDRAW_EXPORT_BUNDLE?.trim() ||
+      join(process.cwd(), "dist", "excalidraw-export.mjs"),
+  }),
+});
 // Opt-in: only a proxy that overwrites the forwarded headers makes them
 // trustworthy. Defaulting off means a directly exposed port cannot have its
 // per-IP auth throttling bypassed by a spoofed header.
@@ -398,6 +440,16 @@ const app = createApp({
     await database.pool.query("SELECT 1");
   },
   routers: [
+    // Ahead of every router: a scoped token is refused here, once, rather than
+    // in each route's own authorization.
+    enforceTokenScope(bearerTokens),
+    // Before the auth router: its authorize and register guards must run ahead
+    // of Better Auth's own handlers for those paths.
+    createOauthRouter({
+      identity,
+      publicBaseUrl: baseUrl,
+      findClient: createOauthClientLookup(database.pool),
+    }),
     createAuthRouter({
       auth,
       identity,
@@ -415,10 +467,37 @@ const app = createApp({
     createAdminRouter({ service: adminService, identity, adminEmails }),
     createDrawingRouter({ service: drawingService, identity }),
     createContentRouter({ service: contentService, identity }),
+    createExportRouter({
+      service: exportService,
+      identity,
+      logError: (event, error, context) =>
+        operationalLog("error", event, {
+          ...context,
+          errorType: safeErrorType(error),
+          // A failed render is the server's own fault — a missing bundle, an
+          // unregistered font — and the name alone leaves an operator with a
+          // 503 and nowhere to look.
+          errorMessage: safeErrorMessage(error),
+        }),
+    }),
     createLibraryRouter({ service: libraryService, identity }),
     createSharingRouter({ service: sharingService, identity }),
     createChatRouter({ service: chatService, identity }),
     createTokenRouter({ service: tokenService, identity }),
+    createMcpRouter({
+      identity,
+      drawings: drawingService,
+      content: contentService,
+      sharing: sharingService,
+      export: exportService,
+      assets: assetService,
+      publicBaseUrl: baseUrl,
+      logError: (event, error, context) =>
+        operationalLog("error", event, {
+          ...context,
+          errorType: safeErrorType(error),
+        }),
+    }),
     createNotificationRouter({
       repository: new PostgresNotificationSettingsRepository(database.pool),
       identity,
@@ -435,6 +514,7 @@ const app = createApp({
         return Number(result.rows[0]?.count ?? 0);
       },
       collabConnections: () => roomRegistry.connectionCount(),
+      resyncBroadcasts: () => collaborationGateway.resyncBroadcasts(),
       lastMaintenance: () => lastMaintenance,
     }),
   ],
@@ -579,6 +659,17 @@ function safeErrorType(error: unknown): string {
   return "UnknownError";
 }
 
+/** One sanitized line: no control characters, bounded length. */
+function safeErrorMessage(error: unknown): string {
+  if (!(error instanceof Error)) return "";
+  return [...error.message]
+    .map((character) =>
+      (character.codePointAt(0) ?? 0) < 0x20 ? " " : character,
+    )
+    .join("")
+    .slice(0, 300);
+}
+
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
@@ -598,6 +689,22 @@ function productionStaticDirectory(): string {
   const imageDirectory = join(process.cwd(), "public");
   if (existsSync(imageDirectory)) return imageDirectory;
   return join(dirname(fileURLToPath(import.meta.url)), "../../web/dist");
+}
+
+/**
+ * Where `@excalidraw/excalidraw` keeps its fonts in a source checkout, matching
+ * how `apps/web/vite.config.ts` finds the same tree. The package is a dev
+ * dependency, so a production install has to fall back to the static
+ * directory the web build already copied them into.
+ */
+function excalidrawPackageDirectory(): string {
+  try {
+    return dirname(
+      createRequire(import.meta.url).resolve("@excalidraw/excalidraw"),
+    );
+  } catch {
+    return join(process.cwd(), "public");
+  }
 }
 
 function oauthCredentials(

@@ -7,6 +7,7 @@ export * from "./schema/chat.js";
 export * from "./schema/drawings.js";
 export * from "./schema/libraries.js";
 export * from "./schema/notifications.js";
+export * from "./schema/oauth.js";
 export * from "./schema/search.js";
 export * from "./schema/settings.js";
 export * from "./schema/sharing.js";

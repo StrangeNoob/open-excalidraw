@@ -5,6 +5,13 @@ import { Router } from "express";
 
 import type { MaintenanceResult } from "../jobs/index.js";
 
+/** One `(reason, room size)` combination and how often it has broadcast. */
+export interface ResyncBroadcastSample {
+  reason: string;
+  members: string;
+  count: number;
+}
+
 export interface LastMaintenanceRun {
   finishedAt: Date;
   result: MaintenanceResult;
@@ -16,6 +23,7 @@ export interface CreateMetricsRouterInput {
   overview(): Promise<AdminOverview>;
   activeSessions(): Promise<number>;
   collabConnections(): number;
+  resyncBroadcasts(): readonly ResyncBroadcastSample[];
   lastMaintenance(): LastMaintenanceRun | null;
 }
 
@@ -82,6 +90,16 @@ export function createMetricsRouter(input: CreateMetricsRouterInput): Router {
         input.collabConnections(),
       );
 
+      lines.push(
+        "# HELP openexcalidraw_resync_broadcasts_total Full-snapshot resyncs pushed to a room, by reason and room size.",
+        "# TYPE openexcalidraw_resync_broadcasts_total counter",
+      );
+      for (const sample of input.resyncBroadcasts()) {
+        lines.push(
+          `openexcalidraw_resync_broadcasts_total{reason="${labelValue(sample.reason)}",members="${labelValue(sample.members)}"} ${sample.count}`,
+        );
+      }
+
       const maintenance = input.lastMaintenance();
       if (maintenance) {
         gauge(
@@ -135,4 +153,16 @@ function sha256(value: string): Buffer {
 
 function snakeCase(field: string): string {
   return field.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+}
+
+/**
+ * Prometheus label values escape a backslash, a double quote and a newline.
+ * Today's label set is closed and contains none of them; escaping here means a
+ * future label cannot silently corrupt a whole scrape.
+ */
+function labelValue(value: string): string {
+  return value
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n");
 }

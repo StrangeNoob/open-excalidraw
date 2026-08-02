@@ -42,6 +42,7 @@ export interface MaintenanceResult {
   expiredInvitationsDeleted: number;
   expiredSessionsDeleted: number;
   expiredVerificationsDeleted: number;
+  expiredOauthGrantsDeleted: number;
   auditEventsDeleted: number;
   mutationsDeleted: number;
   mentionEmailStatesDeleted: number;
@@ -141,6 +142,7 @@ export class MaintenanceJobs {
       expiredInvitationsDeleted,
       expiredSessionsDeleted: security.sessions,
       expiredVerificationsDeleted: security.verifications,
+      expiredOauthGrantsDeleted: security.oauthGrants,
       auditEventsDeleted,
       mutationsDeleted,
       mentionEmailStatesDeleted,
@@ -246,6 +248,7 @@ export class MaintenanceJobs {
   public async cleanupExpiredSecurityRecords(now = this.#now()): Promise<{
     sessions: number;
     verifications: number;
+    oauthGrants: number;
   }> {
     return transaction(this.pool, async (client) => {
       const sessions = await client.query(
@@ -256,9 +259,16 @@ export class MaintenanceJobs {
         `DELETE FROM verification WHERE expires_at < $1`,
         [now],
       );
+      // A grant whose refresh token has expired can no longer be renewed, so
+      // the row is only a digest waiting to be leaked.
+      const oauthGrants = await client.query(
+        `DELETE FROM oauth_access_token WHERE refresh_token_expires_at < $1`,
+        [now],
+      );
       return {
         sessions: sessions.rowCount ?? 0,
         verifications: verifications.rowCount ?? 0,
+        oauthGrants: oauthGrants.rowCount ?? 0,
       };
     });
   }

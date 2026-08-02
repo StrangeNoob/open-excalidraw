@@ -1,0 +1,13 @@
+{
+  "name": "open-excalidraw",
+  "description": "Create and edit drawings on a self-hosted Open Excalidraw instance over its REST API.",
+  "version": "0.1.0",
+  "author": {
+    "name": "StrangeNoob",
+    "url": "https://github.com/StrangeNoob"
+  },
+  "homepage": "https://github.com/StrangeNoob/open-excalidraw/blob/main/docs/operations/agent-drawing.md",
+  "repository": "https://github.com/StrangeNoob/open-excalidraw",
+  "license": "MIT",
+  "keywords": ["excalidraw", "diagram", "drawing", "whiteboard", "rest-api"]
+}

@@ -11,7 +11,7 @@ import { ReconciliationLimitError } from "./core/reconcile.js";
 import { MutationService } from "./mutation-service.js";
 import { PresenceRateLimitError, PresenceService } from "./presence-service.js";
 import { PreviewService } from "./preview-service.js";
-import { RoomRegistry } from "./room-registry.js";
+import { RoomRegistry, type RoomRegistryEvent } from "./room-registry.js";
 import type {
   DrawingMembershipResolver,
   SocketAuthorizationBinding,
@@ -213,6 +213,30 @@ describe("collaboration ephemeral services", () => {
       "role-changed",
       "revoked",
       "revoked",
+    ]);
+  });
+
+  it("notifies subscribers of a resync for every reason", () => {
+    const registry = new RoomRegistry();
+    const received: RoomRegistryEvent[] = [];
+    registry.subscribe((event) => received.push(event));
+
+    registry.requestResync(drawingId, 12n, "revision-restored");
+    registry.requestResync(drawingId, 13n, "external-save");
+
+    expect(received).toEqual([
+      {
+        type: "resync-requested",
+        drawingId,
+        revision: 12n,
+        reason: "revision-restored",
+      },
+      {
+        type: "resync-requested",
+        drawingId,
+        revision: 13n,
+        reason: "external-save",
+      },
     ]);
   });
 });

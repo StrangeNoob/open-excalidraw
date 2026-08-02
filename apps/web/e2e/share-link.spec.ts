@@ -5,6 +5,11 @@ const TOKEN = "s".repeat(43);
 test("opens a shared drawing read-only without an account", async ({
   page,
 }) => {
+  // This share token only exists in the mock below, so the real collaboration
+  // server rejects the room join and the viewer would report a dead link.
+  // Cutting the socket leaves the same state as an unreachable realtime
+  // server: the read-only shell still has to render.
+  await page.routeWebSocket(/socket\.io/, (ws) => ws.close());
   await page.route(`**/api/v1/share/${TOKEN}`, (route) =>
     route.fulfill({
       contentType: "application/json",

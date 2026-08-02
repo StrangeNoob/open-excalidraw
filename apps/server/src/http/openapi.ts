@@ -206,6 +206,13 @@ export const openApiDocument = {
       "tokens (create/list/revoke stay session-only) or open realtime sessions.",
       "Manage them under `/api/v1/tokens`.",
       "",
+      "**OAuth connectors** (clients that cannot be handed a token, such as",
+      "claude.ai's custom connectors) obtain their own bearer token from this",
+      "instance's authorization server; discovery starts at",
+      "`/.well-known/oauth-protected-resource`. Such a token is limited to the",
+      "`read` or `write` scope and is refused by `/api/v1/admin/*` and token",
+      "management, exactly like a scoped personal access token.",
+      "",
       "**Browser requests** with unsafe methods must be same-origin: the",
       "server rejects mutating requests whose `Origin` (or `Sec-Fetch-Site`)",
       "is not a trusted origin with `403 ORIGIN_NOT_ALLOWED`. Non-browser",
@@ -333,7 +340,8 @@ export const openApiDocument = {
         summary: "Create a personal access token",
         description:
           "Returns the full secret exactly once in `secret`; store it now, it " +
-          "cannot be retrieved later. Each account may hold at most 25 tokens.",
+          "cannot be retrieved later. Each account may hold at most 25 tokens. " +
+          "An omitted `scope` defaults to `write`.",
         security: [{ sessionCookie: [] }],
         requestBody: jsonBody(ref("PersonalAccessTokenCreate")),
         responses: {
@@ -862,6 +870,52 @@ export const openApiDocument = {
               "references assets that are absent or not in the manifest.",
           ),
           "428": problem("`PRECONDITION_REQUIRED`: `If-Match` is missing."),
+        },
+      },
+    },
+    "/api/v1/drawings/{drawingId}/export": {
+      parameters: [drawingIdParameter],
+      get: {
+        tags: ["Content"],
+        summary: "Render the drawing to an image",
+        description:
+          "Renders server-side with Excalidraw's own exporters and the " +
+          "instance's fonts — no browser involved. Any role that can read " +
+          "the drawing may export it. Nothing is cached: the `ETag` is built " +
+          "from the content revision, so `If-None-Match` gets a 304 until " +
+          "the drawing changes. Image assets are not embedded, and PNG text " +
+          "covers Latin scripts only.",
+        parameters: [
+          {
+            name: "format",
+            in: "query",
+            required: false,
+            schema: { type: "string", enum: ["svg", "png"], default: "svg" },
+          },
+          {
+            name: "scale",
+            in: "query",
+            required: false,
+            description: "PNG only; ignored for SVG.",
+            schema: { type: "integer", enum: [1, 2], default: 1 },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "The rendered image.",
+            content: {
+              "image/svg+xml": { schema: { type: "string" } },
+              "image/png": { schema: { type: "string", format: "binary" } },
+            },
+          },
+          "304": { description: "The rendered image has not changed." },
+          "400": problem("Unsupported `format` or `scale`."),
+          "401": unauthorized,
+          "404": notFound,
+          "413": problem("`EXPORT_TOO_LARGE`: the render exceeds 8 MiB."),
+          "503": problem(
+            "`EXPORT_UNAVAILABLE`: the renderer could not produce an image.",
+          ),
         },
       },
     },
@@ -1400,7 +1454,10 @@ export const openApiDocument = {
         description:
           "A personal access token (`oepat_…`) created under /api/v1/tokens. " +
           "Authenticates any REST route in place of the session cookie, but " +
-          "cannot manage tokens or open realtime collaboration sessions.",
+          "cannot manage tokens or open realtime collaboration sessions. Its " +
+          "scope narrows that further: a `read` token is refused any unsafe " +
+          "method and anything below `full` is refused /api/v1/admin, both " +
+          "with 403 `INSUFFICIENT_SCOPE`.",
       },
     },
     schemas: {

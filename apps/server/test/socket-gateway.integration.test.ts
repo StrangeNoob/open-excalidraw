@@ -195,7 +195,7 @@ describe("collaboration socket gateway", () => {
     });
   });
 
-  it("requests a canonical resync for every socket after a revision restore", async () => {
+  it("requests a canonical resync for every socket after a restore or external save", async () => {
     const fixture = createFixture();
     fixture.roles.set(roleKey(EDITOR_ID), "editor");
     fixture.roles.set(roleKey(VIEWER_ID), "viewer");
@@ -205,14 +205,23 @@ describe("collaboration socket gateway", () => {
     await join(viewer);
 
     fixture.rooms.requestResync(DRAWING_ID, 12n, "revision-restored");
+    fixture.rooms.requestResync(DRAWING_ID, 13n, "external-save");
 
-    const expected = {
-      reason: "revision-restored",
-      revision: "12",
-      type: "room.resyncRequired",
-    };
-    expect(editor.events("room.resyncRequired")).toContainEqual(expected);
-    expect(viewer.events("room.resyncRequired")).toContainEqual(expected);
+    const expected = [
+      {
+        reason: "revision-restored",
+        revision: "12",
+        type: "room.resyncRequired",
+      },
+      { reason: "external-save", revision: "13", type: "room.resyncRequired" },
+    ];
+    expect(editor.events("room.resyncRequired")).toEqual(expected);
+    expect(viewer.events("room.resyncRequired")).toEqual(expected);
+    // Both reasons are counted with the room size they broadcast to.
+    expect(fixture.gateway.resyncBroadcasts()).toEqual([
+      { reason: "revision-restored", members: "2+", count: 1 },
+      { reason: "external-save", members: "2+", count: 1 },
+    ]);
   });
 
   it("expires silent presence and disconnects the stale socket", async () => {
@@ -819,7 +828,7 @@ class FakeRoomRegistry {
   requestResync(
     drawingId: string,
     revision: bigint,
-    reason: "revision-restored",
+    reason: "revision-restored" | "external-save",
   ) {
     const event: GatewayRoomEvent = {
       drawingId,
