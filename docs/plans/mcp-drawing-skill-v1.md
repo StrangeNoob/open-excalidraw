@@ -92,8 +92,9 @@ sheet (label centering, strict-JSON rules).
 
 1. **Setup** — `OPEN_EXCALIDRAW_URL` + `OPEN_EXCALIDRAW_TOKEN` env vars; PAT
    minting walkthrough (web UI → settings → tokens); mandate a dedicated
-   token with `expiresInDays` set (never `null`) and note the blast radius
-   (PATs are unscoped).
+   token with `expiresInDays` set (never `null`) and note the blast radius.
+   (PATs were unscoped when this was written; v2 added `read`/`write`/`full`,
+   and the skill now asks for `write`.)
 2. **Workflows** — exact `curl` recipes:
    - Create: `POST /api/v1/drawings` with client-minted UUID +
      `idempotencyKey` (retry-safe).

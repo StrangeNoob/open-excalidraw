@@ -18,6 +18,9 @@ const SCOPE_DESCRIPTIONS: Record<string, string> = {
   write: "Create drawings, and change or delete anything in them",
 };
 
+/** Matches the server's fallback in `grantedScope` when none is requested. */
+const DEFAULT_GRANTED_SCOPE = "write";
+
 const clientSchema = z.object({
   name: z.string(),
   icon: z.string().nullable(),
@@ -117,9 +120,13 @@ export const OAuthConsentPage = () => {
   const query = new URLSearchParams(location.search);
   const consentCode = query.get("consent_code") ?? "";
   const clientId = query.get("client_id") ?? "";
-  const scopes = (query.get("scope") ?? "")
+  const requested = (query.get("scope") ?? "")
     .split(" ")
     .filter((scope) => scope in SCOPE_DESCRIPTIONS);
+  // A request naming no product scope is granted `write` by the server, so the
+  // screen has to say so. Rendering an empty list would ask for approval of
+  // permissions it never showed.
+  const scopes = requested.length > 0 ? requested : [DEFAULT_GRANTED_SCOPE];
 
   const [clientName, setClientName] = useState<string | null>(null);
   const [redirectOrigins, setRedirectOrigins] = useState<string[]>([]);

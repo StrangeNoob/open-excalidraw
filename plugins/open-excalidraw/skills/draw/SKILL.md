@@ -18,9 +18,11 @@ Two environment variables:
 
 If either is missing, stop and tell the user how to get them: **Dashboard →
 Settings → API tokens**, fill in _Token name_, pick an _Expires_ value
-(30/90/365 days — not _Never_), press _Create token_, copy the secret (it is
-shown once). Tokens are unscoped: they can do anything the user can do over
-REST, so use a dedicated token with an expiry, never a shared one.
+(30/90/365 days — not _Never_), choose the **Write** scope, press _Create
+token_, copy the secret (it is shown once). Write is all this skill needs:
+it covers reading, creating and editing drawings and sharing them, without the
+instance administration a _Full_ token also carries. Use a dedicated token,
+never a shared one.
 
 Check both before doing anything else:
 
