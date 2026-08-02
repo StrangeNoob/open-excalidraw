@@ -425,8 +425,7 @@ const exportService = new ExportService({
     // Built by `pnpm --filter @open-excalidraw/server run bundle:excalidraw-export`;
     // exports 503 until it exists.
     bundlePath:
-      process.env.EXCALIDRAW_EXPORT_BUNDLE?.trim() ||
-      join(process.cwd(), "dist", "excalidraw-export.mjs"),
+      process.env.EXCALIDRAW_EXPORT_BUNDLE?.trim() || excalidrawBundlePath(),
   }),
 });
 // Opt-in: only a proxy that overwrites the forwarded headers makes them
@@ -689,6 +688,24 @@ function productionStaticDirectory(): string {
   const imageDirectory = join(process.cwd(), "public");
   if (existsSync(imageDirectory)) return imageDirectory;
   return join(dirname(fileURLToPath(import.meta.url)), "../../web/dist");
+}
+
+/**
+ * The headless export bundle, which sits beside the bundled server in the image
+ * (`dist/` next to `server.mjs`) but one level up from the source entrypoint in
+ * a checkout. Both are tried so the export does not answer 503 purely because
+ * the process was started from an unexpected directory.
+ */
+function excalidrawBundlePath(): string {
+  const moduleDirectory = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    join(moduleDirectory, "dist", "excalidraw-export.mjs"),
+    join(moduleDirectory, "..", "dist", "excalidraw-export.mjs"),
+    join(process.cwd(), "dist", "excalidraw-export.mjs"),
+  ];
+  return (
+    candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!
+  );
 }
 
 /**

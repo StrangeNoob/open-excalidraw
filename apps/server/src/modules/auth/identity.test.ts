@@ -66,6 +66,20 @@ describe("bearer resolution", () => {
     await expect(bearer.resolve("unknown")).resolves.toBeNull();
   });
 
+  it("reads the bearer scheme case-insensitively, as RFC 7235 defines it", async () => {
+    const identity = createIdentityService(sessionAuth("cookie-owner"), bearer);
+
+    for (const scheme of ["Bearer", "bearer", "BEARER", "BeArEr"]) {
+      await expect(
+        identity.resolve({ authorization: `${scheme} connector` }),
+      ).resolves.toMatchObject({ userId: "connector-owner" });
+    }
+    // Extra spacing between the scheme and the credential is still one token.
+    await expect(
+      identity.resolve({ authorization: "bearer  connector" }),
+    ).resolves.toMatchObject({ userId: "connector-owner" });
+  });
+
   it("never falls back to the session cookie once a bearer is presented", async () => {
     const identity = createIdentityService(sessionAuth("cookie-owner"), bearer);
 

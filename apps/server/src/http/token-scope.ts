@@ -1,9 +1,11 @@
 import type { RequestHandler } from "express";
 
-import type { TokenIdentityResolver } from "../modules/auth/identity.js";
+import {
+  bearerSecret,
+  type TokenIdentityResolver,
+} from "../modules/auth/identity.js";
 import { requestIdFor } from "./request-context.js";
 
-const BEARER_PREFIX = "Bearer ";
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 /**
@@ -22,8 +24,8 @@ export function enforceTokenScope(
   tokenResolver: TokenIdentityResolver,
 ): RequestHandler {
   return (request, response, next) => {
-    const authorization = request.headers.authorization;
-    if (!authorization?.startsWith(BEARER_PREFIX)) {
+    const secret = bearerSecret(request.headers.authorization);
+    if (!secret) {
       next();
       return;
     }
@@ -43,7 +45,7 @@ export function enforceTokenScope(
     // A second resolution of the same token: a SHA-256 and one indexed select,
     // cheaper than threading the identity through every router's own resolve.
     void tokenResolver
-      .resolve(authorization.slice(BEARER_PREFIX.length))
+      .resolve(secret)
       .then((identity) => {
         if (!identity) {
           next();

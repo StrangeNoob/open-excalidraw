@@ -56,7 +56,19 @@ export interface TokenIdentityResolver {
 // Any bearer credential resolves through the token path: `oepat_` values are
 // personal access tokens, everything else is offered to the OAuth resolver.
 // A non-bearer Authorization value still falls through to session resolution.
-const BEARER_PREFIX = "Bearer ";
+const BEARER_SCHEME = /^Bearer +(.+)$/i;
+
+/**
+ * The secret from an `Authorization: Bearer` header, or null for anything else.
+ * RFC 7235 makes the scheme case-insensitive, so `bearer` and `BEARER` are the
+ * same credential — shared with the scope gate so a request cannot be a token
+ * to one and a stranger to the other.
+ */
+export function bearerSecret(
+  authorization: string | null | undefined,
+): string | null {
+  return BEARER_SCHEME.exec(authorization ?? "")?.[1]?.trim() || null;
+}
 
 /**
  * Routes a presented bearer secret to the resolver that owns it. Composed once
@@ -104,9 +116,9 @@ export function createIdentityService(
       // An explicit bearer token attempt resolves through the token path only.
       // On failure it returns null WITHOUT falling back to the session cookie,
       // so a leaked/expired token can never ride a valid session alongside it.
-      const authorization = webHeaders.get("authorization");
-      if (authorization?.startsWith(BEARER_PREFIX)) {
-        return tokenResolver.resolve(authorization.slice(BEARER_PREFIX.length));
+      const secret = bearerSecret(webHeaders.get("authorization"));
+      if (secret) {
+        return tokenResolver.resolve(secret);
       }
 
       const result = await auth.api.getSession({ headers: webHeaders });

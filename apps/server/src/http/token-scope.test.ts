@@ -72,6 +72,14 @@ describe("token scope enforcement", () => {
     ).toBe(403);
   });
 
+  it("gates a lowercase bearer scheme like any other", async () => {
+    const response = await request(app)
+      .put("/api/v1/drawings/x")
+      .set("authorization", "bearer oepat_read");
+
+    expect(response.status).toBe(403);
+  });
+
   it("allows reads for a read-scoped token", async () => {
     const response = await call("get", "/api/v1/drawings", "oepat_read");
 
