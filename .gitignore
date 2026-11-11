@@ -1,4 +1,6 @@
 .DS_Store
+.env
+.env.*
 !.env.example
 coverage/
 dist/
@@ -9,4 +11,3 @@ test-results/
 tmp/
 uploads/
 .claude/launch.json
-config.bat
